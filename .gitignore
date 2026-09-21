@@ -9,6 +9,9 @@ design/
 .env.*
 settings.json
 auth.json
+.credentials.json
+.credentials.yaml
+preferences.json
 clients.json
 native-accounts.json
 updates.json

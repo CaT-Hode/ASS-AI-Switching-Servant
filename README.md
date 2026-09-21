@@ -17,8 +17,9 @@ ASS（AI Switch Servant）是你的 Windows 桌面 AI 路由与账户助手。�
 - Codex、Claude Code、OpenCode、pi、DeepSeek Harness 的启动注入与账户选择。
 - 每个客户端独立的接入开关；简短警告后确定或取消，确认后恢复注入、按需结束 ASS 窗口与停止服务。
 - 在本机 pi 支持时，将 Codex / Claude Code / OpenCode 的兼容 OAuth 导入新的 pi 账户。
-- 独立“官方账户中心”：19 组官方服务、多套 API / 原生授权账户、OpenRouter PKCE 浏览器授权、Cursor Key 加密保管。
-- 每个模型右侧的闪电单独检查连接；读取供应商模型目录，并用小请求检测协议、工具调用与思维参数。
+- “官方账户中心”配置 19 组服务的 API 凭据、OpenRouter PKCE 和 Cursor Key；原生登录状态统一在客户端页。
+- 自动检测五类客户端的本机 OAuth / API 凭据，按账户与供应商在右侧显示卡片。支持默认目录、环境变量目录与手动指定目录。
+- 每个模型右侧的闪电单独检查连接；选中供应商自动获取模型目录，可搜索并一键添加，再用小请求检测协议、工具调用与思维参数。
 - 自动识别客户端入口，支持安装目录、npm 包目录、JS 入口及 DeepSeek Harness 源码目录。
 - 自动检查 ASS 新版本，支持正式 / 预览渠道、手动检查、发布说明与下载入口；不静默安装，不打断当前请求。
 
@@ -74,9 +75,15 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 | Claude Code | 仅 Anthropic Messages 协议模型 | 多个独立 `CLAUDE_CONFIG_DIR`，原生 `auth login / logout` |
 | OpenCode | 自动识别 OpenCode Go，支持其他三种 API 协议 | 独立 XDG 目录，原生 `auth login / logout` |
 | pi | Responses / Chat Completions / Anthropic | 独立 `PI_CODING_AGENT_DIR`，原生或扩展 `/login /logout` |
-| DeepSeek Harness | DeepSeek 配置直接作为 API 账户，也可用其他兼容供应商 | 独立 `DSH_HOME`，生成 `llm-pi-ai` 与默认模型设置，无需重复输入 Key |
+| DeepSeek Harness | DeepSeek 配置直接作为 API 账户，也可用其他兼容供应商 | 检测 `.credentials.yaml` 的 API refs 与 `llm-pi-ai` OAuth records；独立 `DSH_HOME` 支持原生授权设置 |
 
-在页面中选择账户、模型与工作目录，点击“使用此账户启动”。第三方 API Key 只留在 ASS 后端；客户端获得本地路由令牌，实际请求由 ASS 加上对应供应商凭据。注入只影响 ASS 启动的进程及其专用目录，不写原客户端全局配置，不强制终止已有会话。
+在客户端页右侧的账户卡片选择账户与模型，点击“启动”。ASS 供应商的 API Key 只留在后端，客户端获得本地路由令牌。API 注入写入专用目录；本机账户直接使用原有凭据目录，不复制或覆盖其令牌。Codex App 的全局配置仍由单独的 Codex 接入开关管理。
+
+本机 Codex 读取 `CODEX_HOME/auth.json`；Claude Code 读取 `CLAUDE_CONFIG_DIR/.credentials.json` 或环境中的 `CLAUDE_CODE_OAUTH_TOKEN`；OpenCode 读取 `XDG_DATA_HOME/opencode/auth.json`；Pi 读取 `PI_CODING_AGENT_DIR/auth.json`；DSH 读取 `DSH_HOME/.credentials.yaml`。未设置环境目录时使用各客户端默认位置，也可在“客户端路径与凭据目录”指定。多供应商凭据分别显示，不把一个文件当作一个账户。
+
+“已检测 OAuth”仅证明本地存在凭据，不表示服务端验证通过。显示已到期、待原生刷新、损坏或不可识别状态，不执行密钥命令或静默刷新令牌。Codex 系统密钥库 / 临时存储显示“由原生客户端确认”，不误报未登录。OpenCode 与 DSH 的本机多供应商记录共享原生配置目录，启动后仍需在原生客户端选择供应商；Pi 可用 `--provider` 指定供应商。
+
+账户、模型、上下文与强度、余额配置、客户端入口、指定凭据目录、工作目录、接入开关和更新偏好持久保存；页面 / 客户端 / 供应商选择也跨重启保留。界面选择保存在 `preferences.json`，账户与模型选择保存在 `clients.json`，都位于原数据目录。登录状态不缓存为配置，而在启动、返回窗口及客户端页前台每 15 秒重新读取，避免退出后继续显示旧状态。
 
 官方 OAuth 使用原生客户端刷新机制；ASS 不实现登录服务器、不代替用户授权，不保证某个订阅在另一 harness 中享有相同权益或计费方式。
 

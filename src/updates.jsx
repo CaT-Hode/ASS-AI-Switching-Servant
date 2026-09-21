@@ -60,7 +60,7 @@ export function Updates({ state, act, busy }) {
           ? latest
             ? "当前版本无需更新"
             : "此更新渠道暂无发布版本"
-          : "让 ASS 保持新鲜";
+          : "检查 ASS 更新";
   const open = (kind) =>
     act("update-open", () => api.call("update-open", kind));
   return (
@@ -71,8 +71,7 @@ export function Updates({ state, act, busy }) {
           <div className="ass-wordmark">
             ASS<span>v{state.version}</span>
           </div>
-          <h2>模型随你切，账户由你管。</h2>
-          <p>AI Switch Servant · 你的桌面 AI 路由与账户助手</p>
+          <p>AI Switch Servant</p>
         </div>
       </section>
       <section className="update-card" aria-label="软件更新">
@@ -242,7 +241,6 @@ export function Updates({ state, act, busy }) {
         </div>
       </section>
       <footer className="ass-about-footer">
-        <span>ASS，让模型切换更顺手。</span>
         <button className="text-button" onClick={() => open("releases")}>
           所有发布版本
           <ArrowUpRight size={14} />

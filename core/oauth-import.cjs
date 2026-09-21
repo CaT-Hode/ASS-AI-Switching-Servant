@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 const { pathToFileURL } = require("node:url");
+const { nativeLocations } = require("./credential-status.cjs");
 function readJson(file) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -94,27 +95,30 @@ async function piOAuthProviders(executable) {
   }
   return [];
 }
-function enumerateSources(codexDir, home, profiles, root, supported) {
-  const candidates = [
-    {
-      id: "local-codex",
-      kind: "codex",
-      label: "本机 Codex",
-      file: path.join(codexDir, "auth.json"),
-    },
-    {
-      id: "local-claude",
-      kind: "claude",
-      label: "本机 Claude Code",
-      file: path.join(home, ".claude", ".credentials.json"),
-    },
-    {
-      id: "local-opencode",
-      kind: "opencode",
-      label: "本机 OpenCode",
-      file: path.join(home, ".local", "share", "opencode", "auth.json"),
-    },
-  ];
+function enumerateSources(
+  codexDir,
+  home,
+  profiles,
+  root,
+  supported,
+  env = {},
+  overrides = {},
+) {
+  const candidates = ["codex", "claude", "opencode"].flatMap((kind) =>
+    nativeLocations(kind, home, env, overrides[kind], codexDir).map(
+      (dir, i) => ({
+        id: "local-" + kind + (i ? "-" + i : ""),
+        kind,
+        label:
+          "本机 " +
+          { codex: "Codex", claude: "Claude Code", opencode: "OpenCode" }[kind],
+        file: path.join(
+          dir,
+          kind === "claude" ? ".credentials.json" : "auth.json",
+        ),
+      }),
+    ),
+  );
   for (const p of profiles.filter((p) =>
     ["codex", "claude", "opencode"].includes(p.harness),
   ))

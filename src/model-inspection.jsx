@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Zap,
   ScanSearch,
@@ -7,6 +7,8 @@ import {
   RefreshCw,
   Square,
   Plus,
+  Search,
+  Check,
 } from "lucide-react";
 import { Modal } from "./editors.jsx";
 import "./model-inspection.css";
@@ -130,7 +132,7 @@ export function ModelCapabilityDialog({
             disabled={!!busy}
             onClick={() =>
               act("metadata-" + provider.id, () =>
-                api.call("models-discover", provider.id),
+                api.call("models-discover", provider.id, true),
               )
             }
           >
@@ -232,79 +234,164 @@ export function ModelCapabilityDialog({
     </Modal>
   );
 }
-export function ProviderModelsDialog({ provider, state, act, busy, onClose }) {
+export function ProviderModelCatalog({ provider, state, act, busy }) {
   const directory = state.providerModels?.[provider.id];
+  const loading = !!state.modelDirectoryJobs?.[provider.id];
+  const revision = state.modelDirectoryRevisions?.[provider.id] || 0;
+  const [search, setSearch] = useState(""),
+    [onlyNew, setOnlyNew] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setError("");
+    if (provider.hasKey)
+      api.call("models-discover", provider.id).catch((e) => {
+        if (active) setError(e.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [provider.id, provider.hasKey, revision]);
+  const configured = new Set(provider.models.map((m) => m.model));
+  const models = (directory?.models || []).filter(
+    (m) =>
+      (!onlyNew || !configured.has(m.model)) &&
+      `${m.model} ${m.displayName}`
+        .toLowerCase()
+        .includes(search.trim().toLowerCase()),
+  );
+  const issue = error || directory?.error;
+  async function refresh() {
+    setError("");
+    try {
+      await api.call("models-discover", provider.id, true);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
   return (
-    <Modal
-      title={provider.name + " · 模型目录"}
-      description="读取供应商提供的模型与能力声明；不会批量发送模型请求或自动改写现有配置。"
-      onClose={onClose}
+    <section
+      className="provider-model-catalog"
+      aria-label={provider.name + " 可用模型"}
+      aria-busy={loading}
     >
       <div className="section-heading">
-        <span className="hint">{directory?.models.length || 0} 个模型</span>
+        <div>
+          <h2>
+            供应商可用模型{" "}
+            <span className="count">{directory?.models.length || 0}</span>
+          </h2>
+          <p className="catalog-caption">
+            自动读取当前供应商目录，选择需要的模型加入配置。
+          </p>
+        </div>
         <button
           className="button"
-          disabled={!!busy}
-          onClick={() =>
-            act("models-" + provider.id, () =>
-              api.call("models-discover", provider.id),
-            )
-          }
+          disabled={loading || !provider.hasKey}
+          onClick={refresh}
         >
-          <RefreshCw size={14} />
-          读取模型目录
+          {loading ? (
+            <Loader2 size={14} className="spin" />
+          ) : (
+            <RefreshCw size={14} />
+          )}
+          {loading ? "正在读取…" : "刷新模型列表"}
         </button>
       </div>
-      {directory?.error && (
-        <p className="error-box" role="alert">
-          {directory.error}
+      {!provider.hasKey ? (
+        <p className="catalog-empty">
+          填写供应商 API Key 后自动读取；也可以在下方手动添加模型。
         </p>
-      )}
-      {!directory && (
-        <p className="hint">
-          点击“读取模型目录”，查询该供应商的 /models 接口。
+      ) : issue ? (
+        <p className="catalog-error" role="alert">
+          {issue}。可重试刷新，或在下方手动添加。
         </p>
-      )}
-      <div className="discovered-models">
-        {directory?.models.map((m) => (
-          <div className="discovered-model" key={m.model}>
-            <div>
-              <strong>{m.displayName}</strong>
-              <small>{m.model}</small>
-              <p>
-                上下文 {m.declared.contextWindow?.toLocaleString() || "未知"} ·
-                工具 {declaration(m.declared.tools)} · 视觉{" "}
-                {declaration(m.declared.vision)}
-              </p>
-              {m.declared.efforts.length > 0 && (
-                <p>声明档位：{m.declared.efforts.join(" / ")}</p>
-              )}
-            </div>
-            <button
-              className="button"
-              disabled={
-                !!busy || provider.models.some((v) => v.model === m.model)
-              }
-              onClick={() =>
-                act("add-discovered", () =>
-                  api.call("model-add-discovered", provider.id, m.model),
-                )
-              }
-            >
-              <Plus size={14} />
-              {provider.models.some((v) => v.model === m.model)
-                ? "已配置"
-                : "加入配置"}
-            </button>
+      ) : loading && !directory ? (
+        <p className="catalog-empty" role="status">
+          正在向 {provider.name} 请求模型列表…
+        </p>
+      ) : null}
+      {!!directory?.models.length && (
+        <>
+          <div className="catalog-toolbar">
+            <label className="search">
+              <Search size={15} />
+              <input
+                aria-label="搜索供应商可用模型"
+                placeholder="按名称或模型 ID 搜索"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </label>
+            <label className="catalog-filter">
+              <input
+                type="checkbox"
+                checked={onlyNew}
+                onChange={(e) => setOnlyNew(e.target.checked)}
+              />
+              仅看未添加
+            </label>
+            <span className="catalog-caption">{models.length} 个结果</span>
           </div>
-        ))}
-      </div>
+          <div
+            className="discovered-models"
+            tabIndex={0}
+            aria-label="供应商模型列表"
+          >
+            {models.map((m) => (
+              <div className="discovered-model" key={m.model}>
+                <div>
+                  <strong>{m.displayName}</strong>
+                  <small>{m.model}</small>
+                  <p>
+                    上下文{" "}
+                    {m.declared.contextWindow?.toLocaleString() || "未知"} ·
+                    工具 {declaration(m.declared.tools)} · 视觉{" "}
+                    {declaration(m.declared.vision)}
+                  </p>
+                </div>
+                <button
+                  className="button"
+                  disabled={!!busy || loading || configured.has(m.model)}
+                  onClick={() =>
+                    act("add-discovered", () =>
+                      api.call("model-add-discovered", provider.id, m.model),
+                    )
+                  }
+                >
+                  {configured.has(m.model) ? (
+                    <Check size={14} />
+                  ) : (
+                    <Plus size={14} />
+                  )}
+                  {configured.has(m.model) ? "已添加" : "加入配置"}
+                </button>
+              </div>
+            ))}
+            {!models.length && (
+              <p className="catalog-empty">没有符合筛选的模型。</p>
+            )}
+          </div>
+        </>
+      )}
+      {provider.hasKey &&
+        directory &&
+        !issue &&
+        !loading &&
+        !directory.models.length && (
+          <p className="catalog-empty">
+            供应商返回了空列表，可刷新重试或手动添加模型。
+          </p>
+        )}
       {directory?.truncated && (
         <p className="hint">供应商返回分页或过长列表，当前只展示已读取部分。</p>
       )}
-      <p className="capability-warning">
-        此处是供应商声明，不是实测结论。加入配置后，可在该模型的能力面板逐项验证。
+      <p className="catalog-footnote">
+        仅查询模型目录，不发送推理请求；能力以供应商声明为准。
+        {directory?.time && !issue && (
+          <> · {new Date(directory.time).toLocaleTimeString()} 更新</>
+        )}
       </p>
-    </Modal>
+    </section>
   );
 }

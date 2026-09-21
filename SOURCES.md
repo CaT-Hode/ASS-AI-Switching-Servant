@@ -38,6 +38,14 @@ ASS 是独立实现，不是原产品的官方版本。界面不沿用旧产品�
 - [GitHub REST 最佳实践](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api)：ETag 条件请求、串行合并及限流退避。
 - [Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)：Windows 原生自动安装方案涉及对应打包机制；当前 ASS 是便携 ZIP，只实现自动检查和浏览器下载，不声称已经支持后台自动安装。
 
+## v0.1.5 本机授权检测
+
+- [Codex authentication](https://learn.chatgpt.com/docs/auth)：`CODEX_HOME/auth.json` 与 file / keyring / ephemeral 存储边界。
+- [Claude Code authentication](https://code.claude.com/docs/en/authentication)：Windows `.claude/.credentials.json` 与 `CLAUDE_CONFIG_DIR`。
+- [OpenCode providers](https://opencode.ai/docs/providers/)：原生 `auth.json`，供应商分别保存凭据。
+- [Pi AuthStorage 源码](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/auth-storage.ts)：`oauth` 与 `api_key` 记录，读取时不执行动态密钥命令。
+- 本机 `D:\deepseek-harness\packages\credentials\credentials-local\README.md` 与 `packages\llm\llm-pi-ai\src\auth.ts`：版本化 `.credentials.yaml`、`refs`、`records` 和 `llm-pi-ai/<provider>` grant 结构。只实现已确认格式，不把任意插件 grant 误判为 OAuth。
+
 ## 视觉
 
 ASS 蓝色花瓣 logo 为本项目生成的原创位图；ICO 只是该图的尺寸和容器转换。其他图标使用 Lucide。系统字体、原生 dialog 和克制的交互反馈，针对横向桌面窗口设计。

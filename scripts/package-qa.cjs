@@ -33,7 +33,7 @@ fs.mkdirSync(codex);
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.waitForSelector("h1");
-    assert.equal(await page.title(), "ASS · 模型随你切");
+    assert.equal(await page.title(), "ASS");
     const state = await app.evaluate(() => global.assTest.snapshot());
     assert.equal(state.providers.length, 0);
     assert.equal(state.harnesses.clients.length, 5);
@@ -45,7 +45,7 @@ fs.mkdirSync(codex);
     assert.equal(state.updates.automatic, true);
     assert.equal(state.updates.status, "idle");
     await page.getByRole("button", { name: "关于 ASS", exact: true }).click();
-    await page.getByRole("heading", { name: "模型随你切，账户由你管。", exact: true }).waitFor();
+    await page.locator(".ass-wordmark").waitFor();
     assert.equal(await page.getByRole("switch", { name: "自动检查更新", exact: true }).isChecked(), true);
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
@@ -54,10 +54,11 @@ fs.mkdirSync(codex);
       .getByRole("button", { name: /^pi (已找到客户端|未检测到安装)$/ })
       .click();
     await page
-      .getByRole("heading", { name: "从其他客户端导入 OAuth" })
+      .locator(".pi-import > summary")
       .waitFor();
     assert.equal(fs.existsSync(path.join(codex, "config.toml")), false);
     assert.equal(await page.getByRole("button", { name: "接入 Codex", exact: true }).count(), 0);
+    assert.equal(await page.locator('.client-list').getByRole('switch').count(), 5);
     const toggle = page.getByRole("switch", { name: "pi ASS 接入", exact: true });
     assert.equal(await toggle.isChecked(), false);
     await toggle.click();

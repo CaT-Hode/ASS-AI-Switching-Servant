@@ -32,25 +32,197 @@
   flex-direction: column;
   gap: 5px;
 }
-.client-list > button {
+.client-account-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0;
+}
+.client-account-grid > .empty {
+  grid-column: 1 / -1;
+}
+.client-account-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 17px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: #fff;
+  transition:
+    border-color 140ms ease-out,
+    background-color 140ms ease-out;
+}
+.client-account-card.selected {
+  border-color: #91b9ee;
+  background: #f6faff;
+}
+.client-account-card > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.account-card-title {
+  flex: 1;
+  min-width: 0;
+}
+.account-card-title h3 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.account-card-title > span {
+  font-size: 10px;
+  color: var(--muted);
+}
+.account-status {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #697689;
+  margin: 15px 0 6px;
+}
+.account-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.account-status.ready {
+  color: #2b7255;
+}
+.account-status.warning {
+  color: #96671e;
+}
+.account-expiry {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.client-account-card > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding-top: 15px;
+  margin-top: auto;
+}
+.client-account-card .button {
+  padding: 7px 11px;
+}
+.account-choice {
+  font-size: 11px;
+}
+.account-choice.chosen {
+  opacity: 1;
+  color: #1265c4;
+}
+.account-model {
+  margin: 12px 0 0;
+  font-size: 11px;
+}
+.account-model select {
+  margin-top: 7px;
+  width: 100%;
+}
+.account-origin {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+.account-origin summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: 4px 0;
+}
+.account-origin code {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  padding: 6px 0;
+}
+.client-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+}
+.client-heading .button {
+  font-size: 11px;
+}
+.client-settings {
+  border-top: 1px solid var(--border);
+  margin-top: 25px;
+  padding-top: 15px;
+}
+.client-settings > summary,
+.pi-import > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #51657b;
+  padding: 5px 0;
+}
+.client-settings .client-location {
+  margin-bottom: 16px;
+}
+.credential-sources {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+.credential-sources > div {
+  display: grid;
+  gap: 4px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #f6f8fb;
+  font-size: 10px;
+  color: var(--muted);
+}
+.credential-sources code {
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.clients-layout + .connection-service {
+  margin-top: 18px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .client-account-card {
+    transition: none;
+  }
+}
+.client-entry {
   border: 1px solid transparent;
+  border-radius: 13px;
+  padding: 10px;
+}
+.client-select {
+  border: 0;
+  width: 100%;
   background: transparent;
   display: flex;
   align-items: center;
   gap: 11px;
   text-align: left;
-  padding: 15px 11px;
+  padding: 4px 0 10px;
   border-radius: 11px;
   color: #657286;
   cursor: pointer;
 }
-.client-list > button.active {
+.client-entry.active {
   background: #fff;
   border-color: var(--border);
   box-shadow: var(--shadow-sm);
   color: #0961cf;
 }
-.client-list button > span {
+.client-entry.active .client-select {
+  color: #0961cf;
+}
+.client-select > span {
   flex: 1;
 }
 .client-list strong {
@@ -278,8 +450,7 @@
   .client-panel {
     padding: 19px;
   }
-  .client-list > button {
-    padding: 14px 9px;
+  .client-select {
     gap: 8px;
   }
   .clients-intro p {

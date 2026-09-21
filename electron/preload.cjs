@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const allowed = [
   "snapshot",
+  "ui-preferences",
+  "client-model",
+  "client-credentials",
   "import",
   "save-provider",
   "delete-provider",

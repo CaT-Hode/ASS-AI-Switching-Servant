@@ -32,7 +32,7 @@ fs.mkdirSync(output, { recursive: true });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.waitForSelector("h1");
-    assert.equal(await page.title(), "ASS · 模型随你切");
+    assert.equal(await page.title(), "ASS");
     assert.ok(page.url().startsWith("file://"));
     const fake = {
       providers: [
@@ -154,7 +154,7 @@ fs.mkdirSync(output, { recursive: true });
     await page.getByRole("dialog").waitFor({ state: "hidden" });
     assert.ok(
       await page
-        .locator(".account-row.selected")
+        .locator(".client-account-card.selected")
         .innerText()
         .then((t) => t.includes("工作账户")),
     );
@@ -163,7 +163,7 @@ fs.mkdirSync(output, { recursive: true });
         name: /^Claude Code (已找到客户端|未检测到安装)$/,
       })
       .click();
-    assert.ok((await page.locator(".account-row").count()) > 0);
+    assert.ok((await page.locator(".client-account-card").count()) > 0);
     await page.screenshot({
       animations: "disabled",
       path: path.join(output, "clients.png"),

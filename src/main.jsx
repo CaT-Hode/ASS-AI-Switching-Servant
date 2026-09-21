@@ -43,7 +43,7 @@ import {
   ModelActions,
   ModelCheckButton,
   ModelCapabilityDialog,
-  ProviderModelsDialog,
+  ProviderModelCatalog,
 } from "./model-inspection.jsx";
 const api = window.ass;
 const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
@@ -201,18 +201,6 @@ function Overview({ state, providers, act, busy, setView }) {
           </div>
           <dl>
             <div>
-              <dt>ChatGPT 登录</dt>
-              <dd className={state.authReady ? "success" : "muted"}>
-                {state.authReady ? (
-                  <>
-                    <CheckCircle2 size={15} /> 已检测
-                  </>
-                ) : (
-                  "未检测"
-                )}
-              </dd>
-            </div>
-            <div>
               <dt>凭据存储</dt>
               <dd>
                 {state.encrypted ? (
@@ -251,7 +239,7 @@ function Overview({ state, providers, act, busy, setView }) {
         <RequestTable rows={state.recent} />
       </section>
       <footer className="page-footer">
-        ASS · 模型随你切，账户由你管。模型设置修改后，重启 Codex 刷新目录。
+        模型设置修改后，重新启动相应客户端以加载配置。
       </footer>
     </>
   );
@@ -262,12 +250,12 @@ function Providers({
   act,
   busy,
   initialProvider = "official",
+  onSelectProvider,
 }) {
   const [selected, setSelected] = useState(initialProvider),
     [search, setSearch] = useState(""),
     [editor, setEditor] = useState(null),
     [inspection, setInspection] = useState(null),
-    [discovering, setDiscovering] = useState(false),
     [providerEditor, setProviderEditor] = useState(false);
   const p = providers.find((p) => p.id === selected) || providers[0];
   const balance = state.balances[p.id];
@@ -279,7 +267,10 @@ function Providers({
             <button
               key={p.id}
               className={p.id === selected ? "active" : ""}
-              onClick={() => setSelected(p.id)}
+              onClick={() => {
+                setSelected(p.id);
+                onSelectProvider?.(p.id);
+              }}
             >
               {p.name}
             </button>
@@ -296,7 +287,7 @@ function Providers({
             <h2>{p.name}</h2>
             <Tag good={p.id === "official" || p.hasKey}>
               {p.id === "official"
-                ? "ChatGPT 登录"
+                ? "官方订阅"
                 : p.hasKey
                   ? "密钥已加密"
                   : "待填写密钥"}
@@ -308,11 +299,6 @@ function Providers({
           {p.id !== "official" && (
             <Button icon={Settings2} onClick={() => setProviderEditor("edit")}>
               供应商设置
-            </Button>
-          )}
-          {p.id !== "official" && (
-            <Button icon={Search} onClick={() => setDiscovering(true)}>
-              发现模型与能力
             </Button>
           )}
         </div>
@@ -355,9 +341,16 @@ function Providers({
           )}
         </div>
       )}
+      {p.id !== "official" && (
+        <ProviderModelCatalog
+          key={p.id}
+          provider={p}
+          {...{ state, act, busy }}
+        />
+      )}
       <div className="section-heading">
         <h2>
-          模型配置 <span className="count">{p.models.length}</span>
+          已配置模型 <span className="count">{p.models.length}</span>
         </h2>
         <div className="actions">
           <label className="search">
@@ -371,7 +364,7 @@ function Providers({
           </label>
           {p.id !== "official" && (
             <Button icon={Plus} onClick={() => setEditor({ model: null })}>
-              添加模型
+              手动添加
             </Button>
           )}
         </div>
@@ -469,13 +462,6 @@ function Providers({
           onClose={() => setInspection(null)}
         />
       )}
-      {discovering && (
-        <ProviderModelsDialog
-          provider={p}
-          {...{ state, act, busy }}
-          onClose={() => setDiscovering(false)}
-        />
-      )}
       {providerEditor && (
         <ProviderEditor
           presets={state.providerPresets}
@@ -494,11 +480,7 @@ function Diagnostics({ state, providers, act, busy }) {
       <div className="info-box">
         <ShieldCheck size={25} />
         <div>
-          <strong>系统 CA + 完整流式响应检测</strong>
-          <small>
-            每次检测发送一条简短请求，验证登录、TLS、模型协议和
-            response.completed。会产生少量模型用量。
-          </small>
+          <small>检测会发送简短请求并检查完整响应，可能产生少量费用。</small>
         </div>
       </div>
       <div className="diagnostic-list">
@@ -536,7 +518,9 @@ function Diagnostics({ state, providers, act, busy }) {
         <dl>
           <div>
             <dt>路由入口</dt>
-            <dd className="mono">http://127.0.0.1:{state.service.port}/clients/codex/v1</dd>
+            <dd className="mono">
+              http://127.0.0.1:{state.service.port}/clients/codex/v1
+            </dd>
           </div>
           <div>
             <dt>Codex 接入</dt>
@@ -577,16 +561,39 @@ function Diagnostics({ state, providers, act, busy }) {
 }
 function App() {
   const [state, setState] = useState(null),
-    [view, setView] = useState("overview"),
-    [clientTarget, setClientTarget] = useState("codex"),
-    [providerTarget, setProviderTarget] = useState("official"),
+    [view, setViewLocal] = useState("overview"),
+    [clientTarget, setClientTargetLocal] = useState("codex"),
+    [providerTarget, setProviderTargetLocal] = useState("official"),
     [busy, setBusy] = useState(""),
     [toast, setToast] = useState(null);
   const [connectionRequest, setConnectionRequest] = useState(null);
-  useEffect(() => api?.onManage((request) => {
-    setView("clients");
-    setConnectionRequest((previous) => previous || request);
-  }), []);
+  function remember(input) {
+    api
+      .call("ui-preferences", input)
+      .catch((e) =>
+        setToast({ error: true, message: "设置保存失败：" + e.message }),
+      );
+  }
+  function setView(next) {
+    setViewLocal(next);
+    remember({ view: next });
+  }
+  function setClientTarget(next) {
+    setClientTargetLocal(next);
+    remember({ client: next });
+  }
+  function setProviderTarget(next) {
+    setProviderTargetLocal(next);
+    remember({ provider: next });
+  }
+  useEffect(
+    () =>
+      api?.onManage((request) => {
+        setView("clients");
+        setConnectionRequest((previous) => previous || request);
+      }),
+    [],
+  );
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
   }, [view]);
@@ -594,7 +601,12 @@ function App() {
     if (!api) return;
     api
       .call("snapshot")
-      .then(setState)
+      .then((next) => {
+        setState(next);
+        setViewLocal(next.preferences.view);
+        setClientTargetLocal(next.preferences.client);
+        setProviderTargetLocal(next.preferences.provider);
+      })
       .catch((e) => setToast({ error: true, message: e.message }));
     return api.subscribe(setState);
   }, []);
@@ -660,14 +672,6 @@ function App() {
     diagnostics: "连接诊断",
     updates: "关于 ASS",
   }[view];
-  const desc = {
-    overview: "ASS，让模型切换更顺手。",
-    providers: "独立配置协议、上下文窗口与思维强度。",
-    clients: "切换 API 与授权账户，启动独立客户端。",
-    accounts: "管理官方 API 凭据与订阅授权，清晰区分账户和计费。",
-    diagnostics: "从本机证书到完整响应，确认每一条连接。",
-    updates: "检查新版，掌握更新节奏。",
-  }[view];
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -675,7 +679,7 @@ function App() {
           <img src="./ass-logo.png" alt="ASS 菊花标志" />
           <div>
             <strong>ASS</strong>
-            <small>模型随你切</small>
+            <small>AI 路由</small>
           </div>
         </div>
         <div className="nav-label">工作空间</div>
@@ -717,7 +721,6 @@ function App() {
         <header className="page-header">
           <div>
             <h1>{title}</h1>
-            <p>{desc}</p>
           </div>
           <div className="actions">
             <Button
@@ -743,14 +746,11 @@ function App() {
           </strong>
           <span className="service-caption">
             {state.service.running
-              ? "HTTP · 本机安全路由"
+              ? "HTTP · 本机路由"
               : "当前请求无法经由 ASS 转发"}
           </span>
           <span className="mono endpoint">127.0.0.1:{state.service.port}</span>
-          <Button
-            icon={Settings2}
-            onClick={() => setView("clients")}
-          >
+          <Button icon={Settings2} onClick={() => setView("clients")}>
             管理客户端接入
           </Button>
         </div>
@@ -767,6 +767,7 @@ function App() {
           <Providers
             {...{ state, providers, act, busy }}
             initialProvider={providerTarget}
+            onSelectProvider={setProviderTarget}
           />
         ) : view === "accounts" ? (
           <OfficialAccounts
@@ -781,18 +782,31 @@ function App() {
             }}
           />
         ) : view === "clients" ? (
-          <Clients {...{ state, act, busy }} onManage={setConnectionRequest} initialClient={clientTarget} />
+          <Clients
+            {...{ state, act, busy }}
+            onManage={setConnectionRequest}
+            initialClient={clientTarget}
+            onSelectClient={setClientTarget}
+          />
         ) : view === "updates" ? (
           <Updates {...{ state, act, busy }} />
         ) : (
           <Diagnostics {...{ state, providers, act, busy }} />
         )}
       </main>
-      {connectionRequest && <ConnectionDialog request={connectionRequest}
-        onClose={() => setConnectionRequest(null)} onComplete={(message) => {
-          setToast({ message });
-          api.call("snapshot").then(setState).catch(() => {});
-        }} />}
+      {connectionRequest && (
+        <ConnectionDialog
+          request={connectionRequest}
+          onClose={() => setConnectionRequest(null)}
+          onComplete={(message) => {
+            setToast({ message });
+            api
+              .call("snapshot")
+              .then(setState)
+              .catch(() => {});
+          }}
+        />
+      )}
       {toast && (
         <div role="status" className={"toast " + (toast.error ? "error" : "")}>
           {toast.error ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}

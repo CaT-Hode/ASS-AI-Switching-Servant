@@ -128,7 +128,7 @@ class Connections {
       atomic(this.file, JSON.stringify(this.enabled));
       this.revision++;
       return { ok: true, quit: plan.quit, message: plan.enabled
-        ? "已开启接入。Codex App 请在任务结束后手动重启；其他客户端从 ASS 新启动生效。"
+        ? plan.ids.includes("codex") ? "已开启接入。Codex App 请在任务结束后手动重启。" : "已开启接入，从 ASS 新启动客户端时生效。"
         : "已断开所选客户端、恢复其注入文件；账户与会话数据保留。" };
     } finally {
       this.busy = false;

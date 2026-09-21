@@ -24,10 +24,10 @@ const { HarnessManager } = require("../core/harnesses.cjs");
 const {
   modelKey,
   declaredCapabilities,
-  discoverModels,
   probeCapabilities,
   inspectStream,
 } = require("../core/model-inspection.cjs");
+const { ModelDirectory } = require("../core/model-directory.cjs");
 const {
   OFFICIAL_SERVICES,
   serviceForProvider,
@@ -38,6 +38,7 @@ const { UpdateChecker } = require("../core/updates.cjs");
 const { InjectionFiles } = require("../core/injection-files.cjs");
 const { ClientProcesses } = require("../core/client-processes.cjs");
 const { Connections } = require("../core/connections.cjs");
+const { Preferences } = require("../core/preferences.cjs");
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
 if (testMode && customData) app.setPath("userData", customData);
@@ -59,14 +60,27 @@ let window,
   updates,
   connections,
   processes,
+  preferences,
   quitting = false;
 let recent = [],
   diagnostics = {},
   balances = {};
 let startupError = "";
-const providerModels = Object.create(null),
-  capabilities = Object.create(null),
+const capabilities = Object.create(null),
   capabilityJobs = Object.create(null);
+const modelDirectory = new ModelDirectory({
+  getProvider: (id) => store.state.providers.find((p) => p.id === id),
+  fetchUpstream: upstream,
+  onChange: push,
+  readOfficial: () => ({
+    source: "Codex 本机目录声明（未实测）",
+    time: new Date().toISOString(),
+    models: store.officialModels.map((m) => ({
+      model: m.slug, displayName: m.display_name, declared: declaredCapabilities(m),
+    })),
+  }),
+});
+const providerModels = modelDirectory.results;
 const probeControllers = new Map();
 const iconPath = path.join(__dirname, "../public/ass-logo.png");
 let systemSession, directSession, testFetch;
@@ -84,7 +98,7 @@ async function upstream(url, init, network = "system") {
 }
 function readAuth() {
   const auth = JSON.parse(
-    fs.readFileSync(path.join(store.codexDir, "auth.json"), "utf8"),
+    fs.readFileSync(path.join(store.codexDir, "auth.json"), "utf8").replace(/^\uFEFF/, ""),
   );
   if (!auth.tokens?.access_token)
     throw new Error("未找到 ChatGPT 登录，请先在 Codex 登录");
@@ -114,6 +128,7 @@ function log(record) {
 function snapshot() {
   return {
     ...store.public(),
+    preferences: preferences.state,
     harnesses: harnesses.snapshot(),
     connections: connections.snapshot(),
     providerPresets: PROVIDER_PRESETS,
@@ -136,6 +151,8 @@ function snapshot() {
     recent,
     diagnostics,
     providerModels,
+    modelDirectoryJobs: modelDirectory.jobs(),
+    modelDirectoryRevisions: modelDirectory.revisions,
     capabilities,
     capabilityJobs,
     balances,
@@ -235,43 +252,18 @@ async function diagnose(providerId, modelName) {
   push();
   return diagnostics[key];
 }
-function invalidateReports(id) {
+function invalidateReports(id, metadata = true) {
   for (const results of [diagnostics, capabilities])
     for (const key of Object.keys(results))
       if (!id || JSON.parse(key)[0] === id) delete results[key];
-  for (const key of Object.keys(providerModels))
-    if (!id || key === id) delete providerModels[key];
+  if (metadata) modelDirectory.invalidate(id);
   for (const key of Object.keys(balances))
     if (!id || key === id) delete balances[key];
   for (const [key, controller] of probeControllers)
     if (!id || JSON.parse(key)[0] === id) controller.abort();
 }
-async function readModelMetadata(id) {
-  if (id === "official") {
-    providerModels[id] = {
-      source: "Codex 本机目录声明（未实测）",
-      time: new Date().toISOString(),
-      models: store.officialModels.map((m) => ({
-        model: m.slug,
-        displayName: m.display_name,
-        declared: declaredCapabilities(m),
-      })),
-    };
-  } else {
-    const provider = store.state.providers.find((p) => p.id === id);
-    if (!provider) throw Error("供应商不存在");
-    try {
-      providerModels[id] = await discoverModels(provider, upstream);
-    } catch (e) {
-      providerModels[id] = {
-        time: new Date().toISOString(),
-        error: e.message,
-        models: [],
-        source: "供应商目录",
-      };
-    }
-  }
-  return providerModels[id];
+function readModelMetadata(id, refresh = false) {
+  return modelDirectory.read(id, { refresh: refresh === true });
 }
 async function probeModel(id, name) {
   const provider = store.state.providers.find((p) => p.id === id && p.enabled);
@@ -367,15 +359,16 @@ else {
     .then(async () => {
       const dataDir = app.getPath("userData");
       const codexDir =
-        testMode && process.env.ASS_TEST_CODEX
-          ? process.env.ASS_TEST_CODEX
-          : path.join(os.homedir(), ".codex");
+        testMode
+          ? process.env.ASS_TEST_CODEX || path.join(dataDir, "test-home", ".codex")
+          : path.resolve((process.env.CODEX_HOME || path.join(os.homedir(), ".codex")).replace(/^~(?=[/\\]|$)/, os.homedir()));
       fs.mkdirSync(dataDir, { recursive: true });
       systemSession = session.fromPartition("ass-system");
       directSession = session.fromPartition("ass-direct");
       await systemSession.setProxy({ mode: "system" });
       await directSession.setProxy({ mode: "direct" });
       store = new Store(dataDir, codexDir, safeStorage);
+      preferences = new Preferences(dataDir);
       updates = new UpdateChecker({
         dataDir,
         currentVersion: app.getVersion(),
@@ -407,7 +400,9 @@ else {
         () => store.state,
         store.officialModels,
         codexDir,
-        { port: servicePort, injections, processes, isConnected: (id) => connections.allow(id) },
+        { port: servicePort, injections, processes, isConnected: (id) => connections.allow(id),
+          ...(testMode ? { home: path.join(dataDir, "test-home"), env: {} } : {}),
+        },
       );
       await harnesses.refreshOAuth();
       router = new Router({
@@ -428,6 +423,7 @@ else {
         startupError = "端口 " + servicePort + " 无法启动：" + error.message;
       }
       register("snapshot", () => snapshot());
+      register("ui-preferences", (input) => preferences.update(input));
       register("connection-preview", (scope, enabled, quit) => connections.preview(scope, enabled, quit));
       register("connection-apply", async (input) => {
         const result = await connections.apply(input);
@@ -499,6 +495,12 @@ else {
       register("account-select", (id, account) =>
         harnesses.select(id, account),
       );
+      register("client-model", (id, account, model) => harnesses.selectModel(id, account, model));
+      register("client-credentials", async (id, reset = false) => {
+        if (reset) return harnesses.setCredentialHome(id, "");
+        const result = await dialog.showOpenDialog(window, { title: "选择 " + harnesses.spec(id).name + " 凭据目录", properties: ["openDirectory"] });
+        if (!result.canceled) harnesses.setCredentialHome(id, result.filePaths[0]);
+      });
       register("client-detect", async (id) => {
         const candidates = harnesses.detect(id);
         if (candidates.length === 1) {
@@ -546,7 +548,7 @@ else {
           const r = await dialog.showMessageBox(window, {
             type: "warning",
             message: "打开此账户的原生退出流程？",
-            detail: "仅作用于 ASS 中选定的独立账户。正在运行的会话可能受影响。",
+            detail: "将作用于此卡片对应的凭据目录，可能影响正在运行的会话。",
             buttons: ["取消", "继续"],
             defaultId: 0,
             cancelId: 0,
@@ -596,7 +598,7 @@ else {
       });
       register("save-model", (provider, model, originalName) => {
         store.model(provider, model, originalName);
-        invalidateReports(provider);
+        invalidateReports(provider, false);
       });
       register("model-defaults", (provider, model) =>
         normalizeModel({ model }, provider, store.officialModels),
@@ -760,6 +762,7 @@ else {
     }
     quitting = true;
     updates?.stop();
+    modelDirectory.invalidate();
     for (const controller of probeControllers.values()) controller.abort();
     openRouterAuth?.cancel();
     router?.stop();

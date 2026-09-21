@@ -1,7 +1,7 @@
 {
   "name": "ai-switch-servant",
   "productName": "ASS",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "license": "MIT",
   "repository": {
@@ -19,15 +19,16 @@
   },
   "dependencies": {
     "@iarna/toml": "2.2.5",
+    "lucide-react": "^0.468.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "lucide-react": "^0.468.0"
+    "yaml": "2.9.1"
   },
   "devDependencies": {
-    "electron": "44.4.3",
     "@electron/packager": "^20.3.0",
-    "vite": "^7.3.0",
     "@vitejs/plugin-react": "^5.1.0",
-    "playwright": "^1.58.0"
+    "electron": "44.4.3",
+    "playwright": "^1.58.0",
+    "vite": "^7.3.0"
   }
 }

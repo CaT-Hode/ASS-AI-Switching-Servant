@@ -129,8 +129,6 @@ fs.mkdirSync(codex);
       single.diagnostics[JSON.stringify(["qa_models", "probe-b"])].ok,
       true,
     );
-    await page.getByRole("button", { name: "发现模型与能力" }).click();
-    await page.getByRole("button", { name: "读取模型目录" }).click();
     await page
       .locator(".discovered-model")
       .filter({ hasText: "probe-new" })
@@ -139,10 +137,8 @@ fs.mkdirSync(codex);
     await page
       .locator(".discovered-model")
       .filter({ hasText: "probe-new" })
-      .getByRole("button", { name: "已配置" })
+      .getByRole("button", { name: "已添加" })
       .waitFor();
-    await page.keyboard.press("Escape");
-    await page.getByRole("dialog").waitFor({ state: "hidden" });
     await page
       .getByRole("button", { name: "查看模型能力 probe-a", exact: true })
       .click();
@@ -161,6 +157,7 @@ fs.mkdirSync(codex);
     await page
       .getByRole("button", { name: "官方账户中心", exact: true })
       .click();
+    await page.getByRole("navigation", { name: "官方服务列表" }).waitFor();
     assert.equal(
       await page
         .getByRole("navigation", { name: "官方服务列表" })
@@ -187,6 +184,7 @@ fs.mkdirSync(codex);
       .fill("synthetic-personal-key");
     await page.getByRole("button", { name: "保存供应商" }).click();
     await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "在客户端管理授权", exact: true }).click();
     await page
       .getByRole("button", { name: "添加授权账户", exact: true })
       .click();
@@ -194,6 +192,8 @@ fs.mkdirSync(codex);
     await page.getByRole("button", { name: "创建账户", exact: true }).click();
     await page.getByRole("dialog").waitFor({ state: "hidden" });
     await page.getByText("ChatGPT 工作授权", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "官方账户中心", exact: true }).click();
+    assert.equal(await page.getByText("ChatGPT 工作授权", { exact: true }).count(), 0);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({
       path: path.join(output, "official-accounts.png"),
@@ -271,6 +271,7 @@ fs.mkdirSync(codex);
         name: /^DeepSeek Harness (已找到客户端|未检测到安装)$/,
       })
       .click();
+    await page.getByText("客户端路径与凭据目录", { exact: true }).click();
     await page.getByRole("button", { name: "自动识别", exact: true }).click();
     if (await page.getByRole("dialog").isVisible())
       await page.keyboard.press("Escape");

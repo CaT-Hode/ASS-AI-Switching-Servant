@@ -7,6 +7,11 @@ const { atomic } = require("./config.cjs");
 const { legacyBaseline } = require("./injection-files.cjs");
 const { makeCatalog } = require("./models.cjs");
 const {
+  inspectCredentials,
+  discoverNative,
+  digest,
+} = require("./credential-status.cjs");
+const {
   findExecutable,
   resolveLauncher,
   discoverLaunchers,
@@ -50,8 +55,8 @@ const SPECS = [
     id: "dsh",
     name: "DeepSeek Harness",
     command: "dsh",
-    oauth: false,
-    description: "DeepSeek API 自动成为账户，同时支持其他兼容 API。",
+    oauth: true,
+    description: "DeepSeek API、兼容 API 与原生 OAuth 记录。",
   },
 ];
 const APIS = {
@@ -98,7 +103,7 @@ function apiAccounts(harness, providers) {
           protocol: m.wireApi,
         })),
         message: models.length
-          ? "复用加密保存的 API Key"
+          ? "API Key 已保存 · 未联网验证"
           : "没有兼容且已启用的模型",
       };
     });
@@ -126,34 +131,11 @@ function isolatedEnv(harness, dir, env = process.env) {
   return result;
 }
 function authSummary(harness, dir) {
-  const file = path.join(
-    dir,
-    harness === "claude"
-      ? ".credentials.json"
-      : harness === "opencode"
-        ? "data/opencode/auth.json"
-        : "auth.json",
-  );
-  const data = json(file);
-  let ready = false,
-    providers = [];
-  if (harness === "codex") ready = !!data.tokens?.access_token;
-  else if (harness === "claude") ready = !!data.claudeAiOauth?.accessToken;
-  else {
-    providers = Object.entries(data)
-      .filter(
-        ([, v]) =>
-          v?.type === "oauth" || v?.type === "api" || v?.type === "api_key",
-      )
-      .map(([id]) => id);
-    ready = providers.length > 0;
-  }
+  const result = inspectCredentials(harness, dir);
   return {
-    ready,
-    providers,
-    message: ready
-      ? "已检测本地凭据 · 有效性由原生客户端确认"
-      : "尚未检测到凭据",
+    ready: result.rows.some((r) => r.ready),
+    providers: result.rows.map((r) => r.provider),
+    message: result.rows.map((r) => r.message).join("；") || result.message,
   };
 }
 function routeConfig(harness, p, m, dir, token, catalog, port = 25819) {
@@ -305,12 +287,17 @@ class HarnessManager {
     this.detected = {};
     this.discovery = {};
     this.file = path.join(dataDir, "clients.json");
-    this.state = json(this.file, {
+    this.state = {
       profiles: [],
       selected: {},
+      modelSelections: {},
+      credentialHomes: {},
       executables: {},
       workspace: "",
-    });
+      ...json(this.file),
+    };
+    this.nativeHome = options.home || os.homedir();
+    this.nativeEnv = options.env || process.env;
   }
   async refreshOAuth() {
     for (const { id } of SPECS) {
@@ -345,10 +332,12 @@ class HarnessManager {
   oauthSources() {
     return enumerateSources(
       this.codexDir,
-      os.homedir(),
+      this.nativeHome,
       this.state.profiles,
       (h, id) => this.root(h, id),
       this.piProviders,
+      this.nativeEnv,
+      this.state.credentialHomes,
     );
   }
   importOAuth(sourceId, label) {
@@ -394,23 +383,67 @@ class HarnessManager {
       oauthSources: this.oauthSources().map(
         ({ file, sourceProvider, ...s }) => s,
       ),
-      clients: SPECS.map((s) => ({
-        ...s,
-        executable: this.launcher(s.id).executable,
-        launcher: this.launcher(s.id),
-        selected: this.state.selected[s.id] || "",
-        accounts: [
-          ...apiAccounts(s.id, this.getState().providers),
+      clients: SPECS.map((s) => {
+        const native = discoverNative(s.id, {
+          home: this.nativeHome,
+          env: this.nativeEnv,
+          override: this.state.credentialHomes[s.id],
+          codexDir: this.codexDir,
+        });
+        const accounts = [
+          ...native.flatMap((source) => source.accounts),
           ...this.state.profiles
             .filter((p) => p.harness === s.id)
-            .map((p) => ({
-              ...p,
-              kind: "auth",
-              badge: "原生授权",
-              ...authSummary(s.id, this.root(s.id, p.id)),
-            })),
-        ],
-      })),
+            .flatMap((p) => {
+              const status = inspectCredentials(s.id, this.root(s.id, p.id));
+              const rows = status.rows.length
+                ? status.rows
+                : [
+                    {
+                      ready: false,
+                      providers: [],
+                      status: status.status,
+                      message: status.message,
+                    },
+                  ];
+              return rows.map((row) => ({
+                ...p,
+                ...row,
+                id: row.provider ? p.id + ":" + digest(row.provider) : p.id,
+                profileId: p.id,
+                oauthProvider: row.provider || p.oauthProvider,
+                kind: "auth",
+                source: "独立账户",
+                providers: row.provider ? [row.provider] : [],
+                label:
+                  rows.length > 1 ? p.label + " · " + row.provider : p.label,
+                badge: row.authType === "api" ? "API Key" : "OAuth",
+                sourcePath: status.file,
+              }));
+            }),
+          ...apiAccounts(s.id, this.getState().providers),
+        ];
+        const saved = this.state.selected[s.id];
+        const legacy = accounts.filter((a) => a.profileId === saved);
+        return {
+          ...s,
+          executable: this.launcher(s.id).executable,
+          launcher: this.launcher(s.id),
+          selected: accounts.some((a) => a.id === saved)
+            ? saved
+            : legacy.length === 1
+              ? legacy[0].id
+              : "",
+          modelSelections: this.state.modelSelections[s.id] || {},
+          credentialHome: this.state.credentialHomes[s.id] || "",
+          credentialSources: native.map(({ file, status, message }) => ({
+            file,
+            status,
+            message,
+          })),
+          accounts,
+        };
+      }),
     };
   }
   add(harness, label, oauthProvider = "") {
@@ -437,6 +470,25 @@ class HarnessManager {
     this.state.selected[harness] = id;
     this.save();
   }
+  selectModel(harness, accountId, model) {
+    const account = this.snapshot()
+      .clients.find((s) => s.id === harness)
+      ?.accounts.find((a) => a.id === accountId);
+    if (!account?.models?.some((m) => m.model === model))
+      throw Error("请选择此账户的兼容模型");
+    this.state.modelSelections[harness] ||= {};
+    this.state.modelSelections[harness][accountId] = model;
+    this.save();
+  }
+  setCredentialHome(harness, dir) {
+    this.spec(harness);
+    if (dir && harness === "opencode" && path.basename(dir).toLowerCase() !== "opencode")
+      throw Error("请选择 XDG 数据目录下包含 auth.json 的 opencode 文件夹");
+    if (dir && (!path.isAbsolute(dir) || !fs.statSync(dir).isDirectory()))
+      throw Error("请选择有效的凭据目录");
+    this.state.credentialHomes[harness] = dir;
+    this.save();
+  }
   setExecutable(harness, file) {
     this.spec(harness);
     const launcher = resolveLauncher(harness, file);
@@ -459,7 +511,9 @@ class HarnessManager {
       hint = "";
     if (account.kind === "api") {
       if (this.options.isConnected && !this.options.isConnected(harness))
-        throw Error("请先在此客户端页面开启 ASS 接入；API 密钥不会注入到未接入的客户端");
+        throw Error(
+          "请先在此客户端页面开启 ASS 接入；API 密钥不会注入到未接入的客户端",
+        );
       if (action !== "launch")
         throw new Error(
           "API 账户直接使用供应商密钥，无需网页登录；在供应商页编辑或移除",
@@ -469,7 +523,10 @@ class HarnessManager {
         ),
         m = p.models.find(
           (m) =>
-            m.model === (modelName || account.models[0]?.model) && m.enabled,
+            m.model ===
+              (modelName ||
+                this.state.modelSelections[harness]?.[accountId] ||
+                account.models[0]?.model) && m.enabled,
         );
       if (!m) throw new Error("请选择已启用模型");
       // One immutable configuration directory per account/model; switching cannot affect running clients.
@@ -496,18 +553,48 @@ class HarnessManager {
         ),
         this.options.port || 25819,
       ));
+    } else if (account.kind === "native") {
+      // Existing native homes are read/used in place. Never inject config into
+      // them or copy refresh tokens during a status check/account selection.
+      dir = account.nativeDir;
+      if (harness === "codex" && action !== "launch") args = [action];
+      if (["claude", "opencode"].includes(harness) && action !== "launch")
+        args = ["auth", action];
+      if (harness === "pi" && action === "launch")
+        args = ["--provider", account.provider];
+      if (["pi", "dsh"].includes(harness) && action !== "launch")
+        hint =
+          harness === "pi"
+            ? `请在 pi 窗口输入 /${action}，选择 ${account.provider}。`
+            : "请在 DSH 的授权设置中管理此账户。";
+      if (["opencode", "dsh"].includes(harness) && action === "launch")
+        hint = `本机配置目录已选定；请在 ${this.spec(harness).name} 内选择供应商 ${account.provider}。`;
     } else {
-      dir = this.root(harness, account.id);
+      dir = this.root(harness, account.profileId || account.id);
       if (harness === "codex") {
         if (action !== "launch") args = [action];
-        const routed = !this.options.isConnected || this.options.isConnected(harness);
+        const routed =
+          !this.options.isConnected || this.options.isConnected(harness);
         if (routed) {
           const existingFile = path.join(dir, "config.toml");
-          const existing = fs.existsSync(existingFile) ? fs.readFileSync(existingFile, "utf8") : "";
-          const own = this.options.injections?.entries.find((e) => e.relative === path.relative(this.dataDir, existingFile).replaceAll("\\", "/"));
-          const original = own ? own.before || "" : legacyBaseline("codex", "config.toml", existing);
-          if (original && !/^cli_auth_credentials_store = "file"\s*$/.test(original))
-            throw Error("此 Codex 授权账户含既有配置，请先检查其配置；ASS 不会直接覆盖");
+          const existing = fs.existsSync(existingFile)
+            ? fs.readFileSync(existingFile, "utf8")
+            : "";
+          const own = this.options.injections?.entries.find(
+            (e) =>
+              e.relative ===
+              path.relative(this.dataDir, existingFile).replaceAll("\\", "/"),
+          );
+          const original = own
+            ? own.before || ""
+            : legacyBaseline("codex", "config.toml", existing);
+          if (
+            original &&
+            !/^cli_auth_credentials_store = "file"\s*$/.test(original)
+          )
+            throw Error(
+              "此 Codex 授权账户含既有配置，请先检查其配置；ASS 不会直接覆盖",
+            );
           files.push([
             "config.toml",
             `cli_auth_credentials_store = "file"\nmodel_provider = "ass_official"\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = "http://127.0.0.1:${this.options.port || 25819}/clients/codex/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n`,
@@ -529,21 +616,59 @@ class HarnessManager {
             (account.oauthProvider ? " " + account.oauthProvider : "") +
             "，由原生客户端完成授权。";
       }
+      if (harness === "dsh") {
+        args = ["--profile", "tui"];
+        if (action !== "launch")
+          hint =
+            "请在 DSH 的授权设置中完成登录或退出；登录方式由已安装的插件提供。";
+      }
+    }
+    const env =
+      account.kind === "native"
+        ? isolatedEnv(harness, dir, this.nativeEnv)
+        : { ...isolatedEnv(harness, dir), ...addEnv };
+    if (account.kind === "native") {
+      // An inherited API key must not silently override the selected OAuth.
+      // Keep native data/config roots, but clear cross-account auth overrides.
+      if (account.id === "native:claude-env")
+        env.CLAUDE_CODE_OAUTH_TOKEN = this.nativeEnv.CLAUDE_CODE_OAUTH_TOKEN;
+      delete env.ELECTRON_RUN_AS_NODE;
+      delete env.NODE_TLS_REJECT_UNAUTHORIZED;
+      delete env.ASS_LOCAL_TOKEN;
+      if (harness === "codex") env.CODEX_HOME = dir;
+      if (harness === "claude") env.CLAUDE_CONFIG_DIR = dir;
+      if (harness === "pi") env.PI_CODING_AGENT_DIR = dir;
+      if (harness === "dsh") env.DSH_HOME = dir;
+      if (harness === "opencode") {
+        env.XDG_DATA_HOME = path.dirname(dir);
+        for (const key of [
+          "XDG_CONFIG_HOME",
+          "XDG_STATE_HOME",
+          "XDG_CACHE_HOME",
+        ])
+          if (this.nativeEnv[key]) env[key] = this.nativeEnv[key];
+          else delete env[key];
+      }
     }
     return {
       dir,
       args,
-      env: { ...isolatedEnv(harness, dir), ...addEnv },
+      env,
       files,
       hint,
       accountKind: account.kind,
       harness,
-      routed: account.kind === "api" || (harness === "codex" && (!this.options.isConnected || this.options.isConnected(harness))),
+      routed:
+        account.kind === "api" ||
+        (account.kind === "auth" &&
+          harness === "codex" &&
+          (!this.options.isConnected || this.options.isConnected(harness))),
     };
   }
   materialize(plan) {
     fs.mkdirSync(plan.dir, { recursive: true });
-    if (plan.routed && this.options.injections) return this.options.injections.write(plan.harness, plan);
+    if (plan.routed && this.options.injections)
+      return this.options.injections.write(plan.harness, plan);
     for (const [name, content] of plan.files)
       atomic(path.join(plan.dir, name), content);
   }
@@ -594,15 +719,26 @@ class HarnessManager {
     let tracking = "";
     if (this.options.processes) {
       try {
-        await this.options.processes.register({ id: marker, harness, account, label: this.spec(harness).name + " · " + action, pid: child.pid, marker });
+        await this.options.processes.register({
+          id: marker,
+          harness,
+          account,
+          label: this.spec(harness).name + " · " + action,
+          pid: child.pid,
+          marker,
+        });
       } catch {
         tracking = "；窗口身份登记失败，请手动关闭该窗口后再断开接入";
       }
     }
     this.select(harness, account);
+    if (plan.accountKind === "api" && model)
+      this.selectModel(harness, account, model);
     return {
       ok: true,
-      message: (plan.hint || "已打开独立客户端窗口；账户切换仅影响本次新启动。") + tracking,
+      message:
+        (plan.hint || "已打开独立客户端窗口；账户切换仅影响本次新启动。") +
+        tracking,
     };
   }
 }

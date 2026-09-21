@@ -17,7 +17,7 @@ import {
   LogIn,
 } from "lucide-react";
 import { Modal, ProviderEditor } from "./editors.jsx";
-import { AccountForm } from "./clients.jsx";
+
 import "./official-accounts.css";
 const api = window.ass;
 function NativeKeyForm({ service, account, onClose }) {
@@ -91,22 +91,6 @@ function NativeKeyForm({ service, account, onClose }) {
     </Modal>
   );
 }
-function authRows(state, service) {
-  if (!service.oauth) return [];
-  return state.harnesses.clients.flatMap((client) =>
-    client.accounts
-      .filter(
-        (a) =>
-          a.kind === "auth" &&
-          ((service.oauth.harness !== "pi" &&
-            client.id === service.oauth.harness) ||
-            (client.id === "pi" &&
-              (a.oauthProvider === service.oauth.pi ||
-                a.providers?.includes(service.oauth.pi)))),
-      )
-      .map((a) => ({ ...a, client })),
-  );
-}
 export function OfficialAccounts({
   state,
   act,
@@ -114,12 +98,11 @@ export function OfficialAccounts({
   openClient,
   openProvider,
 }) {
-  const [selected, setSelected] = useState("openai"),
+  const [selected, setSelected] = useState(state.preferences.officialService),
     [search, setSearch] = useState(""),
     [onlySaved, setOnlySaved] = useState(false),
     [editor, setEditor] = useState(null),
     [native, setNative] = useState(null),
-    [addingAuth, setAddingAuth] = useState(false),
     [notice, setNotice] = useState("");
   const services = state.officialServices,
     service = services.find((s) => s.id === selected) || services[0];
@@ -128,13 +111,10 @@ export function OfficialAccounts({
     ),
     nativeAccounts = state.nativeAccounts.filter(
       (a) => a.vendorId === service.id,
-    ),
-    oauth = authRows(state, service);
+    );
   const count = (s) =>
     state.providers.filter((p) => state.officialProviderIds[p.id] === s.id)
-      .length +
-    state.nativeAccounts.filter((a) => a.vendorId === s.id).length +
-    authRows(state, s).length;
+      .length + state.nativeAccounts.filter((a) => a.vendorId === s.id).length;
   const shown = services.filter(
     (s) =>
       (!onlySaved || count(s)) &&
@@ -142,13 +122,6 @@ export function OfficialAccounts({
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
-  const client = state.harnesses.clients.find(
-    (c) => c.id === service.oauth?.harness,
-  );
-  const authAvailable =
-    client &&
-    (client.id !== "pi" ||
-      state.harnesses.piOAuthProviders.some((p) => p.id === service.oauth.pi));
   const auth = state.openRouterAuth,
     authorizing = ["waiting", "exchanging"].includes(auth.status);
   const open = (target) =>
@@ -163,17 +136,6 @@ export function OfficialAccounts({
     });
   return (
     <>
-      <div className="accounts-banner">
-        <ShieldCheck size={23} />
-        <div>
-          <strong>凭据统一管理，授权方式各自独立</strong>
-          <p>
-            API 按供应商额度计费；订阅 OAuth
-            由原生客户端登录和刷新。保存凭据不代表连接已通过。
-          </p>
-        </div>
-        <span className="tag">{services.length} 组官方服务</span>
-      </div>
       <div className="official-layout">
         <aside className="official-directory">
           <label className="search">
@@ -201,6 +163,9 @@ export function OfficialAccounts({
                 className={service.id === s.id ? "active" : ""}
                 onClick={() => {
                   setSelected(s.id);
+                  act("ui-preferences", () =>
+                    api.call("ui-preferences", { officialService: s.id }),
+                  );
                   setNotice("");
                 }}
               >
@@ -263,16 +228,13 @@ export function OfficialAccounts({
               </span>
             )}
             {service.oauth && (
-              <span>
-                <UserRound size={14} />
-                原生 OAuth · 独立目录
-              </span>
-            )}
-            {service.pkce && (
-              <span>
-                <Globe size={14} />
-                PKCE → API Key
-              </span>
+              <button
+                className="button"
+                onClick={() => openClient(service.oauth.harness)}
+              >
+                在客户端管理授权
+                <ChevronRight size={14} />
+              </button>
             )}
             {service.nativeKey && (
               <span>
@@ -459,107 +421,6 @@ export function OfficialAccounts({
               </button>
             </section>
           )}
-          {service.oauth && (
-            <section className="official-section">
-              <div className="section-heading">
-                <h3>
-                  订阅 / OAuth 账户{" "}
-                  <span className="count">{oauth.length}</span>
-                </h3>
-                <div className="actions">
-                  <button
-                    className="icon-button"
-                    aria-label="刷新授权状态"
-                    onClick={() =>
-                      act("client-refresh", () => api.call("client-refresh"))
-                    }
-                  >
-                    <RefreshCw size={15} />
-                  </button>
-                  <button
-                    className="button"
-                    disabled={!authAvailable}
-                    onClick={() => setAddingAuth(true)}
-                  >
-                    <Plus size={14} />
-                    添加授权账户
-                  </button>
-                </div>
-              </div>
-              {!authAvailable && (
-                <p className="hint">
-                  请先安装并识别支持 {service.oauth.pi} 的
-                  pi；未确认兼容时不会创建看似可用的授权入口。
-                </p>
-              )}
-              {!oauth.length && (
-                <p className="account-empty compact">
-                  创建独立账户后，从原生客户端完成登录。ASS 不读取浏览器
-                  Cookie。
-                </p>
-              )}
-              {oauth.map((a) => (
-                <article className="official-account" key={a.client.id + a.id}>
-                  <div className="official-account-title">
-                    <UserRound size={18} />
-                    <div>
-                      <strong>{a.label}</strong>
-                      <small>
-                        {a.client.name} · {a.message}
-                      </small>
-                    </div>
-                    {a.client.selected === a.id && (
-                      <span className="tag good">
-                        <Check size={12} />
-                        已选择
-                      </span>
-                    )}
-                  </div>
-                  <div className="official-account-meta">
-                    <span>独立原生凭据，不改变已运行会话</span>
-                    <div className="actions">
-                      <button
-                        className="text-button"
-                        disabled={!a.client.executable || !!busy}
-                        onClick={() =>
-                          act("auth-login", async () => {
-                            const r = await api.call(
-                              "client-launch",
-                              a.client.id,
-                              a.id,
-                              "login",
-                            );
-                            setNotice(r?.message || "");
-                            return r;
-                          })
-                        }
-                      >
-                        <LogIn size={14} />
-                        登录授权
-                      </button>
-                      <button
-                        className="button"
-                        disabled={!!busy}
-                        onClick={() => chooseAccount(a.client, a.id)}
-                      >
-                        选择 / 启动
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              ))}
-              {service.oauth.pi && (
-                <button
-                  className="text-button"
-                  onClick={() => openClient("pi")}
-                >
-                  查看兼容授权并导入到 pi
-                  <ChevronRight size={14} />
-                </button>
-              )}
-            </section>
-          )}
           {service.nativeKey && (
             <section className="official-section">
               <div className="section-heading">
@@ -663,16 +524,6 @@ export function OfficialAccounts({
           service={service}
           account={native.id ? native : null}
           onClose={() => setNative(null)}
-        />
-      )}
-      {addingAuth && (
-        <AccountForm
-          client={client}
-          initialProvider={client.id === "pi" ? service.oauth.pi : ""}
-          onClose={() => setAddingAuth(false)}
-          onSave={(label, provider) =>
-            api.call("account-add", client.id, label, provider)
-          }
         />
       )}
     </>
