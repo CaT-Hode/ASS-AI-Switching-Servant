@@ -30,7 +30,7 @@ function Field({ label, hint, children }) {
     </div>
   );
 }
-export function Modal({ title, description, onClose, children, dismissible = true }) {
+export function Modal({ title, description, onClose, children, dismissible = true, className = "wide", closeButton = true }) {
   const ref = useRef(null),
     closing = useRef(false);
   useEffect(() => {
@@ -48,7 +48,7 @@ export function Modal({ title, description, onClose, children, dismissible = tru
       ],
       { duration: reduce ? 100 : 180, easing: "cubic-bezier(0.23,1,0.32,1)" },
     );
-    el.querySelector("input,select")?.focus({ preventScroll: true });
+    el.querySelector("[data-autofocus],input,select")?.focus({ preventScroll: true });
     return () => {
       animation.cancel();
       if (el.open) el.close();
@@ -84,7 +84,7 @@ export function Modal({ title, description, onClose, children, dismissible = tru
   return (
     <dialog
       ref={ref}
-      className="modal wide"
+      className={"modal " + className}
       aria-label={title}
       onCancel={(e) => {
         e.preventDefault();
@@ -94,9 +94,9 @@ export function Modal({ title, description, onClose, children, dismissible = tru
       <header>
         <div>
           <h2>{title}</h2>
-          <p>{description}</p>
+          {description && <p>{description}</p>}
         </div>
-        <button
+        {closeButton && <button
           type="button"
           className="icon-button"
           aria-label="关闭"
@@ -104,7 +104,7 @@ export function Modal({ title, description, onClose, children, dismissible = tru
           onClick={close}
         >
           <X size={19} />
-        </button>
+        </button>}
       </header>
       {children}
     </dialog>

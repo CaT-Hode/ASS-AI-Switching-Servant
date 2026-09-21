@@ -129,9 +129,9 @@ fs.mkdirSync(output, { recursive: true });
     await page.getByRole("button", { name: "客户端与账户", exact: true }).click();
     async function toggleCodex() {
       await page.getByRole("switch", { name: "Codex ASS 接入", exact: true }).click();
-      await page.getByRole("button", { name: "继续查看影响" }).click();
-      await page.getByRole("dialog").getByRole("checkbox").check();
-      await page.getByRole("dialog").getByRole("button", { name: /^确认(开启|断开)接入$/ }).click();
+      assert.equal(await page.getByRole("dialog").getByRole("button").count(), 2);
+      assert.equal(await page.getByRole("dialog").getByRole("checkbox").count(), 0);
+      await page.getByRole("dialog").getByRole("button", { name: "确定", exact: true }).click();
       await page.getByRole("dialog").waitFor({ state: "hidden" });
     }
     await toggleCodex();
