@@ -76,7 +76,13 @@ function routeFor(body, state, suffix = "") {
   };
 }
 class Router {
-  constructor({ getState, fetchUpstream, log = () => {}, allowClient = () => true, onActivity = () => {} }) {
+  constructor({
+    getState,
+    fetchUpstream,
+    log = () => {},
+    allowClient = () => true,
+    onActivity = () => {},
+  }) {
     this.getState = getState;
     this.fetch = fetchUpstream;
     this.log = log;
@@ -90,6 +96,7 @@ class Router {
     this.clientToken = crypto.randomBytes(32).toString("hex");
   }
   async start(port = this.port) {
+    if (this.starting) return this.starting;
     if (!Number.isInteger(port) || port < 0 || port > 65535)
       throw Error("无效本机端口");
     if (!this.server) this.port = port;
@@ -97,13 +104,20 @@ class Router {
     const server = http.createServer((q, s) => this.handle(q, s));
     server.requestTimeout = 300000;
     server.headersTimeout = 60000;
-    await new Promise((resolve, reject) => {
+    this.starting = new Promise((resolve, reject) => {
       server.once("error", reject);
       server.listen(this.port, "127.0.0.1", resolve);
-    });
-    this.server = server;
+    })
+      .then(() => {
+        this.server = server;
+      })
+      .finally(() => {
+        this.starting = null;
+      });
+    return this.starting;
   }
   async stop() {
+    if (this.starting) await this.starting.catch(() => {});
     if (!this.server) return;
     for (const c of this.controllers) c.abort();
     const s = this.server;
@@ -112,7 +126,8 @@ class Router {
     await new Promise((r) => s.close(r));
   }
   clientActive(id) {
-    return [...this.requests.values()].filter((r) => !id || r.client === id).length;
+    return [...this.requests.values()].filter((r) => !id || r.client === id)
+      .length;
   }
   async handle(req, res) {
     const began = Date.now();
@@ -130,17 +145,28 @@ class Router {
       )
         throw Object.assign(new Error("仅允许本机应用请求"), { status: 403 });
       if (req.url !== "/health") {
-        const scoped = /^\/clients\/(codex|claude|opencode|pi|dsh)(\/.*)$/.exec(req.url);
-        let client = scoped?.[1] || (req.url.startsWith("/harness/") ? "legacy" : "codex");
+        const scoped = /^\/clients\/(codex|claude|opencode|pi|dsh)(\/.*)$/.exec(
+          req.url,
+        );
+        let client =
+          scoped?.[1] || (req.url.startsWith("/harness/") ? "legacy" : "codex");
         if (scoped) req.url = scoped[2];
         if (req.url.startsWith("/diagnostics/")) {
           if (req.headers["x-ass-probe-token"] !== this.clientToken)
             throw Object.assign(new Error("无效检测凭据"), { status: 401 });
           client = "diagnostics";
           req.url = req.url.slice("/diagnostics".length);
-          if (!this.allowClient(client)) throw Object.assign(new Error("接入正在切换，请稍后检测"), { status: 503 });
+          if (!this.allowClient(client))
+            throw Object.assign(new Error("接入正在切换，请稍后检测"), {
+              status: 503,
+            });
         } else if (!this.allowClient(client)) {
-          throw Object.assign(new Error("此客户端的 ASS 接入已关闭或正在切换，请从客户端页面重新接入"), { status: 503 });
+          throw Object.assign(
+            new Error(
+              "此客户端的 ASS 接入已关闭或正在切换，请从客户端页面重新接入",
+            ),
+            { status: 503 },
+          );
         }
         // Count at admission, including uploads: a stop must not race a request body.
         this.requests.set(req, { client, res });

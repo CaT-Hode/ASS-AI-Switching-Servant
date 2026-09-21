@@ -442,7 +442,7 @@ async function run() {
     );
     await row.getByRole("button", { name: "取消", exact: true }).click();
     const menu = row.getByRole("button", {
-      name: "alpha-new 高级操作",
+      name: "alpha-new 模型操作",
       exact: true,
     });
     await menu.click();
@@ -452,7 +452,7 @@ async function run() {
     await page.keyboard.press("End");
     assert.equal(
       await page
-        .getByRole("menuitem", { name: "高级设置", exact: true })
+        .getByRole("menuitem", { name: "删除模型", exact: true })
         .evaluate((e) => e === document.activeElement),
       true,
     );
@@ -462,11 +462,22 @@ async function run() {
       true,
     );
     // The right-side level 3 shifts the level-2 list left, with no overlap.
-    const advanced = row.getByRole("button", {
-      name: "alpha-new 详细设置",
-      exact: true,
-    });
-    await advanced.click();
+    const advanced = menu;
+    const openAdvanced = async () => {
+      await advanced.click();
+      await page
+        .getByRole("menuitem", { name: "详细设置", exact: true })
+        .click();
+    };
+    const deleteModel = async (name) => {
+      await page
+        .getByRole("button", { name: name + " 模型操作", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "删除模型", exact: true })
+        .click();
+    };
+    await openAdvanced();
     let detailDialog = page.getByRole("dialog", {
       name: "模型设置",
       exact: true,
@@ -518,9 +529,7 @@ async function run() {
     await app.evaluate(() => {
       global.assTest.confirm = 0;
     });
-    await page
-      .getByRole("button", { name: "删除模型 beta", exact: true })
-      .click();
+    await deleteModel("beta");
     await page.waitForTimeout(150);
     assert.equal(
       (await snapshot()).providers.find((p) => p.id === "work").models.length,
@@ -532,9 +541,7 @@ async function run() {
     await app.evaluate(() => {
       global.assTest.confirm = 1;
     });
-    await page
-      .getByRole("button", { name: "删除模型 beta", exact: true })
-      .click();
+    await deleteModel("beta");
     await page
       .getByRole("form", { name: "beta 行内配置", exact: true })
       .waitFor({ state: "hidden" });
@@ -567,9 +574,7 @@ async function run() {
     await page
       .getByRole("form", { name: "manual-test 行内配置", exact: true })
       .waitFor();
-    await page
-      .getByRole("button", { name: "删除模型 manual-test", exact: true })
-      .click();
+    await deleteModel("manual-test");
     await page
       .getByRole("form", { name: "manual-test 行内配置", exact: true })
       .waitFor({ state: "hidden" });
@@ -606,7 +611,7 @@ async function run() {
       const centered = await page
         .locator(".provider-model-dialog")
         .boundingBox();
-      await advanced.click();
+      await openAdvanced();
       await detailDialog.waitFor();
       await page.waitForFunction(() => {
         const list = document
@@ -660,7 +665,7 @@ async function run() {
       );
     }
     for (let i = 0; i < 3; i++) {
-      await advanced.click();
+      await openAdvanced();
       await detailDialog.waitFor();
       await page.keyboard.press("Escape");
       await detailDialog.waitFor({ state: "hidden" });
@@ -708,7 +713,7 @@ async function run() {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await openWork.click();
     await section.waitFor();
-    await advanced.click();
+    await openAdvanced();
     await detailDialog.waitFor();
     assert.equal(
       await page

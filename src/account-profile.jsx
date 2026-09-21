@@ -52,7 +52,9 @@ export function AccountProfile({ account, client, state, act, busy }) {
           : 3;
   const facts = p.fields
     .filter(
-      (f) => !["email", "name", "keyLabel", "plan", "scopes"].includes(f.id),
+      (f) =>
+        f.kind !== "quota" &&
+        !["email", "name", "keyLabel", "plan", "scopes"].includes(f.id),
     )
     .sort((a, b) => priority(a) - priority(b));
   const scopes = p.fields.filter((f) => f.id === "scopes");
@@ -76,6 +78,45 @@ export function AccountProfile({ account, client, state, act, busy }) {
         </div>
       )}
       <Facts fields={facts.slice(0, 6)} />
+      {p.fields.some((f) => f.kind === "quota") && (
+        <div className="account-quotas">
+          {p.fields
+            .filter((f) => f.kind === "quota")
+            .map((f) => (
+              <div
+                className={
+                  "account-quota" +
+                  (f.status === "rate-limited" ? " limited" : "")
+                }
+                key={f.id}
+              >
+                <div>
+                  <strong>{f.label}</strong>
+                  <span>剩余 {Number(f.remainingPercent.toFixed(1))}%</span>
+                </div>
+                <progress
+                  aria-label={f.label + " 已用比例"}
+                  value={Math.min(100, f.usedPercent)}
+                  max={100}
+                />
+                <small>
+                  已用 {Number(f.usedPercent.toFixed(1))}%
+                  {f.status === "rate-limited" ? " · 已达上限" : ""}
+                  {f.resetsAt && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      {new Date(f.resetsAt).toLocaleString("zh-CN", {
+                        hour12: false,
+                      })}{" "}
+                      重置
+                    </>
+                  )}
+                </small>
+              </div>
+            ))}
+        </div>
+      )}
       {more.length > 0 && (
         <details className="account-profile-more">
           <summary>更多资料</summary>
@@ -90,8 +131,19 @@ export function AccountProfile({ account, client, state, act, busy }) {
           </summary>
           {p.updatedAt && (
             <time dateTime={p.updatedAt}>
-              {account.kind === "api" ? "上次成功查询" : "凭据文件更新"}：
+              {p.remote || account.kind === "api"
+                ? "上次成功查询"
+                : "凭据文件更新"}
+              ：
               {new Date(p.updatedAt).toLocaleString("zh-CN", { hour12: false })}
+            </time>
+          )}
+          {p.credentialUpdatedAt && (
+            <time dateTime={p.credentialUpdatedAt}>
+              凭据文件更新：
+              {new Date(p.credentialUpdatedAt).toLocaleString("zh-CN", {
+                hour12: false,
+              })}
             </time>
           )}
           {p.metadataUpdatedAt && (
@@ -102,7 +154,7 @@ export function AccountProfile({ account, client, state, act, busy }) {
               })}
             </time>
           )}
-          {account.kind !== "api" && (
+          {account.authType !== "api" && account.kind !== "api" && (
             <p>本地声明不等于当前权益；令牌到期也不代表订阅到期。</p>
           )}
           {p.note && <p>{p.note}</p>}
@@ -124,6 +176,19 @@ export function AccountProfile({ account, client, state, act, busy }) {
             )}
           </div>
         </details>
+        {p.consoleService && (
+          <button
+            className="text-button"
+            onClick={() =>
+              act("official-open", () =>
+                api.call("official-open", p.consoleService, "console"),
+              )
+            }
+          >
+            控制台
+            <ExternalLink size={12} />
+          </button>
+        )}
         {p.canRefresh && (
           <button
             className="icon-button"

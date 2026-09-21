@@ -699,3 +699,29 @@
   color: #97601c;
   margin: 6px 0 0;
 }
+.account-quotas {
+  display: grid;
+  gap: 14px;
+  margin: 16px 0;
+}
+.account-quota > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+.account-quota progress {
+  display: block;
+  width: 100%;
+  height: 5px;
+  margin: 8px 0;
+  accent-color: var(--accent);
+}
+.account-quota small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.account-quota.limited progress {
+  accent-color: var(--danger);
+}

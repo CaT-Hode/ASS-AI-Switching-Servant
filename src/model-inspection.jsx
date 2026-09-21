@@ -27,7 +27,7 @@ const declaration = (v) =>
 export function ModelCheckButton({ provider, model, state, act, busy }) {
   const key = modelKey(provider.id, model.model),
     result = state.diagnostics[key];
-  const running = busy === "diag-" + key;
+  const running = busy === "diag-" + key || state.diagnosticJobs?.[key];
   return (
     <button
       type="button"
@@ -41,7 +41,13 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
           ? result.message + " · 点击重新检测"
           : "检测此模型连接（小请求，可能计费）"
       }
-      disabled={!!busy || model.enabled === false || provider.enabled === false}
+      disabled={
+        !!busy ||
+        state.diagnosticBatch?.running ||
+        running ||
+        model.enabled === false ||
+        provider.enabled === false
+      }
       onClick={() =>
         act("diag-" + key, () => api.call("diagnose", provider.id, model.model))
       }
@@ -167,7 +173,10 @@ export function ModelCapabilityDialog({
             <button
               className="button primary"
               disabled={
-                !!busy || provider.id === "official" || model.enabled === false
+                !!busy ||
+                state.diagnosticBatch?.running ||
+                provider.id === "official" ||
+                model.enabled === false
               }
               onClick={() =>
                 act("probe-" + key, () =>

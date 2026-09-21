@@ -247,6 +247,43 @@ main {
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
 }
+.diagnostic-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+.diagnostic-toolbar h2 {
+  margin: 0 0 8px;
+}
+.diagnostic-toolbar p {
+  margin: 0;
+  font-size: 12px;
+}
+.diagnostic-toolbar .button {
+  flex-shrink: 0;
+}
+.diagnostic-progress {
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.diagnostic-progress > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.diagnostic-progress progress {
+  width: 100%;
+  height: 5px;
+  display: block;
+  accent-color: var(--accent);
+}
 .overview-grid > section {
   padding: 21px 19px;
 }

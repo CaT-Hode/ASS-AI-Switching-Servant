@@ -4,6 +4,7 @@ class ModelDirectory {
   constructor({
     getProvider,
     readOfficial,
+    readNative,
     fetchUpstream,
     onChange = () => {},
     now = Date.now,
@@ -11,6 +12,7 @@ class ModelDirectory {
     Object.assign(this, {
       getProvider,
       readOfficial,
+      readNative,
       fetchUpstream,
       onChange,
       now,
@@ -47,8 +49,9 @@ class ModelDirectory {
     const ttl = cached?.error ? 30000 : 5 * 60 * 1000;
     if (!refresh && cached && this.now() - this.completed.get(id) < ttl)
       return Promise.resolve(cached);
-    const provider = id === "official" ? null : this.getProvider(id);
-    if (id !== "official" && !provider)
+    const native = !!this.readNative && id.startsWith("native-");
+    const provider = id === "official" || native ? null : this.getProvider(id);
+    if (id !== "official" && !native && !provider)
       return Promise.reject(Error("供应商不存在"));
     const request = { controller: new AbortController(), promise: null };
     this.requests.set(id, request);
@@ -56,8 +59,9 @@ class ModelDirectory {
       .then(async () => {
         let report;
         try {
-          report =
-            id === "official"
+          report = native
+            ? await this.readNative(id, request.controller.signal)
+            : id === "official"
               ? await this.readOfficial()
               : await discoverModels(
                   provider,

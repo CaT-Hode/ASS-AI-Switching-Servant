@@ -10,6 +10,7 @@ import {
   Check,
   Layers,
   UserRound,
+  RefreshCw,
 } from "lucide-react";
 import { Modal, ModelEditor, ProviderEditor } from "./editors.jsx";
 import { ActionMenu } from "./menus.jsx";
@@ -405,40 +406,26 @@ function InlineModel({
           ) : (
             <>
               <ModelCheckButton provider={p} {...{ model, state, act, busy }} />
-              <button
-                type="button"
-                className="button"
-                aria-label={model.model + " 详细设置"}
-                onClick={onAdvanced}
-                disabled={disabled}
-              >
-                <Settings2 size={14} />
-                详细设置
-              </button>
               <ActionMenu
-                label={model.model + " 高级操作"}
+                label={model.model + " 模型操作"}
+                text="模型操作"
                 items={[
+                  { label: "详细设置", icon: Settings2, action: onAdvanced },
                   { label: "能力详情", icon: ScanSearch, action: onInspect },
-                  { label: "高级设置", icon: Settings2, action: onAdvanced },
+                  {
+                    label: "删除模型",
+                    icon: Trash2,
+                    danger: true,
+                    action: () =>
+                      act("delete-model", () =>
+                        api.call("delete-model", p.id, model.model, model),
+                      ),
+                  },
                 ]}
                 disabled={disabled}
               />
             </>
           )}
-          <button
-            type="button"
-            className="icon-button danger"
-            aria-label={"删除模型 " + model.model}
-            title="删除模型"
-            disabled={disabled || dirty}
-            onClick={() =>
-              act("delete-model", () =>
-                api.call("delete-model", p.id, model.model, model),
-              )
-            }
-          >
-            <Trash2 size={16} />
-          </button>
         </div>
       </footer>
       {error && (
@@ -488,7 +475,7 @@ export function Providers({
   const sideOpen = !!(editor || inspection || directory || providerEditor);
   const revision = state.modelDirectoryRevisions?.[p?.id] || 0;
   useEffect(() => {
-    if (p && !p.readOnly && (p.hasKey || p.id === "official"))
+    if (p && (p.readOnly || p.hasKey || p.id === "official"))
       api.call("models-discover", p.id).catch(() => {});
   }, [p?.id, p?.hasKey, p?.readOnly, revision]);
   const boundClients =
@@ -631,7 +618,7 @@ export function Providers({
                   <span className="count">{p.models.length}</span>
                 </h2>
                 {p.readOnly && (
-                  <p className="catalog-caption">由原生客户端管理</p>
+                  <p className="catalog-caption">{p.catalogSource}</p>
                 )}
               </div>
               <div className="actions">
@@ -644,6 +631,25 @@ export function Providers({
                     onChange={(e) => setModelSearch(e.target.value)}
                   />
                 </label>
+                {p.readOnly && (
+                  <button
+                    className="button"
+                    disabled={!!state.modelDirectoryJobs[p.id]}
+                    onClick={() =>
+                      act("native-catalog", () =>
+                        api.call("models-discover", p.id, true),
+                      )
+                    }
+                  >
+                    <RefreshCw
+                      size={14}
+                      className={
+                        state.modelDirectoryJobs[p.id] ? "spin" : undefined
+                      }
+                    />
+                    刷新目录
+                  </button>
+                )}
                 {!p.readOnly && (
                   <>
                     <button
@@ -719,6 +725,14 @@ export function Providers({
                         : "填写 API Key 后自动读取模型目录"}
               </p>
             )}
+            {p.readOnly &&
+              (p.catalogError || state.modelDirectoryJobs[p.id]) && (
+                <p className="catalog-caption" role="status">
+                  {state.modelDirectoryJobs[p.id]
+                    ? "正在读取原生账户模型目录…"
+                    : p.catalogError}
+                </p>
+              )}
             {!p.models.length && (
               <p className="supplier-empty">
                 {p.readOnly
@@ -740,10 +754,16 @@ export function Providers({
               )
               .map((m) =>
                 p.readOnly ? (
-                  <div className="native-model-row" key={m.model}>
+                  <div
+                    className="native-model-row"
+                    key={(m.nativeProvider || "") + "::" + m.model}
+                  >
                     <div>
                       <strong>{m.displayName || m.model}</strong>
-                      <small>{m.model}</small>
+                      <small>
+                        {m.nativeProvider ? m.nativeProvider + " / " : ""}
+                        {m.model}
+                      </small>
                     </div>
                     <span>
                       {protocols[m.wireApi] || m.wireApi || "原生协议"}

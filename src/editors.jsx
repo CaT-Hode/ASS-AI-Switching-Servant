@@ -41,7 +41,8 @@ export function Modal({
   fallbackFocus,
 }) {
   const ref = useRef(null),
-    closing = useRef(false);
+    closing = useRef(false),
+    outsidePointer = useRef(null);
   useEffect(() => {
     const el = ref.current,
       previous = document.activeElement;
@@ -102,11 +103,38 @@ export function Modal({
       .finished.then(onClose)
       .catch(() => {});
   }
+  function outside(e) {
+    if (e.target !== ref.current) return false;
+    const r = ref.current.getBoundingClientRect();
+    return (
+      e.clientX < r.left ||
+      e.clientX > r.right ||
+      e.clientY < r.top ||
+      e.clientY > r.bottom
+    );
+  }
   return (
     <dialog
       ref={ref}
       className={"modal " + className}
       aria-label={title}
+      onPointerDown={(e) => {
+        outsidePointer.current =
+          e.button === 0 && outside(e) ? e.pointerId : null;
+      }}
+      onPointerCancel={() => {
+        outsidePointer.current = null;
+      }}
+      onPointerUp={(e) => {
+        const dismiss = outsidePointer.current === e.pointerId && outside(e);
+        outsidePointer.current = null;
+        if (!dismiss) return;
+        // Keep the modal in the top layer until its exit finishes. This click
+        // must not fall through to the parent dialog or close two levels.
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      }}
       onCancel={(e) => {
         e.preventDefault();
         close();
@@ -218,6 +246,7 @@ export function ModelEditor({ provider, model, onSave, onClose, className }) {
       title={model ? "模型设置" : "添加模型"}
       description={provider.name + " · 只作用于此模型"}
       className={className}
+      dismissible={!busy}
       onClose={onClose}
     >
       <form onSubmit={save}>
@@ -496,6 +525,7 @@ export function ProviderEditor({
       description="连接、凭据与余额接口"
       className={className}
       onClose={onClose}
+      dismissible={!busy}
     >
       <div className="tabs">
         <button

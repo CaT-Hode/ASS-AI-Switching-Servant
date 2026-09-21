@@ -153,7 +153,8 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
           disabled={!plan || busy}
           onClick={commit}
         >
-          {busy && <Loader2 size={14} className="spin" />}确定
+          {busy && <Loader2 size={14} className="spin" />}
+          {request.quit ? "直接退出" : "确定"}
         </button>
       </footer>
     </Modal>

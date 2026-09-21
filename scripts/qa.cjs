@@ -66,9 +66,9 @@ fs.mkdirSync(output, { recursive: true });
       .getByRole("button", { name: "查看 示例供应商 的模型", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "gpt-6-astra 高级操作", exact: true })
+      .getByRole("button", { name: "gpt-6-astra 模型操作", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "高级设置", exact: true }).click();
+    await page.getByRole("menuitem", { name: "详细设置", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "模型设置", exact: true });
     await dialog
       .getByRole("slider", { name: "最高可选强度", exact: true })
@@ -96,9 +96,9 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(saved.defaultEffort, "ultra");
     assert.ok(saved.efforts.includes("max"));
     await page
-      .getByRole("button", { name: "claude-opus-5 高级操作", exact: true })
+      .getByRole("button", { name: "claude-opus-5 模型操作", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "高级设置", exact: true }).click();
+    await page.getByRole("menuitem", { name: "详细设置", exact: true }).click();
     assert.equal(
       await page
         .getByRole("slider", { name: "最高可选强度", exact: true })

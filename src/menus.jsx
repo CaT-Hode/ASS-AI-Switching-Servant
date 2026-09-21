@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from "react";
-import { MoreHorizontal } from "lucide-react";
+import { ChevronDown, MoreHorizontal } from "lucide-react";
 
-export function ActionMenu({ label, items, disabled = false }) {
+export function ActionMenu({ label, items, disabled = false, text }) {
   const [open, setOpen] = useState(false),
     root = useRef(null),
     trigger = useRef(null),
@@ -29,7 +29,7 @@ export function ActionMenu({ label, items, disabled = false }) {
     >
       <button
         type="button"
-        className="icon-button"
+        className={text ? "button" : "icon-button"}
         ref={trigger}
         aria-label={label}
         aria-haspopup="menu"
@@ -38,7 +38,14 @@ export function ActionMenu({ label, items, disabled = false }) {
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
       >
-        <MoreHorizontal size={18} />
+        {text ? (
+          <>
+            {text}
+            <ChevronDown size={14} />
+          </>
+        ) : (
+          <MoreHorizontal size={18} />
+        )}
       </button>
       {open && (
         <div

@@ -26,8 +26,13 @@ const {
   declaredCapabilities,
   probeCapabilities,
   inspectStream,
+  discoverModels,
 } = require("../core/model-inspection.cjs");
 const { ModelDirectory } = require("../core/model-directory.cjs");
+const {
+  DiagnosticBatch,
+  diagnosticTargets,
+} = require("../core/diagnostic-batch.cjs");
 const {
   OFFICIAL_SERVICES,
   serviceForProvider,
@@ -40,7 +45,8 @@ const { ClientProcesses } = require("../core/client-processes.cjs");
 const { Connections } = require("../core/connections.cjs");
 const { Preferences } = require("../core/preferences.cjs");
 const accountTransactions = require("../core/account-transactions.cjs");
-const { modelSources } = require("../core/model-inventory.cjs");
+const { modelSources, nativeModels } = require("../core/model-inventory.cjs");
+const { nativeOfficialProvider } = require("../core/native-official.cjs");
 const { AccountInfo, ACCOUNT_DOCS } = require("../core/account-info.cjs");
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
@@ -76,6 +82,7 @@ const modelDirectory = new ModelDirectory({
   getProvider: (id) => store.state.providers.find((p) => p.id === id),
   fetchUpstream: upstream,
   onChange: push,
+  readNative: readNativeModelMetadata,
   readOfficial: () => ({
     source: "Codex 本机目录声明（未实测）",
     time: new Date().toISOString(),
@@ -88,6 +95,12 @@ const modelDirectory = new ModelDirectory({
 });
 const providerModels = modelDirectory.results;
 const probeControllers = new Map();
+const diagnosticControllers = new Map();
+const diagnosticBatch = new DiagnosticBatch({
+  targets: () => diagnosticTargets(store.public(), authReady()),
+  run: diagnose,
+  onChange: push,
+});
 const iconPath = path.join(__dirname, "../public/ass-app-icon.png");
 let systemSession, directSession, testFetch;
 const servicePort =
@@ -133,22 +146,113 @@ function log(record) {
   } catch {}
   push();
 }
+function accountProvider(id) {
+  const configured = store.state.providers.find((p) => p.id === id);
+  if (configured || !id.startsWith("native-info:") || !harnesses)
+    return configured;
+  for (const c of harnesses.snapshot().clients)
+    for (const a of c.accounts) {
+      if (id !== "native-info:" + c.id + ":" + a.id) continue;
+      return nativeOfficialProvider(c, a);
+    }
+}
+async function readNativeModelMetadata(id, signal) {
+  const client = harnesses
+    .snapshot()
+    .clients.find((c) => "native-" + c.id === id);
+  if (!client) throw Error("原生客户端不存在");
+  const accounts = {},
+    errors = [];
+  for (const a of client.accounts.filter((a) => a.kind !== "api")) {
+    const local = nativeModels(
+      client,
+      a,
+      harnesses.nativeHome,
+      harnesses.nativeEnv,
+    );
+    const provider = nativeOfficialProvider(client, a);
+    let models = local;
+    if (provider) {
+      try {
+        const report = await discoverModels(provider, upstream, signal);
+        models = report.models.map((m) => {
+          const cached = local.find((x) => x.model === m.model);
+          return {
+            ...cached,
+            model: m.model,
+            displayName: cached?.displayName || m.displayName,
+            wireApi:
+              cached?.wireApi ||
+              (provider.nativeProvider === "deepseek" ? "openai-chat" : ""),
+            contextWindow:
+              m.declared.contextWindow || cached?.contextWindow || null,
+            efforts: m.declared.efforts.length
+              ? m.declared.efforts
+              : cached?.efforts || [],
+            nativeProvider: provider.nativeProvider,
+            enabled: true,
+            catalogSource: "官方 /models 目录（未实测）",
+          };
+        });
+      } catch {
+        if (signal.aborted) throw Error("目录读取已取消");
+        errors.push("在线目录读取失败，保留本机目录");
+      }
+    }
+    accounts[a.id] = { models };
+  }
+  return {
+    accounts,
+    models: Object.values(accounts).flatMap((a) => a.models),
+    time: new Date().toISOString(),
+    source: "原生账户模型目录（未实测）",
+    error: [...new Set(errors)].join("；") || undefined,
+  };
+}
 function snapshot() {
   const publicState = store.public(),
     clientState = harnesses.snapshot();
   for (const client of clientState.clients)
     for (const account of client.accounts) {
-      if (account.kind !== "api") continue;
-      const provider = store.state.providers.find(
-        (p) => p.id === account.providerId,
-      );
-      if (provider) account.profile = accountInfo.public(provider);
+      const provider =
+        account.kind === "api"
+          ? store.state.providers.find((p) => p.id === account.providerId)
+          : nativeOfficialProvider(client, account);
+      if (provider) {
+        const localProfile = account.profile;
+        const remote = accountInfo.public(provider);
+        const models =
+          account.kind === "api"
+            ? provider.models
+            : providerModels["native-" + client.id]?.accounts?.[account.id]
+                ?.models ||
+              nativeModels(
+                client,
+                account,
+                harnesses.nativeHome,
+                harnesses.nativeEnv,
+              );
+        account.profile = {
+          ...remote,
+          credentialUpdatedAt:
+            account.kind !== "api" ? localProfile?.updatedAt : undefined,
+          fields: [
+            ...remote.fields,
+            {
+              id: "models",
+              label: account.kind === "api" ? "已配置模型" : "目录模型",
+              value: String(models.length),
+            },
+          ],
+        };
+      }
     }
   return {
     ...publicState,
     modelSources: modelSources(publicState, clientState, {
       home: harnesses.nativeHome,
       env: harnesses.nativeEnv,
+      directories: providerModels,
     }),
     preferences: preferences.state,
     harnesses: clientState,
@@ -173,6 +277,10 @@ function snapshot() {
     encrypted: safeStorage.isEncryptionAvailable(),
     recent,
     diagnostics,
+    diagnosticBatch: diagnosticBatch.snapshot(),
+    diagnosticJobs: Object.fromEntries(
+      [...diagnosticControllers.keys()].map((key) => [key, true]),
+    ),
     providerModels,
     modelDirectoryJobs: modelDirectory.jobs(),
     modelDirectoryRevisions: modelDirectory.revisions,
@@ -204,9 +312,8 @@ function register(name, handler) {
     }
   });
 }
-async function diagnose(providerId, modelName) {
+async function diagnose(providerId, modelName, signal) {
   if (connections.busy) throw new Error("正在切换接入，请稍后检查模型");
-  if (!router.server) await router.start(servicePort);
   const start = Date.now();
   const official = providerId === "official";
   const p = store.state.providers.find((p) => p.id === providerId);
@@ -217,6 +324,15 @@ async function diagnose(providerId, modelName) {
     throw new Error("请选择具体的已启用模型进行检测");
   const name = selected.model,
     key = modelKey(providerId, name);
+  if (diagnosticControllers.has(key)) throw Error("此模型正在检测");
+  const controller = new AbortController();
+  const requestSignal = AbortSignal.any([
+    controller.signal,
+    ...(signal ? [signal] : []),
+    AbortSignal.timeout(90000),
+  ]);
+  diagnosticControllers.set(key, controller);
+  let result;
   const model = official ? name : providerId + "::" + name;
   const body = {
     model,
@@ -236,6 +352,8 @@ async function diagnose(providerId, modelName) {
     },
   };
   try {
+    requestSignal.throwIfAborted();
+    if (!router.server) await router.start(servicePort);
     const headers = official
       ? readAuth()
       : { authorization: "Bearer ass-local-diagnostic" };
@@ -249,7 +367,7 @@ async function diagnose(providerId, modelName) {
           "x-ass-probe-token": router.clientToken,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(90000),
+        signal: requestSignal,
       },
     );
     if (!r.ok) {
@@ -261,7 +379,7 @@ async function diagnose(providerId, modelName) {
     const inspected = await inspectStream(r.body, "openai-responses");
     if (!inspected.completed || !inspected.text)
       throw new Error("未收到完整结束事件");
-    diagnostics[key] = {
+    result = {
       providerId,
       ok: true,
       ms: Date.now() - start,
@@ -270,19 +388,31 @@ async function diagnose(providerId, modelName) {
       message: "HTTP 200 · response.completed",
     };
   } catch (error) {
-    diagnostics[key] = {
+    result = {
       providerId,
       ok: false,
       ms: Date.now() - start,
       time: new Date().toISOString(),
       model: name,
-      message: error.message,
+      message:
+        signal?.aborted || controller.signal.aborted
+          ? "已取消"
+          : error.name === "TimeoutError"
+            ? "请求超时（90 秒）"
+            : error.message,
+      cancelled: !!signal?.aborted || controller.signal.aborted,
     };
+  } finally {
+    diagnosticControllers.delete(key);
   }
+  if (!result.cancelled) diagnostics[key] = result;
   push();
-  return diagnostics[key];
+  return result;
 }
 function invalidateReports(id, metadata = true) {
+  diagnosticBatch.cancel();
+  for (const [key, controller] of diagnosticControllers)
+    if (!id || JSON.parse(key)[0] === id) controller.abort();
   for (const results of [diagnostics, capabilities])
     for (const key of Object.keys(results))
       if (!id || JSON.parse(key)[0] === id) delete results[key];
@@ -296,6 +426,8 @@ function readModelMetadata(id, refresh = false) {
   return modelDirectory.read(id, { refresh: refresh === true });
 }
 async function probeModel(id, name) {
+  if (diagnosticBatch.state.running || diagnosticControllers.size)
+    throw Error("连接测试正在进行，请等待或先取消");
   const provider = store.state.providers.find((p) => p.id === id && p.enabled);
   const model = provider?.models.find((m) => m.model === name && m.enabled);
   if (!model || !provider.apiKey) throw Error("请先配置并启用该供应商和模型");
@@ -419,7 +551,7 @@ else {
       accountInfo = new AccountInfo({
         dataDir,
         crypto: safeStorage,
-        getProvider: (id) => store.state.providers.find((p) => p.id === id),
+        getProvider: accountProvider,
         fetcher: upstream,
       });
       openRouterAuth = new OpenRouterAuth({
@@ -496,6 +628,9 @@ else {
         connections.preview(scope, enabled, quit),
       );
       register("connection-apply", async (input) => {
+        diagnosticBatch.cancel();
+        for (const controller of diagnosticControllers.values())
+          controller.abort();
         const result = await connections.apply(input);
         if (result.quit) {
           quitting = true;
@@ -520,9 +655,16 @@ else {
           .snapshot()
           .clients.find((c) => c.id === clientId)
           ?.accounts.find((a) => a.id === accountId);
-        if (!account || account.kind !== "api")
-          throw Error("请选择已绑定的 API 账户");
-        return accountInfo.refresh(account.providerId);
+        if (!account) throw Error("账户不存在");
+        const client = harnesses
+          .snapshot()
+          .clients.find((c) => c.id === clientId);
+        const provider =
+          account.kind === "api"
+            ? accountProvider(account.providerId)
+            : nativeOfficialProvider(client, account);
+        if (!provider) throw Error("此账户没有可查询的官方资料接口");
+        return accountInfo.refresh(provider.id);
       });
       register("account-info-doc", (id) => {
         if (!Object.hasOwn(ACCOUNT_DOCS, id)) throw Error("未知资料文档");
@@ -746,7 +888,20 @@ else {
       register("model-defaults", (provider, model) =>
         normalizeModel({ model }, provider, store.officialModels),
       );
-      register("diagnose", diagnose);
+      register("diagnose", (id, model) => {
+        if (diagnosticBatch.state.running) throw Error("一键测试正在进行");
+        return diagnose(id, model);
+      });
+      register("diagnose-all", () => {
+        if (
+          connections.busy ||
+          diagnosticControllers.size ||
+          probeControllers.size
+        )
+          throw Error("请等待当前检测或接入切换完成");
+        return diagnosticBatch.start();
+      });
+      register("diagnose-cancel", () => diagnosticBatch.cancel());
       register("models-discover", readModelMetadata);
       register("capabilities-probe", async (id, name) => {
         if (connections.busy) throw Error("正在切换接入，请稍后检测");
@@ -889,6 +1044,7 @@ else {
             testFetch = value;
           },
           diagnose,
+          diagnosticBatch,
           readModelMetadata,
           probeModel,
           balance,
@@ -917,6 +1073,8 @@ else {
     quitting = true;
     updates?.stop();
     modelDirectory.invalidate();
+    diagnosticBatch.cancel();
+    for (const controller of diagnosticControllers.values()) controller.abort();
     for (const controller of probeControllers.values()) controller.abort();
     openRouterAuth?.cancel();
     router?.stop();

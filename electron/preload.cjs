@@ -15,6 +15,8 @@ const allowed = [
   "connection-preview",
   "connection-apply",
   "diagnose",
+  "diagnose-all",
+  "diagnose-cancel",
   "models-discover",
   "capabilities-probe",
   "capabilities-cancel",

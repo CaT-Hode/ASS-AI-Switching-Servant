@@ -37,6 +37,14 @@ const ACCOUNT_DOCS = {
     label: "DeepSeek 余额接口",
     url: "https://api-docs.deepseek.com/api/get-user-balance/",
   },
+  "opencode-go": {
+    label: "OpenCode Go 用量接口",
+    url: "https://github.com/anomalyco/opencode/blob/dev/packages/console/app/src/routes/zen/go/v1/usage.ts",
+  },
+  "opencode-zen": {
+    label: "OpenCode Zen 计费",
+    url: "https://opencode.ai/docs/zen/",
+  },
   openrouter: {
     label: "OpenRouter Key 接口",
     url: "https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key",
@@ -229,6 +237,11 @@ function adapter(provider) {
     )
       return "deepseek";
     if (
+      u.origin === "https://opencode.ai" &&
+      /^\/zen\/(?:go\/)?v1\/?$/.test(u.pathname)
+    )
+      return u.pathname.includes("/go/") ? "opencode-go" : "opencode";
+    if (
       u.origin === "https://openrouter.ai" &&
       /^\/api\/v1\/?$/.test(u.pathname)
     )
@@ -242,16 +255,39 @@ function apiProfile(provider) {
     host = new URL(provider.baseUrl).host;
   } catch {}
   const id = adapter(provider);
+  const oc = id === "opencode" || id === "opencode-go";
   return {
-    source: "已保存的 API 配置",
-    docs: id ? [id] : [],
+    source: provider.nativeProvider ? "原生 API 登录记录" : "已保存的 API 配置",
+    docs: oc ? ["opencode-go", "opencode-zen"] : id ? [id] : [],
+    consoleService:
+      id === "deepseek" ? "deepseek" : oc ? "opencode" : undefined,
     canRefresh: !!id && !!provider.apiKey,
-    note: id
-      ? "只读查询当前 Key 的资料，不发送模型请求。"
-      : "此入口尚无已适配的账户资料接口；余额可在账户菜单查询。",
+    note: oc
+      ? "查询 Go 订阅用量；Zen 充值余额、邮箱和工作区资料请到官方控制台查看。"
+      : id === "deepseek"
+        ? "余额接口提供可用、赠金和充值余额，不返回邮箱或账户 ID。"
+        : id
+          ? "只读查询当前 Key 的资料，不发送模型请求。"
+          : "此入口尚无已适配的账户资料接口；余额可在账户菜单查询。",
     fields: [
       field("host", "API 服务", host),
+      field(
+        "product",
+        "服务产品",
+        id === "deepseek"
+          ? "DeepSeek API"
+          : id === "opencode-go"
+            ? "OpenCode Go"
+            : id === "opencode"
+              ? "OpenCode Zen / Go"
+              : undefined,
+      ),
       field("auth", "认证方式", "API Key"),
+      field(
+        "network",
+        "网络出口",
+        provider.network === "direct" ? "直连 · 系统 CA" : "系统代理 · 系统 CA",
+      ),
     ].filter(Boolean),
   };
 }
@@ -284,6 +320,32 @@ function parseRemote(id, data, secrets = []) {
       amount("granted-" + i, "赠金余额", row.granted_balance, row.currency);
       amount("topped-" + i, "充值余额", row.topped_up_balance, row.currency);
     }
+  } else if (["opencode", "opencode-go"].includes(id)) {
+    for (const [window, label] of [
+      ["rolling", "滚动窗口"],
+      ["weekly", "每周额度"],
+      ["monthly", "每月额度"],
+    ]) {
+      const usage = object(d.usage?.[window]);
+      if (
+        typeof usage.percent !== "number" ||
+        !Number.isFinite(usage.percent) ||
+        usage.percent < 0 ||
+        !["ok", "rate-limited"].includes(usage.status)
+      )
+        continue;
+      fields.push({
+        id: "quota-" + window,
+        label,
+        value: String(usage.percent),
+        kind: "quota",
+        usedPercent: usage.percent,
+        remainingPercent: Math.max(0, 100 - usage.percent),
+        status: usage.status,
+        resetsAt: iso(usage.resetsAt),
+      });
+    }
+    if (fields.length) add("entitlement", "Go 订阅权益", "已通过接口确认");
   } else if (id === "openrouter") {
     const k = object(d.data);
     // A returned Key label may be a masked secret; never present it as a person's name.
@@ -375,6 +437,7 @@ class AccountInfo {
         ? {
             fields: [...base.fields, ...entry.fields],
             source: "官方 API · 上次查询",
+            remote: true,
             updatedAt: entry.updatedAt,
             stale: this.now() - Date.parse(entry.updatedAt) > 15 * 60000,
           }
@@ -401,7 +464,9 @@ class AccountInfo {
     const route =
       kind === "deepseek"
         ? "https://api.deepseek.com/user/balance"
-        : "https://openrouter.ai/api/v1/key";
+        : ["opencode", "opencode-go"].includes(kind)
+          ? "https://opencode.ai/zen/go/v1/usage"
+          : "https://openrouter.ai/api/v1/key";
     try {
       const r = await this.fetcher(
         route,
@@ -416,7 +481,10 @@ class AccountInfo {
         },
         p.network,
       );
-      if (!r.ok) throw Error("HTTP " + r.status);
+      if (!r.ok) {
+        await r.body?.cancel();
+        throw Error("HTTP " + r.status);
+      }
       // Bound the streamed body before parsing, not after reading an unbounded response.
       if (Number(r.headers.get("content-length")) > 256 * 1024)
         throw Error("资料响应过大");
@@ -460,11 +528,14 @@ class AccountInfo {
       return { ok: true };
     } catch (e) {
       // Never expose body, auth headers, network error URLs or raw exception strings.
-      const message = /^HTTP \d{3}$/.test(e.message)
-        ? "资料查询失败 · " + e.message
-        : e instanceof SyntaxError
-          ? "资料接口返回无效 JSON"
-          : "资料查询失败，请检查网络或接口权限";
+      const message =
+        ["opencode", "opencode-go"].includes(kind) && e.message === "HTTP 403"
+          ? "此 Key 未获 Go 订阅查询权限（HTTP 403）；Zen 余额请在控制台查看"
+          : /^HTTP \d{3}$/.test(e.message)
+            ? "资料查询失败 · " + e.message
+            : e instanceof SyntaxError
+              ? "资料接口返回无效 JSON"
+              : "资料查询失败，请检查网络或接口权限";
       this.errors.set(key, message);
       return { ok: false, message };
     }

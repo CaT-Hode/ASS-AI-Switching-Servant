@@ -197,7 +197,9 @@ function AccountCard({
         }
       >
         <i aria-hidden="true" />
-        {a.message}
+        {a.profile?.remote && !a.profile.error && !a.profile.stale
+          ? "已读取官方资料 · 模型连接需单独检测"
+          : a.message}
       </p>
       {a.expiresAt && (
         <small className="account-expiry">

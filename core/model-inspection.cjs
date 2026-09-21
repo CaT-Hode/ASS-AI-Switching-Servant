@@ -101,7 +101,15 @@ async function discoverModels(provider, fetchUpstream, signal) {
     throw Error(
       "模型目录接口返回 HTTP " +
         response.status +
-        "；该供应商可能未开放 /models",
+        (response.status === 401
+          ? "；API Key 无效或未被接受"
+          : response.status === 403
+            ? "；此 Key 没有目录访问权限"
+            : response.status === 429
+              ? "；请求限流，请稍后重试"
+              : response.status >= 500
+                ? "；上游服务暂时异常"
+                : "；请检查目录地址，供应商可能未开放 /models"),
     );
   }
   let body;

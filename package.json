@@ -1,7 +1,7 @@
 {
   "name": "ai-switch-servant",
   "productName": "ASS",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "license": "MIT",
   "repository": {
@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@iarna/toml": "2.2.5",
+    "jsonc-parser": "3.3.1",
     "lucide-react": "^0.468.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",

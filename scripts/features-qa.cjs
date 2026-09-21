@@ -151,7 +151,7 @@ fs.mkdirSync(codex);
       .getByRole("dialog", { name: "检测示例 · 发现模型", exact: true })
       .waitFor({ state: "hidden" });
     await page
-      .getByRole("button", { name: "probe-a 高级操作", exact: true })
+      .getByRole("button", { name: "probe-a 模型操作", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "能力详情", exact: true }).click();
     await page.getByRole("button", { name: "自动检测能力" }).click();

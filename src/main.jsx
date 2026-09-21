@@ -16,6 +16,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Play,
+  Square,
 } from "lucide-react";
 import "./style.css";
 import "./controls.css";
@@ -214,18 +216,83 @@ function Overview({ state, providers, act, busy, setView, openProvider }) {
   );
 }
 function Diagnostics({ state, providers, act, busy }) {
+  const batch = state.diagnosticBatch;
+  const results = new Map((batch?.entries || []).map((e) => [e.key, e]));
+  const available = providers.flatMap((p) =>
+    p.enabled !== false && (p.id === "official" ? state.authReady : p.hasKey)
+      ? p.models.filter((m) => m.enabled !== false)
+      : [],
+  ).length;
   return (
     <>
-      <div className="info-box">
-        <ShieldCheck size={25} />
+      <div className="diagnostic-toolbar">
         <div>
-          <small>检测会发送简短请求并检查完整响应，可能产生少量费用。</small>
+          <h2>
+            模型连接测试 <span className="count">{available}</span>
+          </h2>
+          <p className="muted">
+            每个已启用模型发送一条小请求，检查完整响应；可能计费。最多同时测试 2
+            个。
+          </p>
         </div>
+        {batch?.running ? (
+          <Button
+            icon={Square}
+            disabled={batch.stopping}
+            onClick={() =>
+              act("diag-cancel", () => api.call("diagnose-cancel"))
+            }
+          >
+            {batch.stopping ? "正在取消…" : "取消测试"}
+          </Button>
+        ) : (
+          <Button
+            icon={Play}
+            primary
+            disabled={!!busy || !available || state.connections.busy}
+            onClick={() => act("diag-all", () => api.call("diagnose-all"))}
+          >
+            一键测试
+          </Button>
+        )}
       </div>
+      {!!batch?.entries.length && (
+        <div className="diagnostic-progress" role="status" aria-live="polite">
+          <div>
+            <strong>
+              {batch.running
+                ? "测试中"
+                : batch.cancelled
+                  ? "测试已取消"
+                  : "测试完成"}{" "}
+              · {batch.completed} / {batch.total}
+            </strong>
+            <span>
+              通过 {batch.passed} · 失败 {batch.failed} · 跳过 {batch.skipped}
+              {batch.cancelled ? " · 取消 " + batch.cancelled : ""}
+            </span>
+          </div>
+          <progress
+            aria-label="一键测试进度"
+            value={batch.completed}
+            max={batch.total || 1}
+          />
+        </div>
+      )}
       <div className="diagnostic-list">
         {providers.flatMap((p) =>
           p.models.map((m) => {
             const d = state.diagnostics[modelKey(p.id, m.model)];
+            const entry = results.get(modelKey(p.id, m.model));
+            const run =
+              batch?.running ||
+              !d ||
+              !batch?.finishedAt ||
+              d.time <= batch.finishedAt
+                ? entry
+                : null;
+            const showResult =
+              d && (!run || ["passed", "failed"].includes(run.status));
             return (
               <div className="diagnostic" key={modelKey(p.id, m.model)}>
                 <ProviderIcon p={p} />
@@ -233,10 +300,16 @@ function Diagnostics({ state, providers, act, busy }) {
                   <h3>
                     {p.name} / {m.displayName}
                   </h3>
-                  <p className={d && !d.ok ? "danger" : "muted"}>
-                    {d?.message || "尚未执行连接检测"}
+                  <p
+                    className={
+                      (run ? run.status === "failed" : d && !d.ok)
+                        ? "danger"
+                        : "muted"
+                    }
+                  >
+                    {run?.message || d?.message || "尚未执行连接检测"}
                   </p>
-                  {d && (
+                  {showResult && (
                     <small>
                       {d.model} · {(d.ms / 1000).toFixed(2)} s · {date(d.time)}
                     </small>
