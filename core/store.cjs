@@ -149,10 +149,18 @@ class Store {
       },
       this.officialModels,
     );
-    const index = this.state.providers.findIndex((p) => p.id === provider.id);
-    if (index < 0) this.state.providers.push(provider);
-    else this.state.providers[index] = provider;
-    this.save();
+    const previous = this.state.providers;
+    const index = previous.findIndex((p) => p.id === provider.id);
+    this.state.providers =
+      index < 0
+        ? [...previous, provider]
+        : previous.map((p, i) => (i === index ? provider : p));
+    try {
+      this.save();
+    } catch (error) {
+      this.state.providers = previous;
+      throw error;
+    }
     return provider.id;
   }
   model(providerId, input, originalName) {

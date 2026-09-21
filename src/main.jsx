@@ -34,7 +34,15 @@ import "./controls.css";
 import "./polish.css";
 import "./clients.css";
 import { Clients } from "./clients.jsx";
+import { OfficialAccounts } from "./official-accounts.jsx";
 import { ModelEditor, ProviderEditor } from "./editors.jsx";
+import {
+  modelKey,
+  ModelActions,
+  ModelCheckButton,
+  ModelCapabilityDialog,
+  ProviderModelsDialog,
+} from "./model-inspection.jsx";
 const api = window.ass;
 const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const protocols = {
@@ -152,17 +160,14 @@ function Overview({ state, providers, act, busy, setView }) {
                   <ProviderIcon p={p} />
                   <div>
                     <strong>{p.name}</strong>
-                    {state.diagnostics[p.id] && (
-                      <small
-                        className={
-                          state.diagnostics[p.id].ok ? "success" : "danger"
-                        }
-                      >
-                        {state.diagnostics[p.id].ok
-                          ? "连接已验证"
-                          : "检测未通过"}
-                      </small>
-                    )}
+                    <small>
+                      {
+                        p.models.filter(
+                          (m) => state.diagnostics[modelKey(p.id, m.model)]?.ok,
+                        ).length
+                      }{" "}
+                      / {p.models.length} 个模型连接已验证
+                    </small>
                   </div>
                 </div>
                 <span className="muted">
@@ -174,13 +179,10 @@ function Overview({ state, providers, act, busy, setView }) {
                 </span>
                 <span className="muted">{p.models.length} 个模型</span>
                 <Button
-                  icon={Activity}
-                  busy={busy === "diag-" + p.id}
-                  onClick={() =>
-                    act("diag-" + p.id, () => api.call("diagnose", p.id))
-                  }
+                  icon={ChevronRight}
+                  onClick={() => setView("providers")}
                 >
-                  检测连接
+                  查看模型
                 </Button>
               </div>
             ))}
@@ -253,10 +255,18 @@ function Overview({ state, providers, act, busy, setView }) {
     </>
   );
 }
-function Providers({ state, providers, act, busy }) {
-  const [selected, setSelected] = useState("official"),
+function Providers({
+  state,
+  providers,
+  act,
+  busy,
+  initialProvider = "official",
+}) {
+  const [selected, setSelected] = useState(initialProvider),
     [search, setSearch] = useState(""),
     [editor, setEditor] = useState(null),
+    [inspection, setInspection] = useState(null),
+    [discovering, setDiscovering] = useState(false),
     [providerEditor, setProviderEditor] = useState(false);
   const p = providers.find((p) => p.id === selected) || providers[0];
   const balance = state.balances[p.id];
@@ -299,15 +309,11 @@ function Providers({ state, providers, act, busy }) {
               供应商设置
             </Button>
           )}
-          <Button
-            icon={Activity}
-            busy={busy === "diag-" + p.id}
-            onClick={() =>
-              act("diag-" + p.id, () => api.call("diagnose", p.id))
-            }
-          >
-            检测连接
-          </Button>
+          {p.id !== "official" && (
+            <Button icon={Search} onClick={() => setDiscovering(true)}>
+              发现模型与能力
+            </Button>
+          )}
         </div>
       </div>
       {p.id !== "official" && (
@@ -384,18 +390,34 @@ function Providers({ state, providers, act, busy }) {
               .includes(search.toLowerCase()),
           )
           .map((m) => (
-            <button
-              className="model-row"
-              key={m.model}
-              onClick={() => setEditor({ model: m })}
-            >
-              <span className="model-name">
+            <div className="model-row" key={m.model}>
+              <button
+                className="model-name model-name-button"
+                aria-label={"配置模型 " + m.model}
+                onClick={() => setEditor({ model: m })}
+              >
                 <strong>{m.displayName}</strong>
                 <small>
                   {m.enabled === false ? "已停用 · " : ""}
                   {m.model}
                 </small>
-              </span>
+                {state.diagnostics[modelKey(p.id, m.model)] && (
+                  <small
+                    className={
+                      state.diagnostics[modelKey(p.id, m.model)].ok
+                        ? "success"
+                        : "danger"
+                    }
+                  >
+                    {state.diagnostics[modelKey(p.id, m.model)].ok
+                      ? "连接通过"
+                      : "连接失败"}{" "}
+                    ·{" "}
+                    {Math.round(state.diagnostics[modelKey(p.id, m.model)].ms)}{" "}
+                    ms
+                  </small>
+                )}
+              </button>
               <span className="muted">{protocols[m.wireApi]}</span>
               <span>
                 <strong className="mono">{format(m.contextWindow)}</strong>
@@ -408,12 +430,18 @@ function Providers({ state, providers, act, busy }) {
                   </i>
                 ))}
               </span>
-              <Settings2 size={17} />
-            </button>
+              <ModelActions
+                provider={p}
+                model={m}
+                {...{ state, act, busy }}
+                onEdit={() => setEditor({ model: m })}
+                onInspect={() => setInspection(m)}
+              />
+            </div>
           ))}
       </div>
       <p className="hint">
-        点击模型编辑。选中的强度进入 Codex
+        点击模型名称编辑；右侧闪电仅检测该模型。选中的强度进入 Codex
         菜单；蓝色强度是默认值。上下文默认值可单独覆盖。
       </p>
       {p.id !== "official" && (
@@ -432,6 +460,21 @@ function Providers({ state, providers, act, busy }) {
           onSave={(m) => api.call("save-model", p.id, m, editor.model?.model)}
         />
       )}{" "}
+      {inspection && (
+        <ModelCapabilityDialog
+          provider={p}
+          model={inspection}
+          {...{ state, act, busy }}
+          onClose={() => setInspection(null)}
+        />
+      )}
+      {discovering && (
+        <ProviderModelsDialog
+          provider={p}
+          {...{ state, act, busy }}
+          onClose={() => setDiscovering(false)}
+        />
+      )}
       {providerEditor && (
         <ProviderEditor
           presets={state.providerPresets}
@@ -458,34 +501,34 @@ function Diagnostics({ state, providers, act, busy }) {
         </div>
       </div>
       <div className="diagnostic-list">
-        {providers.map((p) => {
-          const d = state.diagnostics[p.id];
-          return (
-            <div className="diagnostic" key={p.id}>
-              <ProviderIcon p={p} />
-              <div className="diagnostic-content">
-                <h3>{p.name}</h3>
-                <p className={d && !d.ok ? "danger" : "muted"}>
-                  {d?.message || "尚未执行连接检测"}
-                </p>
-                {d && (
-                  <small>
-                    {d.model} · {(d.ms / 1000).toFixed(2)} s · {date(d.time)}
-                  </small>
-                )}
+        {providers.flatMap((p) =>
+          p.models.map((m) => {
+            const d = state.diagnostics[modelKey(p.id, m.model)];
+            return (
+              <div className="diagnostic" key={modelKey(p.id, m.model)}>
+                <ProviderIcon p={p} />
+                <div className="diagnostic-content">
+                  <h3>
+                    {p.name} / {m.displayName}
+                  </h3>
+                  <p className={d && !d.ok ? "danger" : "muted"}>
+                    {d?.message || "尚未执行连接检测"}
+                  </p>
+                  {d && (
+                    <small>
+                      {d.model} · {(d.ms / 1000).toFixed(2)} s · {date(d.time)}
+                    </small>
+                  )}
+                </div>
+                <ModelCheckButton
+                  provider={p}
+                  model={m}
+                  {...{ state, act, busy }}
+                />
               </div>
-              <Button
-                icon={Activity}
-                busy={busy === "diag-" + p.id}
-                onClick={() =>
-                  act("diag-" + p.id, () => api.call("diagnose", p.id))
-                }
-              >
-                检测连接
-              </Button>
-            </div>
-          );
-        })}
+            );
+          }),
+        )}
       </div>
       <div className="diagnostic-settings">
         <h2>本机状态</h2>
@@ -550,8 +593,13 @@ function Diagnostics({ state, providers, act, busy }) {
 function App() {
   const [state, setState] = useState(null),
     [view, setView] = useState("overview"),
+    [clientTarget, setClientTarget] = useState("codex"),
+    [providerTarget, setProviderTarget] = useState("official"),
     [busy, setBusy] = useState(""),
     [toast, setToast] = useState(null);
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [view]);
   useEffect(() => {
     if (!api) return;
     api
@@ -618,12 +666,14 @@ function App() {
     overview: "路由总览",
     providers: "供应商与模型",
     clients: "客户端与账户",
+    accounts: "官方账户中心",
     diagnostics: "连接诊断",
   }[view];
   const desc = {
     overview: "官方与第三方模型，在一个入口切换。",
     providers: "独立配置协议、上下文窗口与思维强度。",
     clients: "切换 API 与授权账户，启动独立客户端。",
+    accounts: "管理官方 API 凭据与订阅授权，清晰区分账户和计费。",
     diagnostics: "从本机证书到完整响应，确认每一条连接。",
   }[view];
   return (
@@ -641,6 +691,7 @@ function App() {
           {[
             ["overview", LayoutGrid, "路由总览"],
             ["providers", Boxes, "供应商与模型"],
+            ["accounts", KeyRound, "官方账户中心"],
             ["clients", Monitor, "客户端与账户"],
             ["diagnostics", Activity, "连接诊断"],
           ].map(([id, Icon, label]) => (
@@ -708,7 +759,7 @@ function App() {
               ? "HTTP · 本机安全路由"
               : "当前请求无法经由 ASS 转发"}
           </span>
-          <span className="mono endpoint">127.0.0.1:25819</span>
+          <span className="mono endpoint">127.0.0.1:{state.service.port}</span>
           <Button
             icon={state.service.running ? Square : Play}
             busy={busy === "service"}
@@ -722,9 +773,24 @@ function App() {
         {view === "overview" ? (
           <Overview {...{ state, providers, act, busy, setView }} />
         ) : view === "providers" ? (
-          <Providers {...{ state, providers, act, busy }} />
+          <Providers
+            {...{ state, providers, act, busy }}
+            initialProvider={providerTarget}
+          />
+        ) : view === "accounts" ? (
+          <OfficialAccounts
+            {...{ state, act, busy }}
+            openClient={(id) => {
+              setClientTarget(id);
+              setView("clients");
+            }}
+            openProvider={(id) => {
+              setProviderTarget(id);
+              setView("providers");
+            }}
+          />
         ) : view === "clients" ? (
-          <Clients {...{ state, act, busy }} />
+          <Clients {...{ state, act, busy }} initialClient={clientTarget} />
         ) : (
           <Diagnostics {...{ state, providers, act, busy }} />
         )}

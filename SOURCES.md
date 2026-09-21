@@ -21,6 +21,17 @@ ASS 是独立实现，不是原产品的官方版本。界面不沿用旧产品�
 
 这些链接用于说明兼容性依据，不代表原作者对 ASS 的认可。第三方订阅使用范围和计费遵循相应供应商条款。
 
+## v0.1.1 官方账户与 API 入口
+
+- [OpenRouter PKCE](https://openrouter.ai/docs/guides/overview/auth/oauth)：S256、localhost 回调、`/api/v1/auth/keys` 换取 API Key。实现不是订阅 OAuth 通用移植器。
+- [Cursor CLI authentication](https://cursor.com/docs/cli/reference/authentication)：原生浏览器登录与 API Key；本版只做原生 Key 保管，不推断 OAuth 文件格式或多账户隔离。
+- [Kimi Code](https://www.kimi.com/code/docs/en/)：Kimi 原生登录、Code API / Moonshot 区域入口；本版保留 OAuth 外部管理边界。
+- [Z.ai API](https://docs.z.ai/api-reference/introduction)、[OpenCode Go](https://opencode.ai/docs/go/)：套餐与一般 API 入口区分。
+- [Anthropic API](https://platform.claude.com/docs/en/api/overview)：API Key 与原生订阅授权分开。
+- [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai)、[Groq](https://console.groq.com/docs/openai)、[Mistral](https://docs.mistral.ai/api)、[xAI](https://docs.x.ai/developers/rest-api-reference/inference/chat)、[SiliconFlow](https://docs.siliconflow.cn/docs/api/chat-completions-post)、[Qwen / DashScope](https://www.alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope)：兼容 API 基址与协议。
+
+模型目录字段与小请求结果分别展示为“声明”和“实测”；上游参数接受不等于不同档位的推理质量验证。未公开能力保持未知，不根据模型名称冒充实测结果。
+
 ## 视觉
 
 ASS 蓝色花瓣 logo 为本项目生成的原创位图；ICO 只是该图的尺寸和容器转换。其他图标使用 Lucide。系统字体、原生 dialog 和克制的交互反馈，针对横向桌面窗口设计。

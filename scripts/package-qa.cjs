@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const assert = require("node:assert/strict");
 const root = path.resolve(__dirname, "..");
+const { version } = require("../package.json");
 const output = path.join(process.env.LOCALAPPDATA, "ASS-validation");
 fs.mkdirSync(output, { recursive: true });
 const data = fs.mkdtempSync(path.join(output, "packaged-"));
@@ -11,9 +12,14 @@ const codex = path.join(data, "codex");
 fs.mkdirSync(codex);
 (async () => {
   const app = await electron.launch({
-    executablePath: path.join(root, "release", "ASS-win32-x64", "ASS.exe"),
+    executablePath: path.join(root, "release", "v" + version, "ASS-win32-x64", "ASS.exe"),
     args: ["--qa"],
-    env: { ...process.env, ASS_TEST_DATA: data, ASS_TEST_CODEX: codex },
+    env: {
+      ...process.env,
+      ASS_TEST_DATA: data,
+      ASS_TEST_CODEX: codex,
+      ASS_TEST_PORT: "25820",
+    },
     timeout: 60000,
   });
   try {

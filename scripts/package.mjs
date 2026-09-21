@@ -1,8 +1,10 @@
 import { packager } from "@electron/packager";
 import { fileURLToPath } from "node:url";
 import { setTimeout } from "node:timers/promises";
+import { readFile } from "node:fs/promises";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const outputs = await packager({
   dir: root,
   name: "ASS",
@@ -12,7 +14,7 @@ const outputs = await packager({
   asar: true,
   platform: "win32",
   arch: "x64",
-  out: fileURLToPath(new URL("../release", import.meta.url)),
+  out: fileURLToPath(new URL("../release/v" + version, import.meta.url)),
   overwrite: true,
   tmpdir: false,
   ignore: /^\/(release|tests|qa|design|scripts)(\/|$)/,

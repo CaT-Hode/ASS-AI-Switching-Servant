@@ -164,7 +164,7 @@ function endpoint(base, protocol, suffix = "") {
       : protocol === "openai-chat"
         ? "chat/completions"
         : "responses";
-  u.pathname = `${/\/v\d+$/.test(root) ? root : root + "/v1"}/${tail}${suffix}`;
+  u.pathname = `${/\/v\d+(?:beta\d*)?(?:\/openai)?$/.test(root) ? root : root + "/v1"}/${tail}${suffix}`;
   return u.toString();
 }
 function makeCatalog(officialModels, providers, overrides = {}) {

@@ -9,6 +9,7 @@ const {
   Menu,
   nativeImage,
   shell,
+  clipboard,
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -20,6 +21,19 @@ const { normalizeModel } = require("../core/models.cjs");
 const { BALANCE_PRESETS, queryBalance } = require("../core/balance.cjs");
 const { PROVIDER_PRESETS } = require("../core/presets.cjs");
 const { HarnessManager } = require("../core/harnesses.cjs");
+const {
+  modelKey,
+  declaredCapabilities,
+  discoverModels,
+  probeCapabilities,
+  inspectStream,
+} = require("../core/model-inspection.cjs");
+const {
+  OFFICIAL_SERVICES,
+  serviceForProvider,
+} = require("../core/official-services.cjs");
+const { NativeKeyStore } = require("../core/native-key-store.cjs");
+const { OpenRouterAuth } = require("../core/openrouter-auth.cjs");
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
 if (testMode && customData) app.setPath("userData", customData);
@@ -36,14 +50,25 @@ let window,
   config,
   router,
   harnesses,
+  nativeKeys,
+  openRouterAuth,
   quitting = false;
 let recent = [],
   diagnostics = {},
   balances = {};
 let startupError = "";
+const providerModels = Object.create(null),
+  capabilities = Object.create(null),
+  capabilityJobs = Object.create(null);
+const probeControllers = new Map();
 const iconPath = path.join(__dirname, "../public/ass-logo.png");
-let systemSession, directSession;
+let systemSession, directSession, testFetch;
+const servicePort =
+  testMode && /^\d+$/.test(process.env.ASS_TEST_PORT || "")
+    ? Number(process.env.ASS_TEST_PORT)
+    : 25819;
 async function upstream(url, init, network = "system") {
+  if (testMode && testFetch) return testFetch(url, init, network);
   return (network === "direct" ? directSession : systemSession).fetch(url, {
     ...init,
     credentials: "omit",
@@ -84,6 +109,12 @@ function snapshot() {
     ...store.public(),
     harnesses: harnesses.snapshot(),
     providerPresets: PROVIDER_PRESETS,
+    officialServices: OFFICIAL_SERVICES,
+    officialProviderIds: Object.fromEntries(
+      store.state.providers.map((p) => [p.id, serviceForProvider(p)?.id || ""]),
+    ),
+    nativeAccounts: nativeKeys.public(),
+    openRouterAuth: openRouterAuth.state,
     balancePresets: BALANCE_PRESETS,
     service: {
       running: !!router.server,
@@ -95,6 +126,9 @@ function snapshot() {
     encrypted: safeStorage.isEncryptionAvailable(),
     recent,
     diagnostics,
+    providerModels,
+    capabilities,
+    capabilityJobs,
     balances,
     startupError,
     version: app.getVersion(),
@@ -126,18 +160,14 @@ async function diagnose(providerId, modelName) {
   const start = Date.now();
   const official = providerId === "official";
   const p = store.state.providers.find((p) => p.id === providerId);
-  const name = official
-    ? modelName || "gpt-6-astra"
-    : modelName || p?.models.find((m) => m.enabled)?.model;
-  if (!name) throw new Error("此供应商没有启用的模型");
+  const selected = (
+    official ? store.public().officialModels : p?.models || []
+  ).find((m) => m.model === modelName && m.enabled !== false);
+  if (!selected || (!official && !p.enabled))
+    throw new Error("请选择具体的已启用模型进行检测");
+  const name = selected.model,
+    key = modelKey(providerId, name);
   const model = official ? name : providerId + "::" + name;
-  let headers;
-  try {
-    headers = readAuth();
-  } catch (e) {
-    if (official) throw e;
-    headers = { authorization: "Bearer ass-local-diagnostic" };
-  }
   const body = {
     model,
     instructions: "Reply concisely.",
@@ -156,23 +186,26 @@ async function diagnose(providerId, modelName) {
     },
   };
   try {
-    const r = await fetch("http://127.0.0.1:25819/v1/responses", {
+    const headers = official
+      ? readAuth()
+      : { authorization: "Bearer ass-local-diagnostic" };
+    const r = await fetch(`http://127.0.0.1:${router.port}/v1/responses`, {
       method: "POST",
       headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(90000),
     });
-    const content = await r.text();
-    let message;
     if (!r.ok) {
-      try {
-        message = JSON.parse(content).error?.message;
-      } catch {}
-      throw new Error(message || "HTTP " + r.status);
+      await r.body?.cancel();
+      throw new Error(
+        "HTTP " + r.status + "；请检查该模型的凭据、协议和网络出口",
+      );
     }
-    if (!content.includes("response.completed"))
+    const inspected = await inspectStream(r.body, "openai-responses");
+    if (!inspected.completed || !inspected.text)
       throw new Error("未收到完整结束事件");
-    diagnostics[providerId] = {
+    diagnostics[key] = {
+      providerId,
       ok: true,
       ms: Date.now() - start,
       time: new Date().toISOString(),
@@ -180,7 +213,8 @@ async function diagnose(providerId, modelName) {
       message: "HTTP 200 · response.completed",
     };
   } catch (error) {
-    diagnostics[providerId] = {
+    diagnostics[key] = {
+      providerId,
       ok: false,
       ms: Date.now() - start,
       time: new Date().toISOString(),
@@ -189,7 +223,75 @@ async function diagnose(providerId, modelName) {
     };
   }
   push();
-  return diagnostics[providerId];
+  return diagnostics[key];
+}
+function invalidateReports(id) {
+  for (const results of [diagnostics, capabilities])
+    for (const key of Object.keys(results))
+      if (!id || JSON.parse(key)[0] === id) delete results[key];
+  for (const key of Object.keys(providerModels))
+    if (!id || key === id) delete providerModels[key];
+  for (const key of Object.keys(balances))
+    if (!id || key === id) delete balances[key];
+  for (const [key, controller] of probeControllers)
+    if (!id || JSON.parse(key)[0] === id) controller.abort();
+}
+async function readModelMetadata(id) {
+  if (id === "official") {
+    providerModels[id] = {
+      source: "Codex 本机目录声明（未实测）",
+      time: new Date().toISOString(),
+      models: store.officialModels.map((m) => ({
+        model: m.slug,
+        displayName: m.display_name,
+        declared: declaredCapabilities(m),
+      })),
+    };
+  } else {
+    const provider = store.state.providers.find((p) => p.id === id);
+    if (!provider) throw Error("供应商不存在");
+    try {
+      providerModels[id] = await discoverModels(provider, upstream);
+    } catch (e) {
+      providerModels[id] = {
+        time: new Date().toISOString(),
+        error: e.message,
+        models: [],
+        source: "供应商目录",
+      };
+    }
+  }
+  return providerModels[id];
+}
+async function probeModel(id, name) {
+  const provider = store.state.providers.find((p) => p.id === id && p.enabled);
+  const model = provider?.models.find((m) => m.model === name && m.enabled);
+  if (!model || !provider.apiKey) throw Error("请先配置并启用该供应商和模型");
+  if (probeControllers.size)
+    throw Error("已有能力检测正在运行，请等待或先取消");
+  const key = modelKey(id, name),
+    controller = new AbortController();
+  probeControllers.set(key, controller);
+  const timer = setTimeout(() => controller.abort(), 240000);
+  try {
+    capabilityJobs[key] = "读取模型元数据";
+    push();
+    await readModelMetadata(id);
+    const report = await probeCapabilities(provider, model, upstream, {
+      signal: controller.signal,
+      progress: (message) => {
+        capabilityJobs[key] = message;
+        push();
+      },
+    });
+    if (!controller.signal.aborted) capabilities[key] = report;
+    return report;
+  } finally {
+    clearTimeout(timer);
+    delete capabilityJobs[key];
+    probeControllers.delete(key);
+    push();
+  }
 }
 async function balance(id) {
   const p = store.state.providers.find((p) => p.id === id);
@@ -258,6 +360,22 @@ else {
       await systemSession.setProxy({ mode: "system" });
       await directSession.setProxy({ mode: "direct" });
       store = new Store(dataDir, codexDir, safeStorage);
+      nativeKeys = new NativeKeyStore(dataDir, safeStorage);
+      openRouterAuth = new OpenRouterAuth({
+        fetchUpstream: upstream,
+        openExternal: (url) => shell.openExternal(url),
+        onChange: push,
+        saveKey: (apiKey, name) =>
+          store.updateProvider({
+            ...OFFICIAL_SERVICES.find((s) => s.id === "openrouter").profiles[0],
+            id: undefined,
+            name,
+            apiKey,
+            models: [],
+            enabled: true,
+            balance: { preset: "auto" },
+          }),
+      });
       config = new ConfigManager(codexDir, dataDir);
       harnesses = new HarnessManager(
         dataDir,
@@ -272,11 +390,44 @@ else {
         log,
       });
       try {
-        await router.start();
+        await router.start(servicePort);
       } catch (error) {
-        startupError = "端口 25819 无法启动：" + error.message;
+        startupError = "端口 " + servicePort + " 无法启动：" + error.message;
       }
       register("snapshot", () => snapshot());
+      register("official-open", (id, target) => {
+        const service = OFFICIAL_SERVICES.find((s) => s.id === id);
+        if (!service || !["console", "docs"].includes(target))
+          throw Error("未知官方入口");
+        return shell.openExternal(service[target]);
+      });
+      register("native-key-save", (input) => nativeKeys.save(input));
+      register("native-key-remove", async (id) => {
+        const result = await dialog.showMessageBox(window, {
+          type: "warning",
+          message: "从 ASS 移除此原生 API Key？",
+          detail: "只删除本机加密副本，不会撤销供应商端的 Key。",
+          buttons: ["取消", "移除"],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        if (result.response === 1) nativeKeys.remove(id);
+      });
+      register("native-key-copy", (id) => {
+        const secret = nativeKeys.read(id);
+        clipboard.writeText(secret);
+        const timer = setTimeout(() => {
+          if (clipboard.readText() === secret) clipboard.clear();
+        }, 30000);
+        timer.unref();
+        return {
+          ok: true,
+          message:
+            "已复制到系统剪贴板，30 秒后清理当前副本。剪贴板历史或其他应用可能保留副本。",
+        };
+      });
+      register("openrouter-auth-start", (label) => openRouterAuth.start(label));
+      register("openrouter-auth-cancel", () => openRouterAuth.cancel());
       register("account-add", (id, label, oauthProvider) =>
         harnesses.add(id, label, oauthProvider),
       );
@@ -302,11 +453,32 @@ else {
       register("account-select", (id, account) =>
         harnesses.select(id, account),
       );
-      register("client-executable", async (id) => {
+      register("client-detect", async (id) => {
+        const candidates = harnesses.detect(id);
+        if (candidates.length === 1) {
+          harnesses.setExecutable(id, candidates[0].location);
+          await harnesses.refreshOAuth();
+        }
+        return { candidates };
+      });
+      register("client-location", async (id, location) => {
+        harnesses.setExecutable(id, location);
+        await harnesses.refreshOAuth();
+      });
+      register("client-executable", async (id, directory = false) => {
         const r = await dialog.showOpenDialog(window, {
-          title: "选择客户端可执行文件",
-          properties: ["openFile"],
-          filters: [{ name: "客户端", extensions: ["exe", "cmd", "ps1"] }],
+          title: directory ? "选择客户端安装或源码目录" : "选择客户端启动文件",
+          properties: [directory ? "openDirectory" : "openFile"],
+          ...(directory
+            ? {}
+            : {
+                filters: [
+                  {
+                    name: "客户端",
+                    extensions: ["exe", "cmd", "ps1", "js", "cjs", "mjs"],
+                  },
+                ],
+              }),
         });
         if (!r.canceled) {
           harnesses.setExecutable(id, r.filePaths[0]);
@@ -349,9 +521,15 @@ else {
         const file = chosen.filePaths[0];
         if (fs.statSync(file).size > 5 * 1024 * 1024)
           throw new Error("配置文件超过 5 MiB");
-        return store.import(JSON.parse(fs.readFileSync(file, "utf8")));
+        const result = store.import(JSON.parse(fs.readFileSync(file, "utf8")));
+        invalidateReports();
+        return result;
       });
-      register("save-provider", (input) => store.updateProvider(input));
+      register("save-provider", (input) => {
+        const id = store.updateProvider(input);
+        invalidateReports(id);
+        return id;
+      });
       register("delete-provider", async (id) => {
         const r = await dialog.showMessageBox(window, {
           type: "warning",
@@ -366,16 +544,18 @@ else {
             (p) => p.id !== id,
           );
           store.save();
+          invalidateReports(id);
         }
       });
-      register("save-model", (provider, model, originalName) =>
-        store.model(provider, model, originalName),
-      );
+      register("save-model", (provider, model, originalName) => {
+        store.model(provider, model, originalName);
+        invalidateReports(provider);
+      });
       register("model-defaults", (provider, model) =>
         normalizeModel({ model }, provider, store.officialModels),
       );
       register("service", async (enabled) => {
-        if (enabled) await router.start();
+        if (enabled) await router.start(servicePort);
         else {
           if (config.status().attached) {
             const r = await dialog.showMessageBox(window, {
@@ -391,12 +571,62 @@ else {
         }
       });
       register("attach", async () => {
-        if (!router.server) await router.start();
+        if (!router.server) await router.start(servicePort);
         store.writeCatalog();
         return config.attach();
       });
       register("detach", () => config.detach());
       register("diagnose", diagnose);
+      register("models-discover", readModelMetadata);
+      register("capabilities-probe", async (id, name) => {
+        const p = store.state.providers.find((p) => p.id === id),
+          m = p?.models.find((m) => m.model === name);
+        if (!m)
+          throw Error(
+            "请选择具体模型；官方订阅模型请读取本机目录并使用闪电检测连接",
+          );
+        const result = await dialog.showMessageBox(window, {
+          type: "question",
+          message: "实测 " + m.model + " 的上游能力？",
+          detail:
+            "最多 " +
+            (5 + m.efforts.length) +
+            " 条小请求，每条最多请求 512 输出 tokens，可能计费。检测协议、工具调用及已配置的思维档位；不执行工具，不盲测上下文上限，不修改模型配置。",
+          buttons: ["取消", "开始实测"],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        if (result.response !== 1) return null;
+        return probeModel(id, name);
+      });
+      register("capabilities-cancel", (id, name) =>
+        probeControllers.get(modelKey(id, name))?.abort(),
+      );
+      register("model-add-discovered", (id, name) => {
+        const p = store.state.providers.find((p) => p.id === id);
+        const found = providerModels[id]?.models.find((m) => m.model === name);
+        if (!p || !found) throw Error("请先读取供应商模型目录");
+        if (p.models.some((m) => m.model === name))
+          throw Error("模型已在配置中");
+        const d = found.declared;
+        const efforts = d.efforts.filter(
+          (e) =>
+            e !== "ultra" ||
+            name.split("/").at(-1).toLowerCase().startsWith("gpt"),
+        );
+        store.model(id, {
+          model: name,
+          displayName: found.displayName,
+          ...(d.contextWindow >= 4096 && d.contextWindow <= 10000000
+            ? {
+                contextWindow: d.contextWindow,
+                contextSource: "供应商 /models 声明（未实测）",
+              }
+            : {}),
+          ...(d.maxOutputTokens ? { maxOutputTokens: d.maxOutputTokens } : {}),
+          ...(efforts.length ? { efforts } : {}),
+        });
+      });
       register("balance", balance);
       register("autostart", (enabled) => {
         app.setLoginItemSettings({
@@ -462,7 +692,14 @@ else {
           router,
           config,
           harnesses,
+          nativeKeys,
+          openRouterAuth,
+          setFetch: (value) => {
+            testFetch = value;
+          },
           diagnose,
+          readModelMetadata,
+          probeModel,
           balance,
           snapshot,
           upstream,
@@ -481,6 +718,8 @@ else {
   app.on("window-all-closed", () => {});
   app.on("before-quit", () => {
     quitting = true;
+    for (const controller of probeControllers.values()) controller.abort();
+    openRouterAuth?.cancel();
     router?.stop();
   });
 }

@@ -10,6 +10,7 @@ design/
 settings.json
 auth.json
 clients.json
+native-accounts.json
 requests.jsonl*
 test-results/
 playwright-report/

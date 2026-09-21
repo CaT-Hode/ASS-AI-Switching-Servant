@@ -10,6 +10,10 @@ const allowed = [
   "attach",
   "detach",
   "diagnose",
+  "models-discover",
+  "capabilities-probe",
+  "capabilities-cancel",
+  "model-add-discovered",
   "balance",
   "autostart",
   "open-data",
@@ -18,9 +22,17 @@ const allowed = [
   "account-select",
   "client-refresh",
   "client-executable",
+  "client-detect",
+  "client-location",
   "client-workspace",
   "client-launch",
   "pi-import-oauth",
+  "official-open",
+  "native-key-save",
+  "native-key-remove",
+  "native-key-copy",
+  "openrouter-auth-start",
+  "openrouter-auth-cancel",
 ];
 contextBridge.exposeInMainWorld("ass", {
   call: (name, ...args) => {

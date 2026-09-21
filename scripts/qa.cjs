@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, "..");
 const output = path.join(process.env.LOCALAPPDATA, "ASS-validation", "ui");
 fs.mkdirSync(output, { recursive: true });
 (async () => {
-  const data = path.join(output, "profile");
+  const data = fs.mkdtempSync(path.join(output, "profile-"));
   const codex = path.join(output, "codex");
   fs.mkdirSync(codex, { recursive: true });
   const cache = path.join(
@@ -19,7 +19,12 @@ fs.mkdirSync(output, { recursive: true });
   fs.writeFileSync(path.join(codex, "config.toml"), 'model = "gpt-6-astra"\n');
   const app = await electron.launch({
     args: [root, "--qa"],
-    env: { ...process.env, ASS_TEST_DATA: data, ASS_TEST_CODEX: codex },
+    env: {
+      ...process.env,
+      ASS_TEST_DATA: data,
+      ASS_TEST_CODEX: codex,
+      ASS_TEST_PORT: "25820",
+    },
     timeout: 60000,
   });
   try {
@@ -54,7 +59,9 @@ fs.mkdirSync(output, { recursive: true });
       .getByRole("button", { name: "供应商与模型", exact: true })
       .click();
     await page.getByRole("button", { name: "示例供应商", exact: true }).click();
-    await page.locator(".model-row").filter({ hasText: "gpt-6-astra" }).click();
+    await page
+      .getByRole("button", { name: "配置模型 gpt-6-astra", exact: true })
+      .click();
     const dialog = page.getByRole("dialog");
     await dialog
       .getByRole("slider", { name: "最高可选强度", exact: true })
@@ -82,8 +89,7 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(saved.defaultEffort, "ultra");
     assert.ok(saved.efforts.includes("max"));
     await page
-      .locator(".model-row")
-      .filter({ hasText: "claude-opus-5" })
+      .getByRole("button", { name: "配置模型 claude-opus-5", exact: true })
       .click();
     assert.equal(
       await page

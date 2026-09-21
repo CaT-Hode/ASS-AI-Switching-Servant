@@ -14,18 +14,21 @@ Windows 桌面端 AI 路由与账户切换工具。独立窗口、托盘运行�
 - 内置余额和套餐用量接口，支持同源自定义 GET 接口。
 - Codex、Claude Code、OpenCode、pi、DeepSeek Harness 的启动注入与账户选择。
 - 在本机 pi 支持时，将 Codex / Claude Code / OpenCode 的兼容 OAuth 导入新的 pi 账户。
+- 独立“官方账户中心”：19 组官方服务、多套 API / 原生授权账户、OpenRouter PKCE 浏览器授权、Cursor Key 加密保管。
+- 每个模型右侧的闪电单独检查连接；读取供应商模型目录，并用小请求检测协议、工具调用与思维参数。
+- 自动识别客户端入口，支持安装目录、npm 包目录、JS 入口及 DeepSeek Harness 源码目录。
 
 ## 下载与启动
 
 从 [Releases](https://github.com/CaT-Hode/ASS-AI-Switching-Servant/releases) 下载 Windows x64 ZIP，完整解压后运行 `ASS.exe`。不要只复制 EXE：旁边的资源和 DLL 必须保留。
 
-这是未签名的早期版本。Windows 可能显示来源警告，请核对仓库和 SHA-256；不要关闭系统防护。ASS 不内置各个 harness，请自行安装原生客户端，或在“客户端与账户”选择已有的 exe / cmd / ps1。
+这是未签名的早期版本。Windows 可能显示来源警告，请核对仓库和 SHA-256；不要关闭系统防护。ASS 不内置各个 harness，请自行安装原生客户端，或在“客户端与账户”自动识别、选择安装目录或启动文件。
 
 ### 接入 Codex App
 
 1. 先关闭其他工具的 Codex 路由接管，确保没有竞争修改配置。
 2. 在 ASS 导入供应商配置，核对模型协议和地址。官方账户继续使用你现有的 ChatGPT 登录。
-3. 点击“检测连接”；它会发送一条小请求，产生少量模型用量。
+3. 点击目标模型右侧的闪电；它只检测该模型，会发送一条小请求，产生少量模型用量。
 4. 点击“接入 Codex”，然后完全重启 Codex 并新建任务。
 
 ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_router` provider 和模型目录路径，不覆盖保留的 `openai` provider。旧任务可能保留原 provider，不会自动迁移。可在“连接诊断 → 断开 Codex”恢复 ASS 接入前的配置字段；接入后修改的无关字段会保留。
@@ -45,6 +48,37 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 在页面中选择账户、模型与工作目录，点击“使用此账户启动”。第三方 API Key 只留在 ASS 后端；客户端获得本地路由令牌，实际请求由 ASS 加上对应供应商凭据。注入只影响 ASS 启动的进程及其专用目录，不写原客户端全局配置，不强制终止已有会话。
 
 官方 OAuth 使用原生客户端刷新机制；ASS 不实现登录服务器、不代替用户授权，不保证某个订阅在另一 harness 中享有相同权益或计费方式。
+
+### 官方账户中心
+
+侧栏独立页面覆盖 OpenAI / ChatGPT、Anthropic / Claude、DeepSeek、Cursor、Kimi / Moonshot、Z.ai、智谱、OpenCode Go / Zen、OpenRouter、Gemini、GitHub Copilot、MiniMax、MiMo、SiliconFlow、StepFun、Groq、Mistral、xAI、Qwen。
+
+| 账户方式 | 管理范围 |
+| --- | --- |
+| 官方 API Key | 多套账户、编辑凭据、模型管理、余额查询、选择兼容客户端；与供应商配置共用一份加密凭据 |
+| ChatGPT / Claude 原生 OAuth | 创建独立账户目录、原生登录、选择账户启动、状态刷新；原生退出流程位于“客户端与账户” |
+| GitHub Copilot OAuth | 本机 pi 注册表确认支持后，创建 pi 授权账户并原生登录 |
+| OpenRouter PKCE | 浏览器确认权限和额度，本机随机回调 + S256，换取独立 API Key 后加密保存；不是订阅令牌 |
+| Cursor API Key | 多套加密保管、更新、移除和主动复制到原生客户端；不转换为通用模型 API |
+| Cursor / Kimi 原生 OAuth | **由原生客户端管理**；本版本不提供其 OAuth 多账户快照、切换或跨客户端移植 |
+
+同一服务的不同产品与地区分开列出，例如 Kimi Code / Moonshot、Z.ai 通用 API / Coding Plan、OpenCode Go / Zen。它们的 Key 和额度不应混用。支持的服务名不等于所有账户与模型均已实网验证。
+
+官方归类按已知 API 域名匹配，不按自定义名称或品牌猜测；中转商保留在“供应商与模型”。移除账户只删除本机配置，不撤销官网 Key。Cursor Key 主动复制后，若剪贴板未被替换，30 秒后清空；系统剪贴板历史和其他应用可能保留副本。
+
+### 自动识别安装或源码目录
+
+“客户端与账户 → 自动识别”检查 PATH 与有限的常见安装位置。DeepSeek Harness 也检查如 `D:\deepseek-harness` 的源码位置；不全盘扫描，不自动安装依赖或执行构建脚本。
+
+选择 DSH 源码根目录时，核对 package manifest 后优先使用 `apps/cli/lib/bin.js`，不存在时才检查源文件及已安装的本地 tsx。缺少运行条件会明确报错；检测到多套入口时由用户选择。启动入口与工作目录分开，项目工作目录不会被替换成 harness 源码目录。
+
+### 模型连接与能力检测
+
+- 闪电：只验证被点击的模型，结果按“供应商 + 模型”保存。检查完整流，不将 HTTP 200 或截断流当作成功。
+- “发现模型与能力”：同源查询 `/models`，展示供应商明确声明的上下文、模态、工具与思维参数；可逐项加入配置，不覆盖已有模型。
+- 模型右侧能力按钮：“自动检测能力”经确认发送少量小请求，每条最多请求 512 输出 tokens；检测协议、带随机标记的真实工具调用结构、已配置思维档位以及非法值对照。工具不会被执行；遇到认证错误、限流或服务器错误停止继续探测。
+- 缺失声明标为未知。非法值也被接受时，合法档位标为“接受但未确认生效”；即使参数校验通过，也不代表不同档位的推理质量已得到证明。
+- 不盲测精确上下文上限或大体积图像 / 音频 / 视频。官方 Codex 订阅读取本机目录并使用闪电检测，不套用通用 API 探测。结果仅在本次会话保留；变更配置后清除旧结论。
 
 ### 将 OAuth 导入 pi
 
@@ -98,9 +132,10 @@ npm.cmd start
 
 ```powershell
 node scripts/qa.cjs
+node scripts/features-qa.cjs
 ```
 
-可选原生客户端检查：设置 `ASS_QA_CLIENTS` 指向另行安装客户端的 `node_modules`，再运行 `node scripts/harness-qa.cjs`。它使用合成凭据，不执行真实 OAuth 刷新。`live-qa.cjs` / `codex-qa.cjs` 是需要显式环境变量的实网测试，会产生模型用量，不属于默认测试。
+可选原生客户端检查：设置 `ASS_QA_CLIENTS` 指向另行安装客户端的 `node_modules`，再运行 `node scripts/harness-qa.cjs`。它使用合成凭据，不执行真实 OAuth 刷新。`live-qa.cjs` / `codex-qa.cjs` 是需要显式环境变量的实网测试，会产生模型用量，不属于默认测试。`inspection-live-qa.cjs` 还需指定 `ASS_IMPORT_FILE / ASS_LIVE_PROVIDER / ASS_LIVE_MODEL`，仅探测一个模型的 low 档位。UI 测试使用独立目录与 25820 测试端口。
 
 打包 Windows x64 便携应用：
 
@@ -109,6 +144,6 @@ npm.cmd run package
 node scripts/package-qa.cjs
 ```
 
-产物在 `release/ASS-win32-x64`。打包包含 Electron，所以安装体积不等同于原生小工具；轻量化主要指无额外后台服务、无多余管理功能。客户端接入验证脚本是可选项，参数及环境变量见脚本头部。
+产物在 `release/v<版本号>/ASS-win32-x64`，不同版本独立打包目录，避免旧目录句柄占用影响更新。打包包含 Electron，所以安装体积不等同于原生小工具；轻量化主要指无额外后台服务、无多余管理功能。客户端接入验证脚本是可选项，参数及环境变量见脚本头部。
 
 实现按 `core/`（路由、账户、目录与配置）、`electron/`（原生窗口、网络和凭据）、`src/`（React UI）划分。设计及协议来源见 [SOURCES.md](SOURCES.md)。

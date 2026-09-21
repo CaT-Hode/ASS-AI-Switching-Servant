@@ -6,6 +6,11 @@ const { spawn } = require("node:child_process");
 const { atomic } = require("./config.cjs");
 const { makeCatalog } = require("./models.cjs");
 const {
+  findExecutable,
+  resolveLauncher,
+  discoverLaunchers,
+} = require("./client-launcher.cjs");
+const {
   normalizeOAuth,
   piOAuthProviders,
   enumerateSources,
@@ -61,23 +66,6 @@ const json = (file, fallback = {}) => {
   }
 };
 const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
-function findExecutable(name, env = process.env) {
-  const dirs = (env.Path || env.PATH || "")
-    .split(path.delimiter)
-    .map((s) => s.replace(/^"|"$/g, ""));
-  dirs.push(
-    path.join(env.APPDATA || "", "npm"),
-    path.join(env.USERPROFILE || os.homedir(), ".local", "bin"),
-  );
-  for (const dir of dirs.filter(Boolean))
-    for (const ext of [".exe", ".cmd", ".ps1"]) {
-      const p = path.join(dir, name + ext);
-      try {
-        if (fs.statSync(p).isFile()) return p;
-      } catch {}
-    }
-  return "";
-}
 function apiAccounts(harness, providers) {
   return providers
     .filter((p) => p.enabled && p.apiKey)
@@ -310,6 +298,8 @@ class HarnessManager {
     this.getState = getState;
     this.officialModels = officialModels;
     this.piProviders = [];
+    this.detected = {};
+    this.discovery = {};
     this.file = path.join(dataDir, "clients.json");
     this.state = json(this.file, {
       profiles: [],
@@ -319,9 +309,34 @@ class HarnessManager {
     });
   }
   async refreshOAuth() {
-    this.piProviders = await piOAuthProviders(
-      this.state.executables.pi || findExecutable("pi"),
+    for (const { id } of SPECS) {
+      if (!this.state.executables[id]) {
+        const candidates = discoverLaunchers(id);
+        this.discovery[id] = candidates;
+        this.detected[id] =
+          candidates.length === 1 ? candidates[0].location : "";
+      }
+    }
+    const pi = this.launcher("pi");
+    this.piProviders = await piOAuthProviders(pi.ready ? pi.entryPoint : "");
+  }
+  launcher(harness) {
+    this.spec(harness);
+    const selected = this.state.executables[harness];
+    if (!selected && this.discovery[harness]?.length > 1) {
+      return {
+        ...resolveLauncher(harness, ""),
+        message: "检测到多套客户端，点击自动识别后选择要使用的一套",
+      };
+    }
+    return resolveLauncher(
+      harness,
+      selected || this.detected[harness] || findExecutable(harness),
     );
+  }
+  detect(harness) {
+    this.spec(harness);
+    return discoverLaunchers(harness);
   }
   oauthSources() {
     return enumerateSources(
@@ -377,7 +392,8 @@ class HarnessManager {
       ),
       clients: SPECS.map((s) => ({
         ...s,
-        executable: this.state.executables[s.id] || findExecutable(s.command),
+        executable: this.launcher(s.id).executable,
+        launcher: this.launcher(s.id),
         selected: this.state.selected[s.id] || "",
         accounts: [
           ...apiAccounts(s.id, this.getState().providers),
@@ -419,12 +435,8 @@ class HarnessManager {
   }
   setExecutable(harness, file) {
     this.spec(harness);
-    if (
-      !path.isAbsolute(file) ||
-      ![".exe", ".cmd", ".ps1"].includes(path.extname(file).toLowerCase()) ||
-      !fs.statSync(file).isFile()
-    )
-      throw new Error("请选择客户端 exe / cmd / ps1 文件");
+    const launcher = resolveLauncher(harness, file);
+    if (!launcher.ready) throw new Error(launcher.message);
     this.state.executables[harness] = file;
     this.save();
   }
@@ -516,10 +528,8 @@ class HarnessManager {
       atomic(path.join(plan.dir, name), content);
   }
   async launch(harness, account, action, model, token) {
-    const spec = this.spec(harness),
-      exe = this.state.executables[harness] || findExecutable(spec.command);
-    if (!exe || !fs.existsSync(exe))
-      throw new Error("未找到客户端，请先安装或选择可执行文件");
+    const launcher = this.launcher(harness);
+    if (!launcher.ready) throw new Error(launcher.message);
     const plan = this.plan(harness, account, action, model, token);
     this.materialize(plan);
     const workspace =
@@ -529,7 +539,7 @@ class HarnessManager {
     const script =
       `Set-Location -LiteralPath ${q(workspace)}\n` +
       (plan.hint ? `Write-Host ${q(plan.hint)}\n` : "") +
-      `& ${q(exe)} ${plan.args.map(q).join(" ")}\n`;
+      `& ${q(launcher.executable)} ${[...launcher.args, ...plan.args].map(q).join(" ")}\n`;
     const terminal = path.join(
       process.env.SystemRoot || "C:\\Windows",
       "System32",

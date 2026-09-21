@@ -91,10 +91,64 @@
   font-size: 11px;
   color: #63738a;
   overflow-wrap: anywhere;
-  margin: 12px 0 25px;
+  margin: 8px 0;
   background: #f5f7fa;
   border-radius: 7px;
   padding: 10px 12px;
+}
+.client-location-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.client-location {
+  margin-bottom: 24px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+.launcher-state {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0;
+  color: #66778d;
+}
+.launcher-state.ready {
+  color: #28603f;
+}
+.client-location .hint {
+  font-size: 11px;
+  line-height: 1.7;
+  margin: 8px 0 0;
+}
+.launcher-command {
+  font-size: 11px;
+  color: #526780;
+  margin: 8px 0 0;
+}
+.launcher-command summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: 4px 0;
+}
+.launcher-command code {
+  display: block;
+  padding: 8px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  color: #354961;
+}
+.launcher-candidates {
+  display: grid;
+  gap: 10px;
+}
+.launcher-candidates small {
+  overflow-wrap: anywhere;
 }
 .account-list {
   display: grid;

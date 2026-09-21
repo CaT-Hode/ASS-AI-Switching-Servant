@@ -14,6 +14,7 @@ if (!process.env.ASS_IMPORT_FILE)
       ...process.env,
       ASS_TEST_DATA: data,
       ASS_TEST_CODEX: path.join(process.env.USERPROFILE, ".codex"),
+      ASS_TEST_PORT: "25820",
     },
     timeout: 60000,
   });
@@ -37,7 +38,13 @@ if (!process.env.ASS_IMPORT_FILE)
         "official",
         ...t.store.state.providers.map((p) => p.id),
       ]) {
-        const r = await t.diagnose(id);
+        const models =
+          id === "official"
+            ? t.store.public().officialModels
+            : t.store.state.providers.find((p) => p.id === id).models;
+        const model = models.find((m) => m.enabled !== false);
+        if (!model) continue;
+        const r = await t.diagnose(id, model.model);
         results.push({ kind: "connection", provider: id, ...r });
       }
       return results;

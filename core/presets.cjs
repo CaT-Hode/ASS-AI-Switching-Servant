@@ -86,6 +86,10 @@ const PROVIDER_PRESETS = [
   brand,
   network: "system",
 }));
+for (const service of require("./official-services.cjs").OFFICIAL_SERVICES)
+  for (const preset of service.profiles)
+    if (!PROVIDER_PRESETS.some((p) => p.id === preset.id))
+      PROVIDER_PRESETS.push(preset);
 function tail(model) {
   return model.trim().toLowerCase().split("/").at(-1);
 }

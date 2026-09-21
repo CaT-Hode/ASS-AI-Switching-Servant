@@ -1,0 +1,136 @@
+.models-table .model-row {
+  grid-template-columns: minmax(170px, 1.4fr) 110px 100px minmax(
+      130px,
+      1fr
+    ) 108px;
+}
+.model-actions {
+  display: flex;
+  gap: 3px;
+  justify-content: flex-end;
+}
+.model-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: #64758a;
+  background: transparent;
+  cursor: pointer;
+}
+.model-icon:hover:not(:disabled) {
+  background: #eef4fe;
+  border-color: #dce7f7;
+  color: #0868d6;
+}
+.model-icon:active:not(:disabled) {
+  background: #dceaff;
+}
+.model-icon.passed {
+  color: #198455;
+}
+.model-icon.failed {
+  color: #bc4b40;
+}
+.model-icon:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.model-name-button {
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  min-width: 0;
+}
+.model-name-button strong,
+.model-name-button small {
+  overflow-wrap: anywhere;
+}
+.capability-section {
+  margin: 16px 0 22px;
+}
+.capability-section h3 {
+  font-size: 13px;
+}
+.capability-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 22px;
+  padding: 12px;
+  background: #f7f9fc;
+  border-radius: 9px;
+  font-size: 12px;
+}
+.capability-facts > div {
+  padding: 9px 0;
+}
+.capability-facts dt {
+  color: #6d7a8b;
+  margin-bottom: 5px;
+}
+.capability-facts dd {
+  margin: 0;
+  color: #283d57;
+  overflow-wrap: anywhere;
+}
+.probe-results > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #edf0f5;
+  font-size: 11px;
+}
+.probe-results strong {
+  font-weight: 500;
+  color: #415772;
+  text-align: right;
+}
+.probe-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0968cc;
+  font-size: 12px;
+}
+.capability-warning {
+  color: #6c798a;
+  font-size: 11px;
+  line-height: 1.8;
+  padding-top: 12px;
+  border-top: 1px solid #e7ecf4;
+}
+.discovered-models {
+  max-height: 420px;
+  overflow-y: auto;
+}
+.discovered-model {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid #e9edf4;
+  align-items: center;
+}
+.discovered-model > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.discovered-model strong {
+  font-size: 12px;
+}
+.discovered-model small,
+.discovered-model p {
+  display: block;
+  color: #6c798a;
+  font-size: 11px;
+  margin: 5px 0 0;
+}
+.discovered-model .button {
+  flex-shrink: 0;
+}

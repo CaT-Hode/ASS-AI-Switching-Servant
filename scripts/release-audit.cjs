@@ -5,7 +5,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const root = path.resolve(__dirname, "..");
 const forbidden =
-  /(?:^|\/)(?:auth\.json|\.credentials\.json|settings\.json|clients\.json|requests\.jsonl(?:\.previous)?|[^/]+\.aimami-relay\.json)$/i;
+  /(?:^|\/)(?:auth\.json|\.credentials\.json|settings\.json|clients\.json|native-accounts\.json|requests\.jsonl(?:\.previous)?|[^/]+\.aimami-relay\.json)$/i;
 const tokenShape =
   /\b(?:sk-(?:proj-|ant-api\d+-)?[A-Za-z0-9_-]{28,}|gh[pousr]_[A-Za-z0-9]{30,}|eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,})\b/;
 const secrets = [];
@@ -49,7 +49,7 @@ function check(name, buffer, packaged = false) {
   if (!files.length) throw Error("Stage the source files before auditing");
   for (const f of files) check(f, fs.readFileSync(path.join(root, f)));
   const { listPackage, extractFile } = await import("@electron/asar");
-  const archive = path.join(root, "release/ASS-win32-x64/resources/app.asar");
+  const archive = path.join(root, "release/v" + require("../package.json").version + "/ASS-win32-x64/resources/app.asar");
   const entries = listPackage(archive);
   for (const entry of entries) {
     const name = entry.replace(/^[\\/]/, "");

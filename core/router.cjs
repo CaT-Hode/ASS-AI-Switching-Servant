@@ -86,7 +86,10 @@ class Router {
     this.port = 25819;
     this.clientToken = crypto.randomBytes(32).toString("hex");
   }
-  async start() {
+  async start(port = this.port) {
+    if (!Number.isInteger(port) || port < 0 || port > 65535)
+      throw Error("无效本机端口");
+    if (!this.server) this.port = port;
     if (this.server) return;
     const server = http.createServer((q, s) => this.handle(q, s));
     server.requestTimeout = 300000;

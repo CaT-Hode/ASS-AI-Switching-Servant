@@ -408,6 +408,7 @@ export function ModelEditor({ provider, model, onSave, onClose }) {
 }
 export function ProviderEditor({
   provider,
+  initialPreset,
   presets = [],
   balancePresets = [],
   onSave,
@@ -438,6 +439,8 @@ export function ProviderEditor({
             scale: 1,
             auth: "bearer",
           },
+          ...initialPreset,
+          id: undefined,
         },
   );
   const [tab, setTab] = useState("general"),
@@ -461,7 +464,9 @@ export function ProviderEditor({
   }
   return (
     <Modal
-      title={provider ? "供应商设置" : "添加供应商"}
+      title={
+        provider ? "供应商设置" : initialPreset ? "添加 API 账户" : "添加供应商"
+      }
       description="连接、凭据与余额接口"
       onClose={onClose}
     >
@@ -485,7 +490,7 @@ export function ProviderEditor({
             {!provider && (
               <Field label="供应商预设">
                 <select
-                  defaultValue=""
+                  defaultValue={initialPreset?.id || ""}
                   onChange={(e) => {
                     const p = presets.find((x) => x.id === e.target.value);
                     if (p) setDraft((d) => ({ ...d, ...p, id: undefined }));

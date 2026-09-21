@@ -11,12 +11,13 @@ import {
   RefreshCw,
   ChevronRight,
   ShieldCheck,
+  Search,
 } from "lucide-react";
 import { Modal } from "./editors.jsx";
 const api = window.ass;
-function AccountForm({ client, onClose, onSave }) {
+export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
   const [label, setLabel] = useState(""),
-    [provider, setProvider] = useState(""),
+    [provider, setProvider] = useState(initialProvider),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   return (
@@ -84,9 +85,10 @@ function AccountForm({ client, onClose, onSave }) {
     </Modal>
   );
 }
-export function Clients({ state, act, busy }) {
-  const [selected, setSelected] = useState("codex"),
+export function Clients({ state, act, busy, initialClient = "codex" }) {
+  const [selected, setSelected] = useState(initialClient),
     [adding, setAdding] = useState(false),
+    [candidates, setCandidates] = useState(null),
     [model, setModel] = useState("");
   const client = state.harnesses.clients.find((c) => c.id === selected),
     account = client.accounts.find((a) => a.id === client.selected);
@@ -105,6 +107,17 @@ export function Clients({ state, act, busy }) {
       return r;
     });
   const [notice, setNotice] = useState("");
+  const detect = () =>
+    act("client-detect", async () => {
+      const result = await api.call("client-detect", client.id);
+      if (result.candidates.length > 1) setCandidates(result.candidates);
+      else
+        setNotice(
+          result.candidates.length
+            ? "已识别并选择客户端入口。"
+            : "常见位置未找到可用入口，请点击“选择目录”定位安装或源码目录。",
+        );
+    });
   return (
     <>
       <div className="clients-intro">
@@ -153,8 +166,27 @@ export function Clients({ state, act, busy }) {
               <h2>{client.name}</h2>
               <p>{client.description}</p>
             </div>
+          </header>
+          <div className="client-location-actions" aria-label="客户端位置">
+            <button className="button" disabled={!!busy} onClick={detect}>
+              <Search size={14} />
+              自动识别
+            </button>
             <button
               className="button"
+              disabled={!!busy}
+              onClick={() =>
+                act("client-directory", () =>
+                  api.call("client-executable", client.id, true),
+                )
+              }
+            >
+              <Folder size={14} />
+              选择目录
+            </button>
+            <button
+              className="button"
+              disabled={!!busy}
               onClick={() =>
                 act("client-path", () =>
                   api.call("client-executable", client.id),
@@ -162,13 +194,32 @@ export function Clients({ state, act, busy }) {
               }
             >
               <Folder size={14} />
-              {client.executable ? "更改程序" : "选择程序"}
+              选择文件
             </button>
-          </header>
-          <p className="client-path mono" title={client.executable}>
-            {client.executable ||
-              "先安装原生客户端，或选择已有 exe / cmd / ps1。ASS 不内置这些客户端。"}
-          </p>
+          </div>
+          <div className="client-location" role="status">
+            <p
+              className={
+                "launcher-state " + (client.launcher?.ready ? "ready" : "")
+              }
+            >
+              {client.launcher?.ready && <Check size={14} />}
+              {client.launcher?.message || "未检测到安装"}
+            </p>
+            {client.launcher?.location && (
+              <p className="client-path mono">{client.launcher.location}</p>
+            )}
+            {client.launcher?.ready && (
+              <details className="launcher-command">
+                <summary>查看启动入口</summary>
+                <code>{client.launcher.command}</code>
+              </details>
+            )}
+            <p className="hint">
+              可直接选择 DSH
+              源码目录，无需手写启动脚本。不会自动安装依赖或运行构建。
+            </p>
+          </div>
           <div className="section-heading">
             <h3>
               可用账户 <span className="count">{client.accounts.length}</span>
@@ -373,6 +424,41 @@ export function Clients({ state, act, busy }) {
             await act("account-refresh", () => api.call("snapshot"));
           }}
         />
+      )}
+      {candidates && (
+        <Modal
+          title="选择识别到的客户端"
+          description="检测到多套入口，请选择本次要使用的位置。"
+          onClose={() => setCandidates(null)}
+        >
+          <div className="launcher-candidates">
+            {candidates.map((candidate) => (
+              <button
+                className="account-row"
+                key={candidate.location}
+                disabled={!!busy}
+                onClick={() =>
+                  act("client-location", async () => {
+                    await api.call(
+                      "client-location",
+                      client.id,
+                      candidate.location,
+                    );
+                    setCandidates(null);
+                    setNotice("已选择客户端入口。");
+                  })
+                }
+              >
+                <Folder size={18} />
+                <span className="account-content">
+                  <strong>{candidate.message}</strong>
+                  <small>{candidate.location}</small>
+                </span>
+                <ChevronRight size={16} />
+              </button>
+            ))}
+          </div>
+        </Modal>
       )}
     </>
   );
