@@ -32,7 +32,7 @@ fs.mkdirSync(output, { recursive: true });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.waitForSelector("h1");
-    assert.equal(await page.title(), "AI Switch Servant");
+    assert.equal(await page.title(), "ASS · 模型随你切");
     assert.ok(page.url().startsWith("file://"));
     const fake = {
       providers: [

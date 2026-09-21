@@ -35,6 +35,7 @@ import "./polish.css";
 import "./clients.css";
 import { Clients } from "./clients.jsx";
 import { OfficialAccounts } from "./official-accounts.jsx";
+import { Updates, UpdateBanner } from "./updates.jsx";
 import { ModelEditor, ProviderEditor } from "./editors.jsx";
 import {
   modelKey,
@@ -249,8 +250,7 @@ function Overview({ state, providers, act, busy, setView }) {
         <RequestTable rows={state.recent} />
       </section>
       <footer className="page-footer">
-        AI Switch Servant · 独立本地路由 · 仅监听此设备。模型设置修改后，重启
-        Codex 刷新目录。
+        ASS · 模型随你切，账户由你管。模型设置修改后，重启 Codex 刷新目录。
       </footer>
     </>
   );
@@ -539,9 +539,7 @@ function Diagnostics({ state, providers, act, busy }) {
           </div>
           <div>
             <dt>Codex 接入</dt>
-            <dd>
-              {state.codex.attached ? "已接入 AI Switch Servant" : "未接入"}
-            </dd>
+            <dd>{state.codex.attached ? "已接入 ASS" : "未接入"}</dd>
           </div>
           <div>
             <dt>TLS 校验</dt>
@@ -642,7 +640,7 @@ function App() {
     return (
       <div className="loading">
         <Monitor size={32} />
-        <h2>请从 AI Switch Servant 桌面应用打开</h2>
+        <h2>请从 ASS 桌面应用打开</h2>
         <p>此界面通过本机桌面通道管理路由，不提供网页管理入口。</p>
       </div>
     );
@@ -668,13 +666,15 @@ function App() {
     clients: "客户端与账户",
     accounts: "官方账户中心",
     diagnostics: "连接诊断",
+    updates: "关于 ASS",
   }[view];
   const desc = {
-    overview: "官方与第三方模型，在一个入口切换。",
+    overview: "ASS，让模型切换更顺手。",
     providers: "独立配置协议、上下文窗口与思维强度。",
     clients: "切换 API 与授权账户，启动独立客户端。",
     accounts: "管理官方 API 凭据与订阅授权，清晰区分账户和计费。",
     diagnostics: "从本机证书到完整响应，确认每一条连接。",
+    updates: "检查新版，掌握更新节奏。",
   }[view];
   return (
     <div className="app-shell">
@@ -683,7 +683,7 @@ function App() {
           <img src="./ass-logo.png" alt="ASS 菊花标志" />
           <div>
             <strong>ASS</strong>
-            <small>AI Switch Servant</small>
+            <small>模型随你切</small>
           </div>
         </div>
         <div className="nav-label">工作空间</div>
@@ -694,6 +694,7 @@ function App() {
             ["accounts", KeyRound, "官方账户中心"],
             ["clients", Monitor, "客户端与账户"],
             ["diagnostics", Activity, "连接诊断"],
+            ["updates", Download, "关于 ASS"],
           ].map(([id, Icon, label]) => (
             <button
               key={id}
@@ -710,7 +711,15 @@ function App() {
           <Monitor size={18} />
           <span>本地运行 · 仅此设备</span>
         </div>
-        <small className="version">v{state.version}</small>
+        <button
+          className="version version-button"
+          aria-label="查看 ASS 版本与更新"
+          onClick={() => setView("updates")}
+        >
+          {state.updates.available && <span className="update-dot" />}v
+          {state.version}
+          {state.updates.available ? " · 发现新版" : " · 检查更新"}
+        </button>
       </aside>
       <main>
         <header className="page-header">
@@ -770,6 +779,13 @@ function App() {
             {state.service.running ? "停止服务" : "启动服务"}
           </Button>
         </div>
+        {view !== "updates" && (
+          <UpdateBanner
+            updates={state.updates}
+            act={act}
+            onView={() => setView("updates")}
+          />
+        )}
         {view === "overview" ? (
           <Overview {...{ state, providers, act, busy, setView }} />
         ) : view === "providers" ? (
@@ -791,6 +807,8 @@ function App() {
           />
         ) : view === "clients" ? (
           <Clients {...{ state, act, busy }} initialClient={clientTarget} />
+        ) : view === "updates" ? (
+          <Updates {...{ state, act, busy }} />
         ) : (
           <Diagnostics {...{ state, providers, act, busy }} />
         )}

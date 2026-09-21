@@ -4,12 +4,14 @@ import { setTimeout } from "node:timers/promises";
 import { readFile } from "node:fs/promises";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const { version } = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
 const outputs = await packager({
   dir: root,
   name: "ASS",
   executableName: "ASS",
-  appCopyright: "AI Switch Servant",
+  appCopyright: "ASS · AI Switch Servant",
   icon: fileURLToPath(new URL("../assets/ass.ico", import.meta.url)),
   asar: true,
   platform: "win32",
@@ -22,7 +24,7 @@ const outputs = await packager({
   // Give those handles time to close before Packager renames the directory.
   afterExtract: [
     async () => {
-      await setTimeout(2000);
+      await setTimeout(8000);
     },
   ],
 });

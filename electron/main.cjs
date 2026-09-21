@@ -34,6 +34,7 @@ const {
 } = require("../core/official-services.cjs");
 const { NativeKeyStore } = require("../core/native-key-store.cjs");
 const { OpenRouterAuth } = require("../core/openrouter-auth.cjs");
+const { UpdateChecker } = require("../core/updates.cjs");
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
 if (testMode && customData) app.setPath("userData", customData);
@@ -42,7 +43,7 @@ else
     "userData",
     path.join(app.getPath("appData"), "AI Switch Servant"),
   );
-app.setName("AI Switch Servant");
+app.setName("ASS");
 app.setAppUserModelId("local.ass.desktop");
 let window,
   tray,
@@ -52,6 +53,7 @@ let window,
   harnesses,
   nativeKeys,
   openRouterAuth,
+  updates,
   quitting = false;
 let recent = [],
   diagnostics = {},
@@ -115,6 +117,7 @@ function snapshot() {
     ),
     nativeAccounts: nativeKeys.public(),
     openRouterAuth: openRouterAuth.state,
+    updates: updates.snapshot(),
     balancePresets: BALANCE_PRESETS,
     service: {
       running: !!router.server,
@@ -319,7 +322,7 @@ function showWindow() {
     height: 930,
     minWidth: 1100,
     minHeight: 740,
-    title: "AI Switch Servant · ASS",
+    title: "ASS · 模型随你切",
     icon: iconPath,
     backgroundColor: "#ffffff",
     autoHideMenuBar: true,
@@ -360,6 +363,12 @@ else {
       await systemSession.setProxy({ mode: "system" });
       await directSession.setProxy({ mode: "direct" });
       store = new Store(dataDir, codexDir, safeStorage);
+      updates = new UpdateChecker({
+        dataDir,
+        currentVersion: app.getVersion(),
+        fetchRelease: (url, init) => upstream(url, init, "system"),
+        onChange: push,
+      });
       nativeKeys = new NativeKeyStore(dataDir, safeStorage);
       openRouterAuth = new OpenRouterAuth({
         fetchUpstream: upstream,
@@ -395,6 +404,12 @@ else {
         startupError = "端口 " + servicePort + " 无法启动：" + error.message;
       }
       register("snapshot", () => snapshot());
+      register("update-check", () => updates.check({ manual: true }));
+      register("update-preferences", (input) => updates.preferences(input));
+      register("update-dismiss", () => updates.dismiss());
+      register("update-open", (kind) =>
+        shell.openExternal(updates.openUrl(kind)),
+      );
       register("official-open", (id, target) => {
         const service = OFFICIAL_SERVICES.find((s) => s.id === id);
         if (!service || !["console", "docs"].includes(target))
@@ -560,7 +575,7 @@ else {
           if (config.status().attached) {
             const r = await dialog.showMessageBox(window, {
               type: "warning",
-              message: "停止路由会中断正在使用 AI Switch Servant 的请求。",
+              message: "停止路由会中断正在使用 ASS 的请求。",
               buttons: ["取消", "停止服务"],
               defaultId: 0,
               cancelId: 0,
@@ -664,10 +679,17 @@ else {
       });
       const image = nativeImage.createFromPath(iconPath);
       tray = new Tray(image.resize({ width: 24, height: 24 }));
-      tray.setToolTip("AI Switch Servant · 本地模型路由");
+      tray.setToolTip("ASS · 模型随你切");
       tray.setContextMenu(
         Menu.buildFromTemplate([
-          { label: "打开 AI Switch Servant", click: showWindow },
+          { label: "打开 ASS", click: showWindow },
+          {
+            label: "检查 ASS 更新",
+            click: () => {
+              showWindow();
+              void updates.check({ manual: true });
+            },
+          },
           { type: "separator" },
           {
             label: "退出（停止路由）",
@@ -694,6 +716,7 @@ else {
           harnesses,
           nativeKeys,
           openRouterAuth,
+          updates,
           setFetch: (value) => {
             testFetch = value;
           },
@@ -710,14 +733,16 @@ else {
             app.quit();
           },
         };
+      if (!testMode) updates.start();
     })
     .catch((error) => {
-      dialog.showErrorBox("AI Switch Servant 启动失败", error.message);
+      dialog.showErrorBox("ASS 启动失败", error.message);
       app.exit(1);
     });
   app.on("window-all-closed", () => {});
   app.on("before-quit", () => {
     quitting = true;
+    updates?.stop();
     for (const controller of probeControllers.values()) controller.abort();
     openRouterAuth?.cancel();
     router?.stop();

@@ -11,6 +11,7 @@ settings.json
 auth.json
 clients.json
 native-accounts.json
+updates.json
 requests.jsonl*
 test-results/
 playwright-report/

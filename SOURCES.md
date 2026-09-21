@@ -32,6 +32,12 @@ ASS 是独立实现，不是原产品的官方版本。界面不沿用旧产品�
 
 模型目录字段与小请求结果分别展示为“声明”和“实测”；上游参数接受不等于不同档位的推理质量验证。未公开能力保持未知，不根据模型名称冒充实测结果。
 
+## v0.1.2 更新检查
+
+- [GitHub Releases API](https://docs.github.com/en/rest/releases/releases#list-releases)：公开版本、预览标记、发布资源名称与上传状态。
+- [GitHub REST 最佳实践](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api)：ETag 条件请求、串行合并及限流退避。
+- [Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)：Windows 原生自动安装方案涉及对应打包机制；当前 ASS 是便携 ZIP，只实现自动检查和浏览器下载，不声称已经支持后台自动安装。
+
 ## 视觉
 
 ASS 蓝色花瓣 logo 为本项目生成的原创位图；ICO 只是该图的尺寸和容器转换。其他图标使用 Lucide。系统字体、原生 dialog 和克制的交互反馈，针对横向桌面窗口设计。

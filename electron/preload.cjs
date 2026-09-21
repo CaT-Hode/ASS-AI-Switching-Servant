@@ -33,6 +33,10 @@ const allowed = [
   "native-key-copy",
   "openrouter-auth-start",
   "openrouter-auth-cancel",
+  "update-check",
+  "update-preferences",
+  "update-dismiss",
+  "update-open",
 ];
 contextBridge.exposeInMainWorld("ass", {
   call: (name, ...args) => {

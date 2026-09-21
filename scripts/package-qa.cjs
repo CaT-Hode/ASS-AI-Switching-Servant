@@ -12,7 +12,13 @@ const codex = path.join(data, "codex");
 fs.mkdirSync(codex);
 (async () => {
   const app = await electron.launch({
-    executablePath: path.join(root, "release", "v" + version, "ASS-win32-x64", "ASS.exe"),
+    executablePath: path.join(
+      root,
+      "release",
+      "v" + version,
+      "ASS-win32-x64",
+      "ASS.exe",
+    ),
     args: ["--qa"],
     env: {
       ...process.env,
@@ -27,7 +33,7 @@ fs.mkdirSync(codex);
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.waitForSelector("h1");
-    assert.equal(await page.title(), "AI Switch Servant");
+    assert.equal(await page.title(), "ASS · 模型随你切");
     const state = await app.evaluate(() => global.assTest.snapshot());
     assert.equal(state.providers.length, 0);
     assert.equal(state.harnesses.clients.length, 5);
@@ -36,6 +42,11 @@ fs.mkdirSync(codex);
     assert.equal(state.authReady, false);
     assert.equal(state.codex.attached, false);
     assert.equal(state.startupError, "");
+    assert.equal(state.updates.automatic, true);
+    assert.equal(state.updates.status, "idle");
+    await page.getByRole("button", { name: "关于 ASS", exact: true }).click();
+    await page.getByRole("heading", { name: "模型随你切，账户由你管。", exact: true }).waitFor();
+    assert.equal(await page.getByRole("switch", { name: "自动检查更新", exact: true }).isChecked(), true);
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
       .click();

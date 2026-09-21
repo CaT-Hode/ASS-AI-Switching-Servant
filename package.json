@@ -1,14 +1,14 @@
 {
   "name": "ai-switch-servant",
-  "productName": "AI Switch Servant",
-  "version": "0.1.1",
+  "productName": "ASS",
+  "version": "0.1.2",
   "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/CaT-Hode/ASS-AI-Switching-Servant.git"
   },
-  "description": "Local desktop model router with Windows certificate trust",
+  "description": "ASS — 模型随你切，账户由你管。Windows 桌面 AI 路由与账户助手。",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
