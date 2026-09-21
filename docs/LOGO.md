@@ -1,0 +1,7 @@
+# Logo 编辑记录
+
+使用内置图像编辑工具（非 CLI），以原有 `public/ass-logo.png` 为输入。输出保留透明通道，落地到同一路径。Windows 图标由 `scripts/make-icons.cjs` 确定性裁切与导出；原始画布供应用界面和 README 使用。
+
+## 本次最终提示词
+
+Edit this existing ASS application logo with one precise local change only. The source is a blue chrysanthemum/pinwheel icon with a solid blue circular disc exactly at its center. Replace ONLY that central solid blue disc with a clean vivid red hollow circular ring (a red outlined circle, like ⭕, not a prohibition slash). The ring's outer diameter should match the current blue disc, with an even moderately thick stroke about 15 percent of its outer diameter, a genuinely transparent empty center, and a smooth anti-aliased edge. Keep the ring centered exactly where the original blue disc was. Preserve every surrounding blue petal, their shapes, positions, gradients, blue hues, count, lighting, and original spacing. Preserve the overall square canvas and original artwork framing/padding; do NOT enlarge or reposition the surrounding flower in this edit, as icon export code handles the requested final Windows size separately. Preserve the genuinely transparent background and the transparent gaps between petals. No other changes, no new text, no emoji glyph outside the center, no extra symbols, no border around the whole logo, no drop shadow, no colored background. Output the complete edited square transparent PNG logo, not a cropped center fragment.

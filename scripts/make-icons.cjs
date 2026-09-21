@@ -2,6 +2,7 @@
 const { app, nativeImage } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
+const { iconCrop } = require("./icon-layout.cjs");
 app
   .whenReady()
   .then(() => {
@@ -10,9 +11,15 @@ app
       path.join(root, "public/ass-logo.png"),
     );
     if (image.isEmpty()) throw new Error("Logo missing");
+    const { width, height } = image.getSize();
+    const layout = iconCrop(image.toBitmap(), width, height);
+    const icon = image.crop(layout.crop);
+    // Keep the in-app logo untouched. Windows window/tray/shortcut assets use
+    // the same tightly framed artwork as the executable's multi-resolution ICO.
+    fs.writeFileSync(path.join(root, "public/ass-app-icon.png"), icon.toPNG());
     const sizes = [16, 24, 32, 48, 64, 128, 256];
     const pngs = sizes.map((size) =>
-      image.resize({ width: size, height: size, quality: "best" }).toPNG(),
+      icon.resize({ width: size, height: size, quality: "best" }).toPNG(),
     );
     const header = Buffer.alloc(6 + 16 * sizes.length);
     header.writeUInt16LE(1, 2);
@@ -33,7 +40,7 @@ app
       path.join(root, "assets/ass.ico"),
       Buffer.concat([header, ...pngs]),
     );
-    console.log("Exported ASS icon: 16–256px");
+    console.log("Exported ASS icon: 16–256px; artwork " + (layout.occupancy * 100).toFixed(1) + "%");
     app.quit();
   })
   .catch((e) => {

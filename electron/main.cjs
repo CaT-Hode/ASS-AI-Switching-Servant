@@ -82,7 +82,7 @@ const modelDirectory = new ModelDirectory({
 });
 const providerModels = modelDirectory.results;
 const probeControllers = new Map();
-const iconPath = path.join(__dirname, "../public/ass-logo.png");
+const iconPath = path.join(__dirname, "../public/ass-app-icon.png");
 let systemSession, directSession, testFetch;
 const servicePort =
   testMode && /^\d+$/.test(process.env.ASS_TEST_PORT || "")
