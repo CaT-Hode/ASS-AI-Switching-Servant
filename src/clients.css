@@ -572,3 +572,130 @@
   color: #65778c;
   font-size: 11px;
 }
+.account-profile {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e5eaf1;
+}
+.account-identity {
+  display: flex;
+  align-items: start;
+  gap: 9px;
+  margin-bottom: 13px;
+}
+.account-identity > div {
+  min-width: 0;
+  flex: 1;
+}
+.account-identity strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  color: #273e5a;
+}
+.account-identity > div > span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.account-plan {
+  padding: 3px 8px;
+  border: 1px solid #d3e0f4;
+  border-radius: 6px;
+  background: #edf4ff;
+  color: #245c9e;
+  font-size: 10px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  max-width: 45%;
+}
+.account-profile-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px 14px;
+  margin: 0;
+}
+.account-profile-facts > div {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+.account-profile-facts dt {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+.account-profile-facts dd {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  font-size: 11px;
+  color: #344963;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.account-profile-facts .profile-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  font-size: 13px;
+}
+.account-profile-source {
+  display: flex;
+  gap: 8px;
+  align-items: start;
+  justify-content: space-between;
+  margin-top: 13px;
+}
+.account-profile-source > details {
+  flex: 1;
+  min-width: 0;
+}
+.account-profile-source summary,
+.account-profile-more summary {
+  cursor: pointer;
+  width: fit-content;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
+  padding: 3px 0;
+}
+.account-profile-source time,
+.account-profile-source p {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin: 6px 0;
+}
+.account-profile-source .icon-button {
+  width: 25px;
+  height: 25px;
+}
+.account-profile-docs {
+  display: flex;
+  gap: 7px 12px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+}
+.account-profile-docs .text-button {
+  font-size: 10px;
+}
+.account-profile-more {
+  margin-top: 9px;
+}
+.account-profile-more .account-profile-facts {
+  margin-top: 8px;
+}
+.account-profile-error {
+  font-size: 10px;
+  line-height: 1.7;
+  color: #97601c;
+  margin: 6px 0 0;
+}

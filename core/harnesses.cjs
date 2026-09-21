@@ -6,6 +6,7 @@ const { spawn } = require("node:child_process");
 const { atomic } = require("./config.cjs");
 const { legacyBaseline } = require("./injection-files.cjs");
 const { makeCatalog } = require("./models.cjs");
+const { apiProfile } = require("./account-info.cjs");
 const {
   inspectCredentials,
   discoverNative,
@@ -90,6 +91,7 @@ function apiAccounts(harness, providers, includeUnavailable = false) {
         providerId: p.id,
         label: p.name,
         kind: "api",
+        profile: apiProfile(p),
         badge:
           harness === "dsh" && deepseek
             ? "DeepSeek API"

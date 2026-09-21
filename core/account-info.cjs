@@ -1,0 +1,483 @@
+// Presentation-only metadata. No auth refresh, key helpers or token verification.
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const { atomic } = require("./config.cjs");
+
+const ACCOUNT_DOCS = {
+  codex: {
+    label: "Codex 账户接口",
+    url: "https://learn.chatgpt.com/docs/app-server#auth-endpoints",
+  },
+  "codex-claims": {
+    label: "Codex 登录字段",
+    url: "https://github.com/openai/codex/blob/main/codex-rs/login/src/token_data.rs",
+  },
+  claude: {
+    label: "Claude 身份状态",
+    url: "https://code.claude.com/docs/en/cli-reference",
+  },
+  "claude-cache": {
+    label: "Claude 登录缓存",
+    url: "https://code.claude.com/docs/en/settings",
+  },
+  opencode: {
+    label: "OpenCode 登录记录",
+    url: "https://opencode.ai/docs/cli/#auth",
+  },
+  pi: {
+    label: "pi 授权格式",
+    url: "https://github.com/earendil-works/pi/blob/main/packages/ai/src/auth/types.ts",
+  },
+  dsh: {
+    label: "DSH 授权适配",
+    url: "https://github.com/deepseek-ai/deepseek-harness/blob/aa8262ec091698bae9a6b04773a6b5b06ad4aef2/packages/llm/llm-pi-ai/src/auth.ts",
+  },
+  deepseek: {
+    label: "DeepSeek 余额接口",
+    url: "https://api-docs.deepseek.com/api/get-user-balance/",
+  },
+  openrouter: {
+    label: "OpenRouter Key 接口",
+    url: "https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key",
+  },
+};
+const PROVIDERS = {
+  openai: "OpenAI / ChatGPT",
+  "openai-codex": "OpenAI / ChatGPT",
+  anthropic: "Anthropic / Claude",
+  "anthropic-api": "Anthropic API",
+  "github-copilot": "GitHub Copilot",
+  "google-gemini-cli": "Google Gemini CLI",
+  "google-antigravity": "Google Antigravity",
+  deepseek: "DeepSeek",
+  DEEPSEEK_API_KEY: "DeepSeek",
+  "opencode-go": "OpenCode Go",
+  opencode: "OpenCode Zen",
+  openrouter: "OpenRouter",
+};
+const object = (v) =>
+  v && typeof v === "object" && !Array.isArray(v) ? v : {};
+function text(value, secrets = []) {
+  if (typeof value !== "string") return undefined;
+  const s = value.trim();
+  if (
+    !s ||
+    s.length > 240 ||
+    /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(s) ||
+    /(?:^|\s)(?:Bearer\s|sk-[a-z0-9]{12}|eyJ[\w-]+\.eyJ)/i.test(s) ||
+    secrets.some(
+      (secret) =>
+        typeof secret === "string" && secret.length > 3 && s.includes(secret),
+    )
+  )
+    return undefined;
+  return s;
+}
+function claims(token) {
+  try {
+    if (typeof token !== "string" || token.length > 65536) return {};
+    const parts = token.split(".");
+    if (
+      parts.length !== 3 ||
+      !parts.every(Boolean) ||
+      !/^[A-Za-z0-9_-]+$/.test(parts[1])
+    )
+      return {};
+    return object(
+      JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")),
+    );
+  } catch {
+    return {};
+  }
+}
+function iso(value) {
+  if (value === null || value === undefined || value === "") return undefined;
+  const n =
+    typeof value === "number"
+      ? value < 1e12
+        ? value * 1000
+        : value
+      : Date.parse(value);
+  return Number.isFinite(n) && n > 0 && n < 8.64e15
+    ? new Date(n).toISOString()
+    : undefined;
+}
+function field(id, label, value, secrets = [], extra = {}) {
+  const v = text(value, secrets);
+  return v ? { id, label, value: v, ...extra } : null;
+}
+function localProfile(
+  harness,
+  provider,
+  raw = {},
+  { authType = "oauth", savedAt, metadataAt } = {},
+) {
+  const t = object(raw),
+    secrets = [
+      t.access_token,
+      t.refresh_token,
+      t.id_token,
+      t.accessToken,
+      t.refreshToken,
+      t.access,
+      t.refresh,
+      t.key,
+    ];
+  const f = (id, label, v) => field(id, label, v, secrets);
+  let email,
+    name,
+    plan,
+    accountId,
+    userId,
+    organizationId,
+    organization,
+    project,
+    tier;
+  const docs = [harness];
+  const chatgpt =
+    authType === "oauth" && ["openai", "openai-codex"].includes(provider);
+  if (chatgpt) {
+    // Match Codex's explicitly documented namespaced claims, not arbitrary JWT data.
+    const id = claims(t.id_token),
+      access = claims(t.access_token || t.access);
+    const identity = Object.keys(id).length ? id : access;
+    const auth = object(identity["https://api.openai.com/auth"]);
+    const tokenAccount = text(auth.chatgpt_account_id, secrets);
+    accountId = t.account_id || t.accountId || tokenAccount;
+    // An explicit workspace that conflicts with the ID token must not inherit its plan/identity.
+    if (!accountId || !tokenAccount || accountId === tokenAccount) {
+      email =
+        identity.email ||
+        object(identity["https://api.openai.com/profile"]).email;
+      plan = auth.chatgpt_plan_type;
+      userId = auth.chatgpt_user_id || auth.user_id;
+    }
+    docs.push("codex", "codex-claims");
+  } else if (authType === "oauth") {
+    // Explicit optional metadata only; no recursive scans, inferred plans or opaque token parsing.
+    email = t.email;
+    name = t.name;
+    accountId = t.accountId;
+    project = t.projectId;
+    if (provider === "anthropic") {
+      plan = t.subscriptionType;
+      tier = t.rateLimitTier;
+      const account = object(t.account),
+        org = object(t.organization);
+      email = email || account.email_address;
+      name = name || account.display_name;
+      accountId = accountId || account.uuid;
+      organizationId = org.uuid;
+      organization = org.name;
+      const cached = object(t.cachedIdentity);
+      if (!accountId || accountId === cached.accountUuid) {
+        email = email || cached.emailAddress;
+        name = name || cached.displayName;
+        accountId = accountId || cached.accountUuid;
+        organizationId = organizationId || cached.organizationUuid;
+        organization = organization || cached.organizationName;
+        if (Object.keys(cached).length) docs.push("claude-cache");
+      }
+    }
+  }
+  const scopes = (
+    Array.isArray(t.scopes)
+      ? t.scopes
+      : typeof t.scope === "string"
+        ? t.scope.split(/\s+/)
+        : []
+  )
+    .slice(0, 12)
+    .map((s) => text(s, secrets))
+    .filter(Boolean);
+  return {
+    source: chatgpt
+      ? "本地登录令牌 · 未联网核验"
+      : docs.includes("claude-cache")
+        ? "原生登录缓存 · 未联网核验"
+        : "原生登录记录 · 未联网核验",
+    updatedAt: iso(savedAt),
+    metadataUpdatedAt: docs.includes("claude-cache")
+      ? iso(metadataAt)
+      : undefined,
+    docs: [...new Set(docs.filter((id) => ACCOUNT_DOCS[id]))],
+    fields: [
+      f("provider", "授权供应商", PROVIDERS[provider] || provider),
+      f("email", "邮箱", email),
+      f("name", "名称", name),
+      f("plan", "套餐", plan),
+      f("accountId", chatgpt ? "工作区 / 账户 ID" : "账户 ID", accountId),
+      f("userId", "用户 ID", userId),
+      f("organization", "组织", organization),
+      f("organizationId", "组织 ID", organizationId),
+      f("projectId", "项目 ID", project),
+      f("tier", "限额等级", tier),
+      f("scopes", "授权范围", scopes.join(" · ")),
+    ].filter(Boolean),
+  };
+}
+
+// Only exact official HTTPS origins are eligible. A provider label/brand alone is not authority.
+function adapter(provider) {
+  try {
+    const u = new URL(provider.baseUrl);
+    if (u.username || u.password || u.search || u.hash) return null;
+    if (
+      u.origin === "https://api.deepseek.com" &&
+      /^\/(?:v1\/?)?$/.test(u.pathname)
+    )
+      return "deepseek";
+    if (
+      u.origin === "https://openrouter.ai" &&
+      /^\/api\/v1\/?$/.test(u.pathname)
+    )
+      return "openrouter";
+  } catch {}
+  return null;
+}
+function apiProfile(provider) {
+  let host;
+  try {
+    host = new URL(provider.baseUrl).host;
+  } catch {}
+  const id = adapter(provider);
+  return {
+    source: "已保存的 API 配置",
+    docs: id ? [id] : [],
+    canRefresh: !!id && !!provider.apiKey,
+    note: id
+      ? "只读查询当前 Key 的资料，不发送模型请求。"
+      : "此入口尚无已适配的账户资料接口；余额可在账户菜单查询。",
+    fields: [
+      field("host", "API 服务", host),
+      field("auth", "认证方式", "API Key"),
+    ].filter(Boolean),
+  };
+}
+function parseRemote(id, data, secrets = []) {
+  const fields = [],
+    d = object(data);
+  const add = (key, label, v) => {
+    const f = field(key, label, v, secrets);
+    if (f) fields.push(f);
+  };
+  const amount = (key, label, v, unit = "USD") => {
+    if (
+      !["string", "number"].includes(typeof v) ||
+      String(v).length > 64 ||
+      String(v).trim() === "" ||
+      !Number.isFinite(Number(v))
+    )
+      return;
+    fields.push({ id: key, label, value: String(v), kind: "amount", unit });
+  };
+  if (id === "deepseek") {
+    if (typeof d.is_available === "boolean")
+      add("available", "余额可供调用", d.is_available ? "是" : "否");
+    for (const [i, row] of (Array.isArray(d.balance_infos)
+      ? d.balance_infos.slice(0, 8)
+      : []
+    ).entries()) {
+      if (!["CNY", "USD"].includes(row?.currency)) continue;
+      amount("balance-" + i, "可用余额", row.total_balance, row.currency);
+      amount("granted-" + i, "赠金余额", row.granted_balance, row.currency);
+      amount("topped-" + i, "充值余额", row.topped_up_balance, row.currency);
+    }
+  } else if (id === "openrouter") {
+    const k = object(d.data);
+    // A returned Key label may be a masked secret; never present it as a person's name.
+    if (!/^sk-/i.test(k.label || "")) add("keyLabel", "Key 标签", k.label);
+    add("userId", "创建者 ID", k.creator_user_id);
+    add("organizationId", "组织 ID", k.organization_id);
+    add("workspaceId", "工作区 ID", k.workspace_id);
+    if (typeof k.is_free_tier === "boolean")
+      add("tier", "Key 级别", k.is_free_tier ? "免费级别" : "付费级别");
+    if (k.limit === null)
+      add("limit", "Key 额度上限", "未设置（不代表账户余额无限）");
+    else amount("limit", "Key 额度上限", k.limit);
+    amount("remaining", "Key 剩余额度", k.limit_remaining);
+    amount("usage", "累计使用", k.usage);
+    amount("usageDaily", "今日使用", k.usage_daily);
+    amount("usageMonthly", "本月使用", k.usage_monthly);
+    add("reset", "额度重置周期", k.limit_reset);
+    if (iso(k.expires_at))
+      fields.push({
+        id: "expires",
+        label: "Key 到期",
+        value: iso(k.expires_at),
+        kind: "date",
+      });
+  }
+  if (!fields.length) throw Error("接口未返回可识别的账户资料");
+  return fields;
+}
+const fingerprint = (p) =>
+  crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify([p.id, p.baseUrl, p.apiKey, p.network, p.extraHeaders]),
+    )
+    .digest("hex");
+class AccountInfo {
+  constructor({
+    dataDir,
+    crypto: vault,
+    getProvider,
+    fetcher,
+    now = Date.now,
+  }) {
+    this.file = path.join(dataDir, "account-info.enc.json");
+    this.vault = vault;
+    this.getProvider = getProvider;
+    this.fetcher = fetcher;
+    this.now = now;
+    this.cache = {};
+    this.jobs = new Map();
+    this.errors = new Map();
+    try {
+      if (fs.statSync(this.file).size <= 2 * 1024 * 1024) {
+        const stored = JSON.parse(fs.readFileSync(this.file, "utf8"));
+        this.cache = object(
+          JSON.parse(
+            vault.decryptString(Buffer.from(stored.encrypted, "base64")),
+          ),
+        );
+      }
+    } catch {} // Runtime metadata is recoverable; never make startup depend on it.
+  }
+  save() {
+    if (!this.vault.isEncryptionAvailable()) throw Error("资料缓存加密不可用");
+    const active = Object.fromEntries(
+      Object.entries(this.cache).filter(([id, r]) => {
+        const p = this.getProvider(id);
+        return p && r.fingerprint === fingerprint(p);
+      }),
+    );
+    atomic(
+      this.file,
+      JSON.stringify({
+        encrypted: this.vault
+          .encryptString(JSON.stringify(active))
+          .toString("base64"),
+      }),
+    );
+    this.cache = active;
+  }
+  public(provider) {
+    const base = apiProfile(provider),
+      entry = this.cache[provider.id],
+      key = fingerprint(provider);
+    const valid = entry?.fingerprint === key && Array.isArray(entry.fields);
+    return {
+      ...base,
+      ...(valid
+        ? {
+            fields: [...base.fields, ...entry.fields],
+            source: "官方 API · 上次查询",
+            updatedAt: entry.updatedAt,
+            stale: this.now() - Date.parse(entry.updatedAt) > 15 * 60000,
+          }
+        : {}),
+      error: this.errors.get(key),
+      refreshing: this.jobs.has(key),
+    };
+  }
+  async refresh(id) {
+    const p = this.getProvider(id),
+      kind = p && adapter(p);
+    if (!kind || !p.apiKey) throw Error("此账户没有可查询的官方资料接口");
+    const key = fingerprint(p);
+    if (this.jobs.has(key)) return this.jobs.get(key);
+    const job = this.query(p, kind, key);
+    this.jobs.set(key, job);
+    try {
+      return await job;
+    } finally {
+      this.jobs.delete(key);
+    }
+  }
+  async query(p, kind, key) {
+    const route =
+      kind === "deepseek"
+        ? "https://api.deepseek.com/user/balance"
+        : "https://openrouter.ai/api/v1/key";
+    try {
+      const r = await this.fetcher(
+        route,
+        {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: "Bearer " + p.apiKey,
+          },
+          signal: AbortSignal.timeout(15000),
+          redirect: "error",
+        },
+        p.network,
+      );
+      if (!r.ok) throw Error("HTTP " + r.status);
+      // Bound the streamed body before parsing, not after reading an unbounded response.
+      if (Number(r.headers.get("content-length")) > 256 * 1024)
+        throw Error("资料响应过大");
+      const chunks = [];
+      let size = 0;
+      const reader = r.body?.getReader();
+      if (!reader) throw Error("资料响应为空");
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.length;
+          if (size > 256 * 1024) {
+            await reader.cancel();
+            throw Error("资料响应过大");
+          }
+          chunks.push(Buffer.from(value));
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      const fields = parseRemote(
+        kind,
+        JSON.parse(Buffer.concat(chunks).toString("utf8")),
+        [p.apiKey],
+      );
+      const current = this.getProvider(p.id);
+      if (!current || fingerprint(current) !== key)
+        return { ok: false, message: "账户配置已变化，请重新查询" };
+      this.cache[p.id] = {
+        fingerprint: key,
+        fields,
+        updatedAt: new Date(this.now()).toISOString(),
+      };
+      this.errors.delete(key);
+      try {
+        this.save();
+      } catch {
+        this.errors.set(key, "已获取资料，但加密缓存保存失败");
+      }
+      return { ok: true };
+    } catch (e) {
+      // Never expose body, auth headers, network error URLs or raw exception strings.
+      const message = /^HTTP \d{3}$/.test(e.message)
+        ? "资料查询失败 · " + e.message
+        : e instanceof SyntaxError
+          ? "资料接口返回无效 JSON"
+          : "资料查询失败，请检查网络或接口权限";
+      this.errors.set(key, message);
+      return { ok: false, message };
+    }
+  }
+}
+module.exports = {
+  ACCOUNT_DOCS,
+  localProfile,
+  apiProfile,
+  adapter,
+  parseRemote,
+  AccountInfo,
+  claims,
+  iso,
+  text,
+};

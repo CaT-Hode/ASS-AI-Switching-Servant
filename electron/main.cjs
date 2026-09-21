@@ -41,6 +41,7 @@ const { Connections } = require("../core/connections.cjs");
 const { Preferences } = require("../core/preferences.cjs");
 const accountTransactions = require("../core/account-transactions.cjs");
 const { modelSources } = require("../core/model-inventory.cjs");
+const { AccountInfo, ACCOUNT_DOCS } = require("../core/account-info.cjs");
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
 if (testMode && customData) app.setPath("userData", customData);
@@ -58,6 +59,7 @@ let window,
   router,
   harnesses,
   nativeKeys,
+  accountInfo,
   openRouterAuth,
   updates,
   connections,
@@ -134,6 +136,14 @@ function log(record) {
 function snapshot() {
   const publicState = store.public(),
     clientState = harnesses.snapshot();
+  for (const client of clientState.clients)
+    for (const account of client.accounts) {
+      if (account.kind !== "api") continue;
+      const provider = store.state.providers.find(
+        (p) => p.id === account.providerId,
+      );
+      if (provider) account.profile = accountInfo.public(provider);
+    }
   return {
     ...publicState,
     modelSources: modelSources(publicState, clientState, {
@@ -142,6 +152,7 @@ function snapshot() {
     }),
     preferences: preferences.state,
     harnesses: clientState,
+    accountDocs: ACCOUNT_DOCS,
     connections: connections.snapshot(),
     providerPresets: PROVIDER_PRESETS,
     officialServices: OFFICIAL_SERVICES,
@@ -405,6 +416,12 @@ else {
         onChange: push,
       });
       nativeKeys = new NativeKeyStore(dataDir, safeStorage);
+      accountInfo = new AccountInfo({
+        dataDir,
+        crypto: safeStorage,
+        getProvider: (id) => store.state.providers.find((p) => p.id === id),
+        fetcher: upstream,
+      });
       openRouterAuth = new OpenRouterAuth({
         fetchUpstream: upstream,
         openExternal: (url) => shell.openExternal(url),
@@ -497,6 +514,19 @@ else {
         if (!service || !["console", "docs"].includes(target))
           throw Error("未知官方入口");
         return shell.openExternal(service[target]);
+      });
+      register("account-info", (clientId, accountId) => {
+        const account = harnesses
+          .snapshot()
+          .clients.find((c) => c.id === clientId)
+          ?.accounts.find((a) => a.id === accountId);
+        if (!account || account.kind !== "api")
+          throw Error("请选择已绑定的 API 账户");
+        return accountInfo.refresh(account.providerId);
+      });
+      register("account-info-doc", (id) => {
+        if (!Object.hasOwn(ACCOUNT_DOCS, id)) throw Error("未知资料文档");
+        return shell.openExternal(ACCOUNT_DOCS[id].url);
       });
       register("native-key-save", (input) => nativeKeys.save(input));
       register("native-key-remove", async (id) => {
@@ -850,6 +880,7 @@ else {
           config,
           harnesses,
           nativeKeys,
+          accountInfo,
           openRouterAuth,
           updates,
           connections,

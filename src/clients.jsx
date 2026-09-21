@@ -23,6 +23,7 @@ import {
   NativeKeyForm,
 } from "./account-dialogs.jsx";
 import { ActionMenu } from "./menus.jsx";
+import { AccountProfile } from "./account-profile.jsx";
 import {
   ConnectionPill,
   ConnectionStatus,
@@ -189,6 +190,7 @@ function AccountCard({
           />
         )}
       </header>
+      <AccountProfile account={a} {...{ client, state, act, busy }} />
       <p
         className={
           "account-status" + (warning ? " warning" : a.ready ? " ready" : "")

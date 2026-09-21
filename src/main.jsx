@@ -21,6 +21,7 @@ import "./style.css";
 import "./controls.css";
 import "./polish.css";
 import "./clients.css";
+import "./sidebar.css";
 import { Clients } from "./clients.jsx";
 import { ConnectionDialog } from "./connections.jsx";
 import { Providers } from "./providers.jsx";
@@ -415,7 +416,20 @@ function App() {
     updates: "关于 ASS",
   }[view];
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-input="keyboard"
+      onPointerDownCapture={(e) => {
+        e.currentTarget.dataset.input = "pointer";
+      }}
+      onPointerMoveCapture={(e) => {
+        if (e.pointerType === "mouse")
+          e.currentTarget.dataset.input = "pointer";
+      }}
+      onKeyDownCapture={(e) => {
+        e.currentTarget.dataset.input = "keyboard";
+      }}
+    >
       <aside className="sidebar">
         <div className="brand">
           <img src="./ass-logo.png" alt="ASS 菊花标志" />
@@ -440,13 +454,33 @@ function App() {
               onClick={() => setView(id)}
             >
               <Icon size={21} />
-              {label}
+              <span>{label}</span>
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <Monitor size={18} />
-          <span>本地运行 · 仅此设备</span>
+          <section
+            className={
+              "sidebar-service" + (!state.service.running ? " stopped" : "")
+            }
+            aria-label="路由服务状态"
+          >
+            <div className="sidebar-service-heading" role="status">
+              <span className="status-dot" aria-hidden="true" />
+              <strong>
+                {state.service.running ? "路由服务已就绪" : "路由服务已停止"}
+              </strong>
+            </div>
+            <span className="mono">127.0.0.1:{state.service.port}</span>
+            <small>
+              {state.service.running
+                ? "HTTP · 本机路由"
+                : "当前请求无法经由 ASS 转发"}
+            </small>
+            <Button icon={Settings2} onClick={() => setView("clients")}>
+              管理客户端接入
+            </Button>
+          </section>
         </div>
         <button
           className="version version-button"
@@ -476,25 +510,6 @@ function App() {
         {state.startupError && (
           <div className="error-box">{state.startupError}</div>
         )}
-        <div
-          className={
-            "status-strip " + (!state.service.running ? "stopped" : "")
-          }
-        >
-          <span className="status-dot" />
-          <strong>
-            {state.service.running ? "路由服务已就绪" : "路由服务已停止"}
-          </strong>
-          <span className="service-caption">
-            {state.service.running
-              ? "HTTP · 本机路由"
-              : "当前请求无法经由 ASS 转发"}
-          </span>
-          <span className="mono endpoint">127.0.0.1:{state.service.port}</span>
-          <Button icon={Settings2} onClick={() => setView("clients")}>
-            管理客户端接入
-          </Button>
-        </div>
         {view !== "updates" && (
           <UpdateBanner
             updates={state.updates}

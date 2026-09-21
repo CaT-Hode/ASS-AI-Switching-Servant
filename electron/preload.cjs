@@ -25,6 +25,8 @@ const allowed = [
   "export",
   "account-add",
   "account-select",
+  "account-info",
+  "account-info-doc",
   "client-refresh",
   "client-executable",
   "client-detect",

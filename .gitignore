@@ -14,6 +14,7 @@ auth.json
 preferences.json
 clients.json
 native-accounts.json
+account-info.enc.json
 updates.json
 connections.json
 route-injections.json

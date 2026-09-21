@@ -75,12 +75,12 @@ test("all five native harnesses discover their own OAuth/API records separately"
     );
     assert.equal(new Set(found.map((a) => a.id)).size, count);
     const result = JSON.stringify(found);
-    for (const secret of [
-      grant.access,
-      grant.refresh,
-      "synthetic-key",
-      "private-account",
-    ])
+    if (harness === "codex")
+      assert.equal(
+        found[0].profile.fields.find((f) => f.id === "accountId").value,
+        "private-account",
+      );
+    for (const secret of [grant.access, grant.refresh, "synthetic-key"])
       assert.ok(!result.includes(secret));
     assert.deepEqual(
       found,

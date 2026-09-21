@@ -5,14 +5,15 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const TOML = require("@iarna/toml");
 const YAML = require("yaml");
+const { localProfile } = require("./account-info.cjs");
 const has = (v) => typeof v === "string" && !!v.trim();
 const object = (v) => v && typeof v === "object" && !Array.isArray(v);
 const digest = (v) =>
   crypto.createHash("sha256").update(v).digest("hex").slice(0, 20);
 function read(file, format = "json") {
   try {
-    if (fs.statSync(file).size > 2 * 1024 * 1024)
-      return { error: "凭据文件过大，未读取" };
+    const stat = fs.statSync(file);
+    if (stat.size > 2 * 1024 * 1024) return { error: "凭据文件过大，未读取" };
     const text = fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "");
     const data =
       format === "yaml"
@@ -20,7 +21,9 @@ function read(file, format = "json") {
         : format === "toml"
           ? TOML.parse(text)
           : JSON.parse(text);
-    return object(data) ? { data } : { error: "凭据格式无法识别" };
+    return object(data)
+      ? { data, updatedAt: stat.mtime.getTime() }
+      : { error: "凭据格式无法识别" };
   } catch (e) {
     return e.code === "ENOENT"
       ? { missing: true }
@@ -81,21 +84,32 @@ function api(provider, value) {
         : "原生凭据链 · 由客户端确认",
   };
 }
-function parseRecords(harness, data, now = Date.now()) {
+function parseRecords(harness, data, now = Date.now(), meta = {}) {
+  const info = (row, raw = {}) => ({
+    ...row,
+    profile: localProfile(harness, row.provider, raw, {
+      authType: row.authType,
+      savedAt: meta.savedAt,
+      metadataAt: meta.claudeUpdatedAt,
+    }),
+  });
   if (harness === "codex") {
     if (
       data.auth_mode === "apikey" ||
       (!data.tokens?.access_token && has(data.OPENAI_API_KEY))
     )
-      return [api("openai", data.OPENAI_API_KEY)];
+      return [info(api("openai", data.OPENAI_API_KEY))];
     if (object(data.tokens))
       return [
-        oauth(
-          "openai",
-          data.tokens.access_token,
-          data.tokens.refresh_token,
-          null,
-          now,
+        info(
+          oauth(
+            "openai",
+            data.tokens.access_token,
+            data.tokens.refresh_token,
+            null,
+            now,
+          ),
+          data.tokens,
         ),
       ];
     return [];
@@ -103,10 +117,15 @@ function parseRecords(harness, data, now = Date.now()) {
   if (harness === "claude") {
     const t = data.claudeAiOauth;
     const rows = object(t)
-      ? [oauth("anthropic", t.accessToken, t.refreshToken, t.expiresAt, now)]
+      ? [
+          info(
+            oauth("anthropic", t.accessToken, t.refreshToken, t.expiresAt, now),
+            { ...t, cachedIdentity: meta.claudeIdentity },
+          ),
+        ]
       : [];
     if (has(data.primaryApiKey))
-      rows.push(api("anthropic-api", data.primaryApiKey));
+      rows.push(info(api("anthropic-api", data.primaryApiKey)));
     return rows;
   }
   if (harness === "dsh") {
@@ -115,22 +134,22 @@ function parseRecords(harness, data, now = Date.now()) {
       data.refs || (data.version ? {} : data),
     ))
       if (/^[A-Z][A-Z0-9_]*_API_KEY$/.test(id) && has(value))
-        rows.push(api(id, value));
+        rows.push(info(api(id, value)));
     for (const [key, record] of Object.entries(data.records || {})) {
       if (!key.startsWith("llm-pi-ai/") || !object(record)) continue;
       const id = key.slice(10),
         t = record.payload;
       if (record.kind === "grant" && t?.type === "oauth")
-        rows.push(oauth(id, t.access, t.refresh, t.expires, now));
-      else if (record.kind === "api-key") rows.push(api(id, record.key));
+        rows.push(info(oauth(id, t.access, t.refresh, t.expires, now), t));
+      else if (record.kind === "api-key") rows.push(info(api(id, record.key)));
     }
     return rows;
   }
   return Object.entries(data).flatMap(([id, t]) => {
     if (!object(t)) return [];
     if (t.type === "oauth")
-      return [oauth(id, t.access, t.refresh, t.expires, now)];
-    if (["api", "api_key"].includes(t.type)) return [api(id, t.key)];
+      return [info(oauth(id, t.access, t.refresh, t.expires, now), t)];
+    if (["api", "api_key"].includes(t.type)) return [info(api(id, t.key))];
     if (has(t.type))
       return [
         {
@@ -177,7 +196,27 @@ function inspectCredentials(
   const result = read(file, harness === "dsh" ? "yaml" : "json");
   if (result.error)
     return { file, rows: [], status: "unreadable", message: result.error };
-  const rows = parseRecords(harness, result.data || {}, now);
+  // Claude's session metadata belongs to this credential directory only. Never
+  // borrow the default user's identity for an isolated/custom account.
+  let claudeIdentity, claudeUpdatedAt;
+  if (harness === "claude" && result.data?.claudeAiOauth) {
+    const candidate = path.join(dir, ".claude.json");
+    const session = read(candidate);
+    const adjacent =
+      native && path.basename(dir).toLowerCase() === ".claude"
+        ? read(path.join(path.dirname(dir), ".claude.json"))
+        : {};
+    const data = session.data || adjacent.data;
+    if (object(data?.oauthAccount)) {
+      claudeIdentity = data.oauthAccount;
+      claudeUpdatedAt = (session.data ? session : adjacent).updatedAt;
+    }
+  }
+  const rows = parseRecords(harness, result.data || {}, now, {
+    savedAt: result.updatedAt,
+    claudeIdentity,
+    claudeUpdatedAt,
+  });
   return {
     file,
     rows,

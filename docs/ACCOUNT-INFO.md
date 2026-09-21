@@ -1,0 +1,34 @@
+# 账户资料与来源
+
+核对日期：2026-09-21。ASS v0.1.8。卡片按当前客户端及账户绑定显示，身份资料不作为登录成功、订阅有效或模型可用的判据。
+
+## 已实现的字段
+
+| 账户 / 来源 | 卡片字段 | 读取方式及边界 |
+| --- | --- | --- |
+| ChatGPT OAuth：Codex、OpenCode、pi、DSH | 邮箱、套餐、工作区 / 账户 ID、用户 ID、令牌到期 | 只读对应账户的 `id_token`；缺少 ID token 时读取 access token 的 OpenAI 命名空间声明。未验证签名或实时权益，明确标为本地声明。账户 ID 冲突时不继承另一工作区的邮箱 / 套餐。 |
+| Claude Code OAuth | 已缓存的邮箱、名称、账户 / 组织 ID、组织名；记录存在时显示 subscriptionType、rateLimitTier、scopes | 读取该凭据目录的 `.credentials.json` 和 `.claude.json`；默认原生目录还对应同一用户的 `~/.claude.json`。独立 / 自定义账户不借用全局身份。身份缓存与凭据文件分别标记更新时间。 |
+| OpenCode、pi、DSH 其他 OAuth | 授权供应商、明确保存的 email / name / accountId / projectId / scope、到期时间 | 只取白名单字段；DSH 从 `llm-pi-ai/*` grant payload 读取。扩展或供应商未保存身份时不从不透明 token 猜测邮箱、套餐或配额。 |
+| 已绑定的 DeepSeek 官方 API | 可供调用余额状态、可用余额、赠金、充值余额，按 CNY / USD 分开 | 点击资料刷新后 GET `https://api.deepseek.com/user/balance`。接口不返回用户邮箱 / 姓名，不伪造这些字段。 |
+| 已绑定的 OpenRouter API / PKCE 生成的 Key | Key 标签、创建者 ID、组织 / 工作区 ID（返回时）、Key 级别、额度上限 / 剩余、累计 / 今日 / 本月使用、重置周期、Key 到期 | 点击资料刷新后 GET `https://openrouter.ai/api/v1/key`。这不是账户现金余额，Key 标签不是用户名。`limit:null` 显示未设置，缺失数值不当成零。不会显示接口返回的密钥样式标签。 |
+| 其他 API / OpenCode Go / Cursor 原生 Key | 已保存的服务与认证信息；保留原有余额菜单和官方控制台 | 没有假定通用的 `/me` 接口。普通 API Key 不自动拥有供应商的 Admin / Billing 权限。未适配的身份资料查询不发请求。 |
+
+## 官方文档与实现依据
+
+- [Codex App Server](https://learn.chatgpt.com/docs/app-server#auth-endpoints)：`account/read` 的 ChatGPT email / planType；`account/rateLimits/read` 是独立接口。本版离线卡片**未调用**这些 RPC，也未把旧套餐声明当成实时限额。
+- [OpenAI Codex token_data.rs](https://github.com/openai/codex/blob/48f897e4ce94152818ce0563b3a8aac3a70ce9b8/codex-rs/login/src/token_data.rs)：ID token 白名单，`https://api.openai.com/profile` 与 `https://api.openai.com/auth` 字段。
+- [Claude CLI](https://code.claude.com/docs/en/cli-reference)：官方 `claude auth status` 可返回 JSON；[Claude 设置](https://code.claude.com/docs/en/settings)说明原生登录 session 缓存的位置。缓存内部字段是兼容性读取，不宣称为稳定的远程 Profile API；不调用私有 OAuth profile / usage 端点。
+- [OpenCode auth](https://opencode.ai/docs/cli/#auth) 与 [官方 auth 类型](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/auth/index.ts)：每个供应商独立凭据；OAuth 的 accountId 可选。
+- [pi OAuth 类型](https://github.com/earendil-works/pi/blob/c7cdb460aa8a0cebef3446c4166729b8a0d97ead/packages/ai/src/auth/types.ts) 与 [OpenAI OAuth 适配](https://github.com/earendil-works/pi/blob/c7cdb460aa8a0cebef3446c4166729b8a0d97ead/packages/ai/src/auth/oauth/openai-codex.ts)：供应商保留其原生 credential 附加字段；ASS 不刷新它们。
+- [DSH 官方授权适配](https://github.com/deepseek-ai/deepseek-harness/blob/aa8262ec091698bae9a6b04773a6b5b06ad4aef2/packages/llm/llm-pi-ai/src/auth.ts)：grant payload 按 pi-ai 格式保存。
+- [DeepSeek User Balance](https://api-docs.deepseek.com/api/get-user-balance/)：余额可用性与分币种余额明细。
+- [OpenRouter Current API Key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key)：当前 Key 元数据与 Key 级别用量。
+
+## 安全与刷新
+
+- 切页 / 定时本地状态刷新不产生账户 HTTP 查询、不调用模型、不刷新 OAuth、不启动 auth helper、不退出原生客户端。
+- 资料查询限于两项已适配的精确 HTTPS origin 与预设路径；供应商品牌名不能授权向该官网发送 Key。不接受跨域重定向，不转发额外自定义认证头。使用现有 Electron 系统 CA / 网络选择。
+- 渲染进程仅收到白名单资料，收不到 API Key、access / refresh / ID token。界面展示的账户 ID / 邮箱属于用户所请求的身份资料，并非访问凭据。
+- 官方 API 资料缓存由 Windows 加密存储到用户数据目录中的 `account-info.enc.json`；不进入配置导出、源码或发布包。缓存与 Key、服务入口及网络配置绑定，配置变化立即失效，返回途中切换 Key 不会把旧资料贴到新账户上。
+- 15 分钟以上显示“已过时”；失败保留上次成功资料及其时间。没有成功查询时保持未知，不把失败变成零余额。删除凭据后，本地身份随下一次快照清除。
+- 这次未实测全部供应商的真实授权 / 权益。资料解析、隔离、脱敏、缓存、网络失败与界面使用合成响应和隔离凭据回归；本机 Codex 只验证字段可读，不输出身份值或 token。
