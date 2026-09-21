@@ -5,13 +5,10 @@ import {
   ChevronRight,
   Settings2,
   Wallet,
-  RefreshCw,
   Trash2,
   ScanSearch,
   Check,
-  X,
   Layers,
-  KeyRound,
   UserRound,
 } from "lucide-react";
 import { Modal, ModelEditor, ProviderEditor } from "./editors.jsx";
@@ -53,23 +50,70 @@ function capabilityText(state, p, m) {
     parts.push("视觉" + (d.vision ? "声明支持" : "声明不支持"));
   return parts.join(" · ") || "工具 / 视觉未检测";
 }
+function ProviderActions({ p, act, busy, onSelect, onEdit }) {
+  return (
+    <ActionMenu
+      label={p.name + " 更多操作"}
+      disabled={!!busy}
+      items={[
+        onSelect && { label: "查看模型", icon: Layers, action: onSelect },
+        !p.readOnly &&
+          p.id !== "official" && {
+            label: "编辑供应商",
+            icon: Settings2,
+            action: onEdit,
+          },
+        !p.readOnly &&
+          p.id !== "official" && {
+            label: "查询余额",
+            icon: Wallet,
+            action: () =>
+              act("balance-" + p.id, () => api.call("balance", p.id)),
+          },
+        !p.readOnly &&
+          p.id !== "official" && {
+            label: p.enabled === false ? "启用供应商" : "停用供应商",
+            action: () =>
+              act("provider-enable", () =>
+                api.call("save-provider", {
+                  ...p,
+                  enabled: p.enabled === false,
+                }),
+              ),
+          },
+        !p.readOnly &&
+          p.id !== "official" && {
+            label: "移除供应商",
+            icon: Trash2,
+            danger: true,
+            action: () =>
+              act("delete-provider", () => api.call("delete-provider", p.id)),
+          },
+      ]}
+    />
+  );
+}
 function SourceCard({
   p,
   state,
   act,
   busy,
-  selected,
   onSelect,
-  onDiscover,
   onEdit,
+  buttonRef,
+  draftCount,
 }) {
   const readonly = p.readOnly,
     official = p.id === "official";
   return (
-    <article
-      className={"supplier-card" + (selected ? " selected" : "")}
-      aria-label={p.name + " 供应商"}
-    >
+    <article className="supplier-card" aria-label={p.name + " 供应商"}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="supplier-open"
+        aria-label={"查看 " + p.name + " 的模型"}
+        onClick={onSelect}
+      />
       <header>
         <span className="supplier-symbol">
           {p.kind === "native" || official ? (
@@ -95,52 +139,7 @@ function SourceCard({
                 ? "官方 API"
                 : "自定义 API"}
         </span>
-        <ActionMenu
-          label={p.name + " 更多操作"}
-          disabled={!!busy}
-          items={[
-            { label: "查看模型", icon: Layers, action: onSelect },
-            !readonly && {
-              label: "发现模型",
-              icon: Search,
-              action: onDiscover,
-            },
-            !readonly &&
-              !official && {
-                label: "编辑供应商",
-                icon: Settings2,
-                action: onEdit,
-              },
-            !readonly &&
-              !official && {
-                label: "查询余额",
-                icon: Wallet,
-                action: () =>
-                  act("balance-" + p.id, () => api.call("balance", p.id)),
-              },
-            !readonly &&
-              !official && {
-                label: p.enabled === false ? "启用供应商" : "停用供应商",
-                action: () =>
-                  act("provider-enable", () =>
-                    api.call("save-provider", {
-                      ...p,
-                      enabled: p.enabled === false,
-                    }),
-                  ),
-              },
-            !readonly &&
-              !official && {
-                label: "移除供应商",
-                icon: Trash2,
-                danger: true,
-                action: () =>
-                  act("delete-provider", () =>
-                    api.call("delete-provider", p.id),
-                  ),
-              },
-          ]}
-        />
+        <ProviderActions {...{ p, act, busy, onSelect, onEdit }} />
       </header>
       <div className="supplier-meta">
         <span>{p.models.length} 个模型</span>
@@ -167,32 +166,32 @@ function SourceCard({
             : balanceText(state.balances[p.id])}
         </span>
       </div>
-      <div className="supplier-preview">
+      <div className="supplier-summary">
+        <span>
+          {[
+            ...new Set(
+              p.models.map(
+                (m) => protocols[m.wireApi] || m.wireApi || "原生协议",
+              ),
+            ),
+          ].join(" · ") || "协议待配置"}
+        </span>
+        <span>
+          最大上下文{" "}
+          {number(
+            p.models.length
+              ? Math.max(...p.models.map((m) => m.contextWindow || 0)) || null
+              : null,
+          )}
+        </span>
+      </div>
+      <div className="supplier-model-tags">
         {p.models.slice(0, 3).map((m) => (
-          <div className="supplier-model-preview" key={m.model}>
-            <div>
-              <strong>{m.displayName || m.model}</strong>
-              <small>{m.model}</small>
-              <small>
-                {protocols[m.wireApi] || m.wireApi || "原生协议"} · 上下文{" "}
-                {number(m.contextWindow)}
-              </small>
-              <small>
-                {m.efforts?.length
-                  ? `${m.efforts.join(" / ")} · 默认 ${m.defaultEffort}`
-                  : "思维档位未声明"}
-              </small>
-              <small>{capabilityText(state, p, m)}</small>
-            </div>
-            {!readonly && (
-              <ModelCheckButton
-                provider={p}
-                model={m}
-                {...{ state, act, busy }}
-              />
-            )}
-          </div>
+          <span key={m.model} title={m.model}>
+            {m.displayName || m.model}
+          </span>
         ))}
+        {p.models.length > 3 && <span>+{p.models.length - 3}</span>}
         {!p.models.length && (
           <p className="supplier-empty">
             {readonly ? "尚未读取到模型目录" : "尚未配置模型"}
@@ -200,17 +199,19 @@ function SourceCard({
         )}
       </div>
       <footer>
-        <button className="text-button" onClick={onSelect}>
-          查看全部模型（{p.models.length}）<ChevronRight size={14} />
-        </button>
+        <span className="supplier-link">
+          管理模型 <ChevronRight size={14} />
+        </span>
         <span>
-          {readonly
-            ? "只读"
-            : official
-              ? "Responses"
-              : p.network === "direct"
-                ? "直接连接"
-                : "系统代理 / CA"}
+          {draftCount
+            ? `${draftCount} 项未保存`
+            : readonly
+              ? "只读"
+              : official
+                ? "Responses"
+                : p.network === "direct"
+                  ? "直接连接"
+                  : "系统代理 / CA"}
         </span>
       </footer>
     </article>
@@ -404,6 +405,16 @@ function InlineModel({
           ) : (
             <>
               <ModelCheckButton provider={p} {...{ model, state, act, busy }} />
+              <button
+                type="button"
+                className="button"
+                aria-label={model.model + " 详细设置"}
+                onClick={onAdvanced}
+                disabled={disabled}
+              >
+                <Settings2 size={14} />
+                详细设置
+              </button>
               <ActionMenu
                 label={model.model + " 高级操作"}
                 items={[
@@ -448,12 +459,11 @@ export function Providers({
   providers,
   act,
   busy,
-  initialProvider,
-  onSelectProvider,
-  focusModels = false,
+  activeProvider,
+  onOpenProvider,
+  onBack,
 }) {
-  const [selected, setSelected] = useState(initialProvider),
-    [search, setSearch] = useState(""),
+  const [search, setSearch] = useState(""),
     [filter, setFilter] = useState("all"),
     [modelSearch, setModelSearch] = useState(""),
     [editor, setEditor] = useState(null),
@@ -461,14 +471,8 @@ export function Providers({
     [inspection, setInspection] = useState(null),
     [directory, setDirectory] = useState(null),
     [drafts, setDrafts] = useState({});
-  const section = useRef(null);
-  useEffect(() => {
-    if (!focusModels) return;
-    const frame = requestAnimationFrame(() =>
-      section.current?.scrollIntoView({ behavior: "instant", block: "start" }),
-    );
-    return () => cancelAnimationFrame(frame);
-  }, [focusModels]);
+  const gallerySearch = useRef(null),
+    cardButtons = useRef(new Map());
   const all = state.modelSources || providers;
   const matches = all.filter(
     (p) =>
@@ -480,7 +484,8 @@ export function Providers({
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
-  const p = all.find((p) => p.id === selected) || all[0];
+  const p = all.find((p) => p.id === activeProvider);
+  const sideOpen = !!(editor || inspection || directory || providerEditor);
   const revision = state.modelDirectoryRevisions?.[p?.id] || 0;
   useEffect(() => {
     if (p && !p.readOnly && (p.hasKey || p.id === "official"))
@@ -494,12 +499,8 @@ export function Providers({
       : [];
   const directoryProvider = all.find((p) => p.id === directory);
   function select(p) {
-    setSelected(p.id);
-    onSelectProvider?.(p.id);
+    onOpenProvider(p.id);
     setModelSearch("");
-    requestAnimationFrame(() =>
-      section.current?.scrollIntoView({ behavior: "instant", block: "start" }),
-    );
   }
   function editDraft(m, key, value) {
     const id = modelKey(p.id, m.model);
@@ -521,199 +522,256 @@ export function Providers({
   }
   return (
     <>
-      <div className="inventory-toolbar">
-        <label className="search">
-          <Search size={16} />
-          <input
-            aria-label="搜索供应商或模型"
-            placeholder="搜索供应商或模型"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </label>
-        <select
-          aria-label="来源筛选"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        >
-          <option value="all">全部来源</option>
-          <option value="api">API 供应商</option>
-          <option value="native">订阅 / 原生目录</option>
-        </select>
-        <span>
-          {all.reduce((n, p) => n + p.models.length, 0)} 个模型 · {all.length}{" "}
-          个来源
-        </span>
-        <button
-          className="button primary"
-          onClick={() => setProviderEditor({})}
-        >
-          <Plus size={15} />
-          添加供应商
-        </button>
-      </div>
-      <div className="supplier-grid">
-        {matches.map((source) => (
-          <SourceCard
-            key={source.id}
-            p={source}
-            {...{ state, act, busy }}
-            selected={p?.id === source.id}
-            onSelect={() => select(source)}
-            onDiscover={() => {
-              setSelected(source.id);
-              onSelectProvider?.(source.id);
-              setDirectory(source.id);
-            }}
-            onEdit={() => setProviderEditor({ provider: source })}
-          />
-        ))}
-      </div>
-      {!matches.length && (
-        <div className="empty">
-          <Layers size={25} />
-          <p>{all.length ? "没有匹配的供应商或模型" : "还没有模型来源"}</p>
-          <button className="button" onClick={() => setProviderEditor({})}>
+      <section className="provider-gallery" aria-label="供应商卡片">
+        <div className="inventory-toolbar">
+          <label className="search">
+            <Search size={16} />
+            <input
+              ref={gallerySearch}
+              aria-label="搜索供应商或模型"
+              placeholder="搜索供应商或模型"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
+          <select
+            aria-label="来源筛选"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          >
+            <option value="all">全部来源</option>
+            <option value="api">API 供应商</option>
+            <option value="native">订阅 / 原生目录</option>
+          </select>
+          <span>
+            {all.reduce((n, p) => n + p.models.length, 0)} 个模型 · {all.length}{" "}
+            个来源
+          </span>
+          <button
+            className="button primary"
+            onClick={() => setProviderEditor({})}
+          >
+            <Plus size={15} />
             添加供应商
           </button>
         </div>
-      )}
+        <div className="supplier-grid">
+          {matches.map((source) => (
+            <SourceCard
+              key={source.id}
+              p={source}
+              {...{ state, act, busy }}
+              onSelect={() => select(source)}
+              buttonRef={(button) => {
+                if (button) cardButtons.current.set(source.id, button);
+                else cardButtons.current.delete(source.id);
+              }}
+              draftCount={
+                source.models.filter(
+                  (m) => drafts[modelKey(source.id, m.model)],
+                ).length
+              }
+              onEdit={() => setProviderEditor({ provider: source })}
+            />
+          ))}
+        </div>
+        {!matches.length && (
+          <div className="empty">
+            <Layers size={25} />
+            <p>{all.length ? "没有匹配的供应商或模型" : "还没有模型来源"}</p>
+            <button className="button" onClick={() => setProviderEditor({})}>
+              添加供应商
+            </button>
+          </div>
+        )}
+      </section>
       {p && (
-        <section
-          className="configured-models"
-          ref={section}
-          aria-label={p.name + " 模型配置"}
+        <Modal
+          title={p.name + " · 模型"}
+          description={p.baseUrl || p.catalogSource || "原生客户端目录"}
+          className={"provider-model-dialog" + (sideOpen ? " side-open" : "")}
+          onClose={onBack}
+          fallbackFocus={() =>
+            cardButtons.current.get(p.id) || gallerySearch.current
+          }
         >
-          <div className="section-heading">
-            <div>
-              <h2>
-                {p.readOnly ? "原生客户端模型" : "已配置模型"}
-                <span className="count">{p.models.length}</span>
-              </h2>
-              <p className="catalog-caption">
-                {p.name}
-                {p.readOnly ? " · 只读目录，由原生客户端管理" : ""}
-              </p>
-            </div>
-            <div className="actions">
-              <label className="search">
-                <Search size={15} />
-                <input
-                  aria-label="搜索已配置模型"
-                  placeholder="搜索模型"
-                  value={modelSearch}
-                  onChange={(e) => setModelSearch(e.target.value)}
+          <div className="provider-dialog-toolbar">
+            <span className="tag">
+              {p.readOnly
+                ? "只读目录"
+                : p.enabled === false
+                  ? "已停用"
+                  : "已启用"}
+            </span>
+            {!p.readOnly && p.id !== "official" && (
+              <>
+                <button
+                  className="button"
+                  onClick={() => setProviderEditor({ provider: p })}
+                  disabled={!!busy}
+                >
+                  <Settings2 size={15} />
+                  供应商设置
+                </button>
+                <ProviderActions
+                  {...{ p, act, busy }}
+                  onEdit={() => setProviderEditor({ provider: p })}
                 />
-              </label>
-              {!p.readOnly && (
-                <>
-                  <button className="button" onClick={() => setDirectory(p.id)}>
-                    发现模型
-                  </button>
-                  {p.id !== "official" && (
+              </>
+            )}
+          </div>
+          <section
+            className="configured-models"
+            aria-label={p.name + " 模型配置"}
+          >
+            <div className="section-heading">
+              <div>
+                <h2>
+                  {p.readOnly ? "原生客户端模型" : "已配置模型"}
+                  <span className="count">{p.models.length}</span>
+                </h2>
+                {p.readOnly && (
+                  <p className="catalog-caption">由原生客户端管理</p>
+                )}
+              </div>
+              <div className="actions">
+                <label className="search">
+                  <Search size={15} />
+                  <input
+                    aria-label="搜索已配置模型"
+                    placeholder="搜索模型"
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                  />
+                </label>
+                {!p.readOnly && (
+                  <>
                     <button
                       className="button"
-                      onClick={() => setEditor({ provider: p, model: null })}
+                      onClick={() => setDirectory(p.id)}
                     >
-                      <Plus size={14} />
-                      手动添加
+                      <Search size={14} />
+                      发现模型
                     </button>
-                  )}
-                </>
-              )}
+                    {p.id !== "official" && (
+                      <button
+                        className="button primary"
+                        onClick={() => setEditor({ provider: p, model: null })}
+                      >
+                        <Plus size={14} />
+                        手动添加
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-          {!!boundClients.length && (
-            <div className="client-model-selections">
-              {boundClients.map((c) => {
-                const a = c.accounts.find((a) => a.providerId === p.id),
-                  saved = c.modelSelections[a.id],
-                  chosen = a.models.some((m) => m.model === saved)
-                    ? saved
-                    : a.models[0]?.model || "";
-                return (
-                  <label key={c.id}>
-                    {c.name} 启动模型
-                    <select
-                      aria-label={c.name + " 启动模型"}
-                      value={chosen}
-                      disabled={!!busy || !a.models.length}
-                      onChange={(e) =>
-                        act("client-model", () =>
-                          api.call("client-model", c.id, a.id, e.target.value),
-                        )
-                      }
-                    >
-                      {!a.models.length && (
-                        <option value="">没有兼容模型</option>
-                      )}
-                      {a.models.map((m) => (
-                        <option key={m.model} value={m.model}>
-                          {m.name || m.model}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                );
-              })}
-            </div>
-          )}
-          {!p.readOnly && (
-            <p className="catalog-caption catalog-state" role="status">
-              {state.modelDirectoryJobs[p.id]
-                ? "正在读取供应商模型目录…"
-                : state.providerModels[p.id]?.error
-                  ? "模型目录读取失败，可在“发现模型”中重试。"
-                  : state.providerModels[p.id]
-                    ? `已读取 ${state.providerModels[p.id].models.length} 个可用模型，可在“发现模型”中添加。`
-                    : p.hasKey || p.id === "official"
-                      ? "尚未读取目录"
-                      : "填写 API Key 后自动读取模型目录"}
-            </p>
-          )}
-          {!p.models.length && (
-            <p className="supplier-empty">
-              {p.readOnly
-                ? "没有可读取的本机目录，请在原生客户端查看可用模型。"
-                : "从“发现模型”中添加，或手动配置模型。"}
-            </p>
-          )}
-          {p.models
-            .filter((m) =>
-              `${m.model} ${m.displayName}`
-                .toLowerCase()
-                .includes(modelSearch.toLowerCase()),
-            )
-            .map((m) =>
-              p.readOnly ? (
-                <div className="native-model-row" key={m.model}>
-                  <div>
-                    <strong>{m.displayName || m.model}</strong>
-                    <small>{m.model}</small>
-                  </div>
-                  <span>{protocols[m.wireApi] || m.wireApi || "原生协议"}</span>
-                  <span>上下文 {number(m.contextWindow)}</span>
-                  <span>{m.efforts?.join(" · ") || "思维档位未声明"}</span>
-                </div>
-              ) : (
-                <InlineModel
-                  key={modelKey(p.id, m.model)}
-                  p={p}
-                  model={m}
-                  draft={drafts[modelKey(p.id, m.model)]}
-                  change={(k, v) => editDraft(m, k, v)}
-                  discard={() => discard(m)}
-                  {...{ state, act, busy }}
-                  onAdvanced={() => setEditor({ provider: p, model: m })}
-                  onInspect={() => setInspection({ provider: p, model: m })}
-                />
-              ),
+            {!!boundClients.length && (
+              <div className="client-model-selections">
+                {boundClients.map((c) => {
+                  const a = c.accounts.find((a) => a.providerId === p.id),
+                    saved = c.modelSelections[a.id],
+                    chosen = a.models.some((m) => m.model === saved)
+                      ? saved
+                      : a.models[0]?.model || "";
+                  return (
+                    <label key={c.id}>
+                      {c.name} 启动模型
+                      <select
+                        aria-label={c.name + " 启动模型"}
+                        value={chosen}
+                        disabled={!!busy || !a.models.length}
+                        onChange={(e) =>
+                          act("client-model", () =>
+                            api.call(
+                              "client-model",
+                              c.id,
+                              a.id,
+                              e.target.value,
+                            ),
+                          )
+                        }
+                      >
+                        {!a.models.length && (
+                          <option value="">没有兼容模型</option>
+                        )}
+                        {a.models.map((m) => (
+                          <option key={m.model} value={m.model}>
+                            {m.name || m.model}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })}
+              </div>
             )}
-        </section>
+            {!p.readOnly && (
+              <p className="catalog-caption catalog-state" role="status">
+                {state.modelDirectoryJobs[p.id]
+                  ? "正在读取供应商模型目录…"
+                  : state.providerModels[p.id]?.error
+                    ? "模型目录读取失败，可在“发现模型”中重试。"
+                    : state.providerModels[p.id]
+                      ? `已读取 ${state.providerModels[p.id].models.length} 个可用模型，可在“发现模型”中添加。`
+                      : p.hasKey || p.id === "official"
+                        ? "尚未读取目录"
+                        : "填写 API Key 后自动读取模型目录"}
+              </p>
+            )}
+            {!p.models.length && (
+              <p className="supplier-empty">
+                {p.readOnly
+                  ? "没有可读取的本机目录，请在原生客户端查看可用模型。"
+                  : "从“发现模型”中添加，或手动配置模型。"}
+              </p>
+            )}
+            {!!p.models.length &&
+              !p.models.some((m) =>
+                `${m.model} ${m.displayName}`
+                  .toLowerCase()
+                  .includes(modelSearch.toLowerCase()),
+              ) && <p className="supplier-empty">没有匹配的模型</p>}
+            {p.models
+              .filter((m) =>
+                `${m.model} ${m.displayName}`
+                  .toLowerCase()
+                  .includes(modelSearch.toLowerCase()),
+              )
+              .map((m) =>
+                p.readOnly ? (
+                  <div className="native-model-row" key={m.model}>
+                    <div>
+                      <strong>{m.displayName || m.model}</strong>
+                      <small>{m.model}</small>
+                    </div>
+                    <span>
+                      {protocols[m.wireApi] || m.wireApi || "原生协议"}
+                    </span>
+                    <span>上下文 {number(m.contextWindow)}</span>
+                    <span>{m.efforts?.join(" · ") || "思维档位未声明"}</span>
+                  </div>
+                ) : (
+                  <InlineModel
+                    key={modelKey(p.id, m.model)}
+                    p={p}
+                    model={m}
+                    draft={drafts[modelKey(p.id, m.model)]}
+                    change={(k, v) => editDraft(m, k, v)}
+                    discard={() => discard(m)}
+                    {...{ state, act, busy }}
+                    onAdvanced={() => setEditor({ provider: p, model: m })}
+                    onInspect={() => setInspection({ provider: p, model: m })}
+                  />
+                ),
+              )}
+          </section>
+        </Modal>
       )}
       {directoryProvider && (
         <Modal
           title={directoryProvider.name + " · 发现模型"}
+          className="provider-side-dialog"
           onClose={() => setDirectory(null)}
         >
           <ProviderModelCatalog
@@ -726,6 +784,7 @@ export function Providers({
       {editor && (
         <ModelEditor
           {...editor}
+          className="provider-side-dialog"
           onClose={() => setEditor(null)}
           onSave={(m) =>
             api.call(
@@ -742,6 +801,7 @@ export function Providers({
         <ModelCapabilityDialog
           {...inspection}
           {...{ state, act, busy }}
+          className="provider-side-dialog"
           onClose={() => setInspection(null)}
         />
       )}
@@ -750,6 +810,7 @@ export function Providers({
           presets={state.providerPresets}
           balancePresets={state.balancePresets}
           provider={providerEditor.provider}
+          className={p ? "provider-side-dialog" : undefined}
           onClose={() => setProviderEditor(null)}
           onSave={(m) => api.call("save-provider", m)}
         />

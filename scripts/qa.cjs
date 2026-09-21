@@ -63,13 +63,13 @@ fs.mkdirSync(output, { recursive: true });
       .click();
     await page
       .getByRole("article", { name: "示例供应商 供应商", exact: true })
-      .getByRole("button", { name: /查看全部模型/ })
+      .getByRole("button", { name: "查看 示例供应商 的模型", exact: true })
       .click();
     await page
       .getByRole("button", { name: "gpt-6-astra 高级操作", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "高级设置", exact: true }).click();
-    const dialog = page.getByRole("dialog");
+    const dialog = page.getByRole("dialog", { name: "模型设置", exact: true });
     await dialog
       .getByRole("slider", { name: "最高可选强度", exact: true })
       .fill("5");
@@ -122,8 +122,9 @@ fs.mkdirSync(output, { recursive: true });
       path: path.join(output, "nongpt-range.png"),
     });
     await page.getByRole("button", { name: "保存模型" }).click();
-    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await dialog.waitFor({ state: "hidden" });
     await page
+      .locator(".provider-model-dialog")
       .getByRole("button", { name: "示例供应商 更多操作", exact: true })
       .click();
     await page
@@ -139,6 +140,11 @@ fs.mkdirSync(output, { recursive: true });
       path: path.join(output, "balance-editor.png"),
     });
     await page.getByRole("button", { name: "保存供应商" }).click();
+    await page
+      .getByRole("dialog", { name: "供应商设置", exact: true })
+      .waitFor({ state: "hidden" });
+    await page.keyboard.press("Escape");
+    await page.locator(".provider-model-dialog").waitFor({ state: "hidden" });
     assert.equal(
       await page
         .getByRole("button", { name: "接入 Codex", exact: true })

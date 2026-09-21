@@ -107,7 +107,7 @@ function RequestTable({ rows }) {
     </div>
   );
 }
-function Overview({ state, providers, act, busy, setView }) {
+function Overview({ state, providers, act, busy, setView, openProvider }) {
   return (
     <>
       <div className="overview-grid">
@@ -152,10 +152,7 @@ function Overview({ state, providers, act, busy, setView }) {
                       "Responses"}
                 </span>
                 <span className="muted">{p.models.length} 个模型</span>
-                <Button
-                  icon={ChevronRight}
-                  onClick={() => setView("providers")}
-                >
+                <Button icon={ChevronRight} onClick={() => openProvider(p.id)}>
                   查看模型
                 </Button>
               </div>
@@ -305,11 +302,10 @@ function App() {
   const [state, setState] = useState(null),
     [view, setViewLocal] = useState("overview"),
     [clientTarget, setClientTargetLocal] = useState("codex"),
-    [providerTarget, setProviderTargetLocal] = useState("official"),
     [busy, setBusy] = useState(""),
     [toast, setToast] = useState(null);
   const [connectionRequest, setConnectionRequest] = useState(null);
-  const [focusModels, setFocusModels] = useState(false);
+  const [providerDetail, setProviderDetail] = useState(null);
   function remember(input) {
     api
       .call("ui-preferences", input)
@@ -318,7 +314,7 @@ function App() {
       );
   }
   function setView(next) {
-    setFocusModels(false);
+    setProviderDetail(null);
     setViewLocal(next);
     remember({ view: next });
   }
@@ -327,8 +323,12 @@ function App() {
     remember({ client: next });
   }
   function setProviderTarget(next) {
-    setProviderTargetLocal(next);
     remember({ provider: next });
+  }
+  function openProvider(id) {
+    setProviderTarget(id);
+    setView("providers");
+    setProviderDetail(id);
   }
   useEffect(
     () =>
@@ -349,7 +349,6 @@ function App() {
         setState(next);
         setViewLocal(next.preferences.view);
         setClientTargetLocal(next.preferences.client);
-        setProviderTargetLocal(next.preferences.provider);
       })
       .catch((e) => setToast({ error: true, message: e.message }));
     return api.subscribe(setState);
@@ -518,12 +517,18 @@ function App() {
           />
         )}
         {view === "overview" ? (
-          <Overview {...{ state, providers, act, busy, setView }} />
+          <Overview
+            {...{ state, providers, act, busy, setView, openProvider }}
+          />
         ) : view === "providers" ? (
           <Providers
-            {...{ state, providers, act, busy, focusModels }}
-            initialProvider={providerTarget}
-            onSelectProvider={setProviderTarget}
+            {...{ state, providers, act, busy }}
+            activeProvider={providerDetail}
+            onOpenProvider={(id) => {
+              setProviderTarget(id);
+              setProviderDetail(id);
+            }}
+            onBack={() => setProviderDetail(null)}
           />
         ) : view === "clients" ? (
           <Clients
@@ -531,11 +536,7 @@ function App() {
             onManage={setConnectionRequest}
             initialClient={clientTarget}
             onSelectClient={setClientTarget}
-            openProvider={(id) => {
-              setProviderTarget(id);
-              setView("providers");
-              setFocusModels(true);
-            }}
+            openProvider={openProvider}
           />
         ) : view === "updates" ? (
           <Updates {...{ state, act, busy }} />

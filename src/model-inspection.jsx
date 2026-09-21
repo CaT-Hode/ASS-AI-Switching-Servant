@@ -111,6 +111,7 @@ export function ModelCapabilityDialog({
   act,
   busy,
   onClose,
+  className,
 }) {
   const key = modelKey(provider.id, model.model),
     directory = state.providerModels?.[provider.id];
@@ -123,6 +124,7 @@ export function ModelCapabilityDialog({
     <Modal
       title={"模型能力 · " + model.displayName}
       description={provider.name + " / " + model.model}
+      className={className}
       onClose={onClose}
     >
       <section className="capability-section">
@@ -302,11 +304,11 @@ export function ProviderModelCatalog({ provider, state, act, busy }) {
       </div>
       {!available ? (
         <p className="catalog-empty">
-          填写供应商 API Key 后自动读取；也可以在下方手动添加模型。
+          填写供应商 API Key 后自动读取；也可以返回模型列表手动添加。
         </p>
       ) : issue ? (
         <p className="catalog-error" role="alert">
-          {issue}。可重试刷新，或在下方手动添加。
+          {issue}。可重试刷新，或返回模型列表手动添加。
         </p>
       ) : loading && !directory ? (
         <p className="catalog-empty" role="status">

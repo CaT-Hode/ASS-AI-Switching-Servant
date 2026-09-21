@@ -223,6 +223,108 @@ async function run() {
       t.harnesses.add("codex", "工作授权");
     });
     await page
+      .getByRole("button", { name: "供应商与模型", exact: true })
+      .click();
+    await page
+      .getByRole("region", { name: "供应商卡片", exact: true })
+      .waitFor();
+    assert.equal(
+      await page
+        .locator(".configured-models, .inline-model, .provider-model-catalog")
+        .count(),
+      0,
+    );
+    assert.equal(
+      await app.evaluate(() => global.assTest.sent.length),
+      0,
+      "Gallery must not automatically fetch a provider's models",
+    );
+    for (const width of [1100, 1380, 1536]) {
+      await app.evaluate(
+        ({ BrowserWindow }, width) =>
+          BrowserWindow.getAllWindows()[0].setSize(width, 940),
+        width,
+      );
+      assert.ok(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      );
+      await page.screenshot({
+        path: path.join(out, `v019-provider-gallery-${width}.png`),
+        animations: "disabled",
+      });
+    }
+    await page.getByLabel("搜索供应商或模型").fill("工作");
+    await page.getByLabel("来源筛选").selectOption("api");
+    const openWork = page.getByRole("button", {
+      name: "查看 工作 API 的模型",
+      exact: true,
+    });
+    await openWork.focus();
+    await page.keyboard.press("Enter");
+    await page
+      .getByRole("region", { name: "工作 API 模型配置", exact: true })
+      .waitFor();
+    assert.equal(
+      await page.locator("dialog.provider-model-dialog[open]").count(),
+      1,
+    );
+    assert.equal(
+      await page.evaluate(() => {
+        document.querySelector(".provider-gallery input").focus();
+        return document
+          .querySelector(".provider-model-dialog")
+          .contains(document.activeElement);
+      }),
+      true,
+      "Gallery cannot take focus behind the level-2 modal",
+    );
+    assert.equal(
+      await page
+        .getByLabel("搜索已配置模型")
+        .evaluate((e) => e === document.activeElement),
+      true,
+    );
+    await page.getByLabel("alpha 显示名称", { exact: true }).fill("保留的草稿");
+    await page
+      .locator(".provider-model-dialog")
+      .getByRole("button", { name: "关闭", exact: true })
+      .click();
+    await page.locator(".provider-model-dialog").waitFor({ state: "hidden" });
+    await openWork.waitFor();
+    assert.equal(
+      await openWork.evaluate((e) => e === document.activeElement),
+      true,
+    );
+    assert.equal(
+      await page.getByLabel("搜索供应商或模型").inputValue(),
+      "工作",
+    );
+    assert.equal(await page.getByLabel("来源筛选").inputValue(), "api");
+    assert.equal(await page.locator(".inline-model").count(), 0);
+    await page.getByText("1 项未保存", { exact: true }).waitFor();
+    await openWork.click();
+    assert.equal(
+      await page.getByLabel("alpha 显示名称", { exact: true }).inputValue(),
+      "保留的草稿",
+    );
+    await page
+      .getByRole("form", { name: "alpha 行内配置", exact: true })
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
+    await page.keyboard.press("Escape");
+    await page.locator(".provider-model-dialog").waitFor({ state: "hidden" });
+    await page
+      .getByRole("button", { name: "供应商与模型", exact: true })
+      .click();
+    await openWork.waitFor();
+    assert.equal(
+      await page.locator(".configured-models").count(),
+      0,
+      "Sidebar navigation must return to level 1",
+    );
+    await page
       .getByRole("button", { name: "客户端与账户", exact: true })
       .click();
     assert.equal(
@@ -284,6 +386,11 @@ async function run() {
       exact: true,
     });
     await section.waitFor();
+    assert.equal(
+      await page.locator("dialog.provider-model-dialog[open]").count(),
+      1,
+      "Client deep links open level 2 directly",
+    );
     await section.getByText(/已读取 3 个可用模型/).waitFor();
     await page.getByLabel("pi 启动模型", { exact: true }).selectOption("alpha");
     let row = page.getByRole("form", { name: "alpha 行内配置", exact: true });
@@ -354,6 +461,43 @@ async function run() {
       await menu.evaluate((e) => e === document.activeElement),
       true,
     );
+    // The right-side level 3 shifts the level-2 list left, with no overlap.
+    const advanced = row.getByRole("button", {
+      name: "alpha-new 详细设置",
+      exact: true,
+    });
+    await advanced.click();
+    let detailDialog = page.getByRole("dialog", {
+      name: "模型设置",
+      exact: true,
+    });
+    await detailDialog.waitFor();
+    assert.equal(await page.locator("dialog[open]").count(), 2);
+    assert.equal(
+      await page.evaluate(() => {
+        document.querySelector(".provider-model-dialog input").focus();
+        return document
+          .querySelector(".provider-side-dialog")
+          .contains(document.activeElement);
+      }),
+      true,
+      "Only the detail editor may receive input",
+    );
+    assert.equal(
+      await detailDialog.getByLabel("模型 ID", { exact: true }).inputValue(),
+      "alpha-new",
+    );
+    await page.screenshot({
+      path: path.join(out, "v019-model-level3.png"),
+      animations: "disabled",
+    });
+    await page.keyboard.press("Escape");
+    await detailDialog.waitFor({ state: "hidden" });
+    assert.equal(
+      await advanced.evaluate((e) => e === document.activeElement),
+      true,
+    );
+    await section.waitFor();
     // Optimistic guard prevents stale drafts from overwriting a concurrent change.
     await row
       .getByLabel("alpha-new 显示名称", { exact: true })
@@ -397,12 +541,38 @@ async function run() {
     await section
       .getByRole("button", { name: "发现模型", exact: true })
       .click();
-    let modal = page.getByRole("dialog");
+    let modal = page.getByRole("dialog", {
+      name: "工作 API · 发现模型",
+      exact: true,
+    });
     await modal.getByLabel("搜索供应商可用模型").fill("new-model");
     await modal.getByRole("button", { name: "加入配置", exact: true }).click();
     await modal.getByRole("button", { name: "已添加", exact: true }).waitFor();
     await page.keyboard.press("Escape");
     await modal.waitFor({ state: "hidden" });
+    assert.equal(
+      await section
+        .getByRole("button", { name: "发现模型", exact: true })
+        .evaluate((e) => e === document.activeElement),
+      true,
+    );
+    await section
+      .getByRole("button", { name: "手动添加", exact: true })
+      .click();
+    const manual = page.getByRole("dialog", { name: "添加模型", exact: true });
+    await manual.getByLabel("模型 ID", { exact: true }).fill("manual-test");
+    await manual.getByLabel("模型 ID", { exact: true }).press("Tab");
+    await manual.getByRole("button", { name: "保存模型", exact: true }).click();
+    await manual.waitFor({ state: "hidden" });
+    await page
+      .getByRole("form", { name: "manual-test 行内配置", exact: true })
+      .waitFor();
+    await page
+      .getByRole("button", { name: "删除模型 manual-test", exact: true })
+      .click();
+    await page
+      .getByRole("form", { name: "manual-test 行内配置", exact: true })
+      .waitFor({ state: "hidden" });
     // Lightning remains model-specific and never submits the inline form.
     await row
       .getByRole("button", { name: "检测模型 alpha-new", exact: true })
@@ -418,11 +588,89 @@ async function run() {
       path: path.join(out, "v017-model-edit-1380.png"),
       animations: "disabled",
     });
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({
-      path: path.join(out, "v017-providers-1380.png"),
-      animations: "disabled",
-    });
+    for (const width of [1100, 1380, 1536]) {
+      await app.evaluate(
+        ({ BrowserWindow }, width) =>
+          BrowserWindow.getAllWindows()[0].setSize(width, 940),
+        width,
+      );
+      assert.ok(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      );
+      await page.screenshot({
+        path: path.join(out, `v019-model-list-${width}.png`),
+        animations: "disabled",
+      });
+      const centered = await page
+        .locator(".provider-model-dialog")
+        .boundingBox();
+      await advanced.click();
+      await detailDialog.waitFor();
+      await page.waitForFunction(() => {
+        const list = document
+          .querySelector(".provider-model-dialog")
+          .getBoundingClientRect();
+        const editor = document
+          .querySelector(".provider-side-dialog")
+          .getBoundingClientRect();
+        return (
+          list.right + 12 <= editor.left &&
+          editor.right <= innerWidth &&
+          Math.abs(list.top - editor.top) < 1
+        );
+      });
+      const split = await page.locator(".provider-model-dialog").boundingBox();
+      assert.ok(
+        split.x < centered.x && split.width < centered.width,
+        "List must shift left and yield width",
+      );
+      for (const selector of [
+        ".provider-model-dialog",
+        ".provider-side-dialog",
+      ]) {
+        assert.ok(
+          await page
+            .locator(selector)
+            .evaluate((e) => e.scrollWidth <= e.clientWidth + 1),
+        );
+        const rect = await page.locator(selector).boundingBox();
+        assert.ok(rect.width >= 450 && rect.y > 0 && rect.height < 940);
+      }
+      await page.screenshot({
+        path: path.join(out, `v019-model-split-${width}.png`),
+        animations: "disabled",
+      });
+      await page.keyboard.press("Escape");
+      await detailDialog.waitFor({ state: "hidden" });
+      await page.waitForFunction(
+        (expected) =>
+          Math.abs(
+            document
+              .querySelector(".provider-model-dialog")
+              .getBoundingClientRect().width - expected,
+          ) < 1,
+        centered.width,
+      );
+      assert.equal(await page.locator("dialog[open]").count(), 1);
+      assert.equal(
+        await advanced.evaluate((e) => e === document.activeElement),
+        true,
+      );
+    }
+    for (let i = 0; i < 3; i++) {
+      await advanced.click();
+      await detailDialog.waitFor();
+      await page.keyboard.press("Escape");
+      await detailDialog.waitFor({ state: "hidden" });
+      assert.equal(await page.locator("dialog[open]").count(), 1);
+    }
+    await page
+      .locator(".provider-model-dialog")
+      .getByRole("button", { name: "关闭", exact: true })
+      .click();
+    await page.locator(".provider-model-dialog").waitFor({ state: "hidden" });
     const pcard = page.getByRole("article", {
       name: "工作 API 供应商",
       exact: true,
@@ -435,6 +683,44 @@ async function run() {
       animations: "disabled",
     });
     await page.keyboard.press("Escape");
+    assert.equal(
+      await page.locator(".provider-model-dialog").count(),
+      0,
+      "Closing a card menu must not open its card",
+    );
+    // Read-only native model sources use the same hierarchy without edit controls.
+    const nativeCard = page
+      .getByRole("article")
+      .filter({ has: page.getByText("原生模型", { exact: true }) })
+      .first();
+    await nativeCard.scrollIntoViewIfNeeded();
+    const galleryY = await page.evaluate(() => scrollY);
+    await nativeCard.locator(".supplier-open").click();
+    await page.locator(".native-model-row").waitFor();
+    assert.equal(await page.locator(".inline-model").count(), 0);
+    assert.equal(
+      await page.getByRole("button", { name: "手动添加", exact: true }).count(),
+      0,
+    );
+    await page.keyboard.press("Escape");
+    await page.locator(".provider-model-dialog").waitFor({ state: "hidden" });
+    assert.ok(Math.abs((await page.evaluate(() => scrollY)) - galleryY) < 1);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openWork.click();
+    await section.waitFor();
+    await advanced.click();
+    await detailDialog.waitFor();
+    assert.equal(
+      await page
+        .locator(".provider-model-dialog")
+        .evaluate((e) => getComputedStyle(e).transitionDuration),
+      "0s",
+    );
+    await page.keyboard.press("Escape");
+    await detailDialog.waitFor({ state: "hidden" });
+    await page.keyboard.press("Escape");
+    await page.locator(".provider-model-dialog").waitFor({ state: "hidden" });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
     await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].setSize(1100, 780),
     );
@@ -513,6 +799,8 @@ async function run() {
         inline:
           "five fields, save/cancel, duplicate, stale, invalid, delete/cancel, rename selections",
         directory: "automatic and one-click add",
+        hierarchy:
+          "gallery/list/detail dialogs, right-side editor, left yield, restore width, no overlap, nested Escape/focus, direct links, drafts, manual add, readonly, reduced motion",
         modelCheck: "specific model only",
         screenshots: out,
         nativeCredentialsUntouched: true,

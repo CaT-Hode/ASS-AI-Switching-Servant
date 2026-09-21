@@ -38,6 +38,7 @@ export function Modal({
   dismissible = true,
   className = "wide",
   closeButton = true,
+  fallbackFocus,
 }) {
   const ref = useRef(null),
     closing = useRef(false);
@@ -46,11 +47,14 @@ export function Modal({
       previous = document.activeElement;
     el.showModal();
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const offset = el.classList.contains("provider-side-dialog")
+      ? "translateX(12px)"
+      : "translateY(6px) scale(.985)";
     const animation = el.animate(
       [
         {
           opacity: 0,
-          transform: reduce ? "none" : "translateY(6px) scale(.985)",
+          transform: reduce ? "none" : offset,
         },
         { opacity: 1, transform: "none" },
       ],
@@ -62,7 +66,11 @@ export function Modal({
     return () => {
       animation.cancel();
       if (el.open) el.close();
-      previous?.focus?.({ preventScroll: true });
+      const target =
+        previous?.isConnected && previous !== document.body
+          ? previous
+          : fallbackFocus?.();
+      target?.focus?.({ preventScroll: true });
     };
   }, []);
   function close() {
@@ -74,12 +82,15 @@ export function Modal({
     const from = { opacity: current.opacity, transform: current.transform };
     el.getAnimations().forEach((a) => a.cancel());
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const offset = el.classList.contains("provider-side-dialog")
+      ? "translateX(12px)"
+      : "translateY(6px) scale(.985)";
     el.animate(
       [
         from,
         {
           opacity: 0,
-          transform: reduce ? "none" : "translateY(6px) scale(.985)",
+          transform: reduce ? "none" : offset,
         },
       ],
       {
@@ -134,7 +145,7 @@ function Stops({ selected }) {
     </div>
   );
 }
-export function ModelEditor({ provider, model, onSave, onClose }) {
+export function ModelEditor({ provider, model, onSave, onClose, className }) {
   const [draft, setDraft] = useState(() =>
     model
       ? structuredClone(model)
@@ -206,6 +217,7 @@ export function ModelEditor({ provider, model, onSave, onClose }) {
     <Modal
       title={model ? "模型设置" : "添加模型"}
       description={provider.name + " · 只作用于此模型"}
+      className={className}
       onClose={onClose}
     >
       <form onSubmit={save}>
@@ -426,6 +438,7 @@ export function ProviderEditor({
   balancePresets = [],
   onSave,
   onClose,
+  className,
 }) {
   const [draft, setDraft] = useState(() =>
     provider
@@ -481,6 +494,7 @@ export function ProviderEditor({
         provider ? "供应商设置" : initialPreset ? "添加 API 账户" : "添加供应商"
       }
       description="连接、凭据与余额接口"
+      className={className}
       onClose={onClose}
     >
       <div className="tabs">

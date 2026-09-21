@@ -112,7 +112,7 @@ fs.mkdirSync(codex);
       .click();
     await page
       .getByRole("article", { name: "检测示例 供应商", exact: true })
-      .getByRole("button", { name: /查看全部模型/ })
+      .getByRole("button", { name: "查看 检测示例 的模型", exact: true })
       .click();
     await page
       .getByRole("form", { name: "probe-b 行内配置", exact: true })
@@ -147,7 +147,9 @@ fs.mkdirSync(codex);
       .getByRole("button", { name: "已添加" })
       .waitFor();
     await page.keyboard.press("Escape");
-    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page
+      .getByRole("dialog", { name: "检测示例 · 发现模型", exact: true })
+      .waitFor({ state: "hidden" });
     await page
       .getByRole("button", { name: "probe-a 高级操作", exact: true })
       .click();
@@ -163,7 +165,11 @@ fs.mkdirSync(codex);
       animations: "disabled",
     });
     await page.keyboard.press("Escape");
-    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page
+      .getByRole("dialog", { name: /^模型能力/ })
+      .waitFor({ state: "hidden" });
+    await page.keyboard.press("Escape");
+    await page.locator(".provider-model-dialog").waitFor({ state: "hidden" });
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
       .click();
