@@ -48,7 +48,10 @@ fs.mkdirSync(output, { recursive: true });
         },
       ],
     };
-    await app.evaluate((_, raw) => global.assTest.store.import(raw), fake);
+    await app.evaluate((_, raw) => {
+      global.assTest.setFetch(async () => Response.json({ data: [] }));
+      global.assTest.store.import(raw);
+    }, fake);
     await page.reload();
     await page.waitForSelector("h1");
     await page.screenshot({
@@ -58,10 +61,14 @@ fs.mkdirSync(output, { recursive: true });
     await page
       .getByRole("button", { name: "供应商与模型", exact: true })
       .click();
-    await page.getByRole("button", { name: "示例供应商", exact: true }).click();
     await page
-      .getByRole("button", { name: "配置模型 gpt-6-astra", exact: true })
+      .getByRole("article", { name: "示例供应商 供应商", exact: true })
+      .getByRole("button", { name: /查看全部模型/ })
       .click();
+    await page
+      .getByRole("button", { name: "gpt-6-astra 高级操作", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "高级设置", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await dialog
       .getByRole("slider", { name: "最高可选强度", exact: true })
@@ -89,8 +96,9 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(saved.defaultEffort, "ultra");
     assert.ok(saved.efforts.includes("max"));
     await page
-      .getByRole("button", { name: "配置模型 claude-opus-5", exact: true })
+      .getByRole("button", { name: "claude-opus-5 高级操作", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "高级设置", exact: true }).click();
     assert.equal(
       await page
         .getByRole("slider", { name: "最高可选强度", exact: true })
@@ -114,7 +122,13 @@ fs.mkdirSync(output, { recursive: true });
       path: path.join(output, "nongpt-range.png"),
     });
     await page.getByRole("button", { name: "保存模型" }).click();
-    await page.getByRole("button", { name: "供应商设置" }).click();
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page
+      .getByRole("button", { name: "示例供应商 更多操作", exact: true })
+      .click();
+    await page
+      .getByRole("menuitem", { name: "编辑供应商", exact: true })
+      .click();
     await page.getByRole("button", { name: "余额接口", exact: true }).click();
     await page.getByLabel(/^余额接口预设/).selectOption("custom");
     await page.getByLabel(/^余额接口路径/).fill("/balance");
@@ -125,13 +139,31 @@ fs.mkdirSync(output, { recursive: true });
       path: path.join(output, "balance-editor.png"),
     });
     await page.getByRole("button", { name: "保存供应商" }).click();
-    assert.equal(await page.getByRole("button", { name: "接入 Codex", exact: true }).count(), 0);
-    await page.getByRole("button", { name: "客户端与账户", exact: true }).click();
+    assert.equal(
+      await page
+        .getByRole("button", { name: "接入 Codex", exact: true })
+        .count(),
+      0,
+    );
+    await page
+      .getByRole("button", { name: "客户端与账户", exact: true })
+      .click();
     async function toggleCodex() {
-      await page.getByRole("switch", { name: "Codex ASS 接入", exact: true }).click();
-      assert.equal(await page.getByRole("dialog").getByRole("button").count(), 2);
-      assert.equal(await page.getByRole("dialog").getByRole("checkbox").count(), 0);
-      await page.getByRole("dialog").getByRole("button", { name: "确定", exact: true }).click();
+      await page
+        .getByRole("switch", { name: "Codex ASS 接入", exact: true })
+        .click();
+      assert.equal(
+        await page.getByRole("dialog").getByRole("button").count(),
+        2,
+      );
+      assert.equal(
+        await page.getByRole("dialog").getByRole("checkbox").count(),
+        0,
+      );
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "确定", exact: true })
+        .click();
       await page.getByRole("dialog").waitFor({ state: "hidden" });
     }
     await toggleCodex();
@@ -146,8 +178,10 @@ fs.mkdirSync(output, { recursive: true });
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
       .click();
+    await page.getByRole("button", { name: "添加账户", exact: true }).click();
     await page
-      .getByRole("button", { name: "添加授权账户", exact: true })
+      .getByRole("dialog")
+      .getByRole("button", { name: "原生授权账户", exact: true })
       .click();
     await page.getByLabel("账户名称", { exact: true }).fill("工作账户");
     await page.getByRole("button", { name: "创建账户", exact: true }).click();
@@ -162,6 +196,11 @@ fs.mkdirSync(output, { recursive: true });
       .getByRole("button", {
         name: /^Claude Code (已找到客户端|未检测到安装)$/,
       })
+      .click();
+    await page.getByRole("button", { name: "添加账户", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: /示例供应商/ })
       .click();
     assert.ok((await page.locator(".client-account-card").count()) > 0);
     await page.screenshot({
@@ -181,8 +220,10 @@ fs.mkdirSync(output, { recursive: true });
       path: path.join(output, "clients-1100.png"),
     });
     await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.getByRole("button", { name: "添加账户", exact: true }).click();
     await page
-      .getByRole("button", { name: "添加授权账户", exact: true })
+      .getByRole("dialog")
+      .getByRole("button", { name: "原生授权账户", exact: true })
       .click();
     const accountDialog = page.getByRole("dialog");
     await accountDialog.evaluate((el) =>
@@ -196,7 +237,7 @@ fs.mkdirSync(output, { recursive: true });
     await accountDialog.waitFor({ state: "hidden" });
     assert.equal(
       await page
-        .getByRole("button", { name: "添加授权账户", exact: true })
+        .getByRole("button", { name: "添加账户", exact: true })
         .evaluate((el) => el === document.activeElement),
       true,
     );

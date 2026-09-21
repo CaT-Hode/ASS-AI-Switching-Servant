@@ -41,10 +41,10 @@ class Preferences {
         continue;
       if (
         key === "client" &&
-        !["codex", "claude", "opencode", "pi", "dsh"].includes(value)
+        !["codex", "claude", "opencode", "pi", "dsh", "cursor"].includes(value)
       )
         continue;
-      next[key] = value;
+      next[key] = key === "view" && value === "accounts" ? "clients" : value;
     }
     return next;
   }

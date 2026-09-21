@@ -59,8 +59,16 @@ class Store {
           .toString("base64"),
       }),
     );
-    atomic(this.file, JSON.stringify({ ...this.state, providers }, null, 2));
-    this.writeCatalog();
+    const catalog = path.join(this.dataDir, "catalog.json");
+    const previous = fs.existsSync(catalog) ? fs.readFileSync(catalog) : null;
+    try {
+      this.writeCatalog();
+      // Settings are authoritative on restart; commit them only after the derived catalog.
+      atomic(this.file, JSON.stringify({ ...this.state, providers }, null, 2));
+    } catch (error) {
+      if (previous) atomic(catalog, previous);
+      throw error;
+    }
   }
   writeCatalog() {
     atomic(
@@ -84,17 +92,24 @@ class Store {
         hasKey: !!apiKey,
         headerCount: Object.keys(extraHeaders || {}).length,
       })),
-      officialModels: this.officialModels.map((m) => ({
-        ...normalizeModel(
-          this.state.officialOverrides[m.slug] || {
-            model: m.slug,
-            displayName: m.display_name,
-          },
-          { id: "official", name: "OpenAI 官方", wireApi: "openai-responses" },
-          this.officialModels,
-        ),
-        official: true,
-      })),
+      officialModels: this.officialModels
+        .filter((m) => !this.state.officialOverrides[m.slug]?.removed)
+        .map((m) => ({
+          ...normalizeModel(
+            this.state.officialOverrides[m.slug] || {
+              model: m.slug,
+              displayName: m.display_name,
+            },
+            {
+              id: "official",
+              name: "OpenAI 官方",
+              wireApi: "openai-responses",
+            },
+            this.officialModels,
+          ),
+          official: true,
+          sourceModel: m.slug,
+        })),
     };
   }
   import(raw) {
@@ -163,27 +178,88 @@ class Store {
     }
     return provider.id;
   }
-  model(providerId, input, originalName) {
-    if (providerId === "official") {
-      const model = normalizeModel(
-        input,
-        { id: "official", name: "OpenAI 官方" },
-        this.officialModels,
-      );
-      this.state.officialOverrides[model.model] = model;
-    } else {
-      const p = this.state.providers.find((p) => p.id === providerId);
-      if (!p) throw new Error("供应商不存在");
-      const model = normalizeModel(input, p, this.officialModels);
-      const idx = p.models.findIndex(
-        (m) => m.model === (originalName || model.model),
-      );
-      if (p.models.some((m, i) => m.model === model.model && i !== idx))
-        throw new Error("模型名称重复");
-      if (idx < 0) p.models.push(model);
-      else p.models[idx] = model;
+  model(providerId, input, originalName, expected) {
+    const previous = this.state;
+    const current =
+      providerId === "official"
+        ? this.public().officialModels.find(
+            (m) => m.model === (originalName || input.model),
+          )
+        : this.state.providers
+            .find((p) => p.id === providerId)
+            ?.models.find((m) => m.model === (originalName || input.model));
+    if (expected && JSON.stringify(current) !== JSON.stringify(expected))
+      throw new Error("模型配置已变化，请取消行内修改并重试");
+    if (originalName && !current) throw new Error("原模型已移除，请刷新后重试");
+    this.state = structuredClone(previous);
+    try {
+      if (providerId === "official") {
+        const source =
+          current?.sourceModel ||
+          this.officialModels.find((m) => m.slug === input.model)?.slug;
+        if (!source) throw new Error("官方模型来源不存在，请刷新本机目录");
+        if (input.wireApi && input.wireApi !== "openai-responses")
+          throw new Error(
+            "官方订阅只支持 Responses 接口；其他协议请使用 API 供应商",
+          );
+        const model = normalizeModel(
+          input,
+          { id: "official", name: "OpenAI 官方" },
+          this.officialModels,
+        );
+        if (
+          this.public().officialModels.some(
+            (m) => m.sourceModel !== source && m.model === model.model,
+          )
+        )
+          throw new Error("模型 ID 重复");
+        this.state.officialOverrides[source] = model;
+      } else {
+        const p = this.state.providers.find((p) => p.id === providerId);
+        if (!p) throw new Error("供应商不存在");
+        const model = normalizeModel(input, p, this.officialModels);
+        const idx = p.models.findIndex(
+          (m) => m.model === (originalName || model.model),
+        );
+        if (p.models.some((m, i) => m.model === model.model && i !== idx))
+          throw new Error("模型名称重复");
+        if (idx < 0) p.models.push(model);
+        else p.models[idx] = model;
+      }
+      this.save();
+    } catch (error) {
+      this.state = previous;
+      throw error;
     }
-    this.save();
+  }
+  removeModel(providerId, name, expected) {
+    const current =
+      providerId === "official"
+        ? this.public().officialModels.find((m) => m.model === name)
+        : this.state.providers
+            .find((p) => p.id === providerId)
+            ?.models.find((m) => m.model === name);
+    if (!current) throw new Error("模型不存在或已移除");
+    if (expected && JSON.stringify(current) !== JSON.stringify(expected))
+      throw new Error("模型配置已变化，请刷新后重试");
+    const previous = this.state;
+    this.state = structuredClone(previous);
+    try {
+      if (providerId === "official")
+        this.state.officialOverrides[current.sourceModel] = {
+          ...current,
+          enabled: false,
+          removed: true,
+        };
+      else {
+        const p = this.state.providers.find((p) => p.id === providerId);
+        p.models = p.models.filter((m) => m.model !== name);
+      }
+      this.save();
+    } catch (error) {
+      this.state = previous;
+      throw error;
+    }
   }
 }
 module.exports = { Store };

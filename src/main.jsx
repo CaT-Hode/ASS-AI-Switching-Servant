@@ -7,27 +7,15 @@ import {
   Activity,
   ShieldCheck,
   Upload,
-  Plug,
-  Unplug,
-  Square,
-  Play,
-  Plus,
-  Check,
   ChevronRight,
   Settings2,
-  Search,
   X,
-  Wallet,
-  RefreshCw,
-  ArrowUpRight,
   Download,
   Folder,
   Monitor,
   CheckCircle2,
   AlertCircle,
   Loader2,
-  KeyRound,
-  SlidersHorizontal,
 } from "lucide-react";
 import "./style.css";
 import "./controls.css";
@@ -35,18 +23,10 @@ import "./polish.css";
 import "./clients.css";
 import { Clients } from "./clients.jsx";
 import { ConnectionDialog } from "./connections.jsx";
-import { OfficialAccounts } from "./official-accounts.jsx";
+import { Providers } from "./providers.jsx";
 import { Updates, UpdateBanner } from "./updates.jsx";
-import { ModelEditor, ProviderEditor } from "./editors.jsx";
-import {
-  modelKey,
-  ModelActions,
-  ModelCheckButton,
-  ModelCapabilityDialog,
-  ProviderModelCatalog,
-} from "./model-inspection.jsx";
+import { modelKey, ModelCheckButton } from "./model-inspection.jsx";
 const api = window.ass;
-const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const protocols = {
   "openai-responses": "Responses",
   "openai-chat": "Chat Completions",
@@ -54,8 +34,6 @@ const protocols = {
 };
 const date = (value) =>
   new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
-const format = (value) =>
-  new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 4 }).format(value);
 function Button({
   children,
   primary = false,
@@ -76,13 +54,6 @@ function Button({
       ) : null}
       {children}
     </button>
-  );
-}
-function Tag({ good, children }) {
-  return (
-    <span className={"tag " + (good ? "good" : "")}>
-      {good && <Check size={12} />} {children}
-    </span>
   );
 }
 function ProviderIcon({ p }) {
@@ -244,236 +215,6 @@ function Overview({ state, providers, act, busy, setView }) {
     </>
   );
 }
-function Providers({
-  state,
-  providers,
-  act,
-  busy,
-  initialProvider = "official",
-  onSelectProvider,
-}) {
-  const [selected, setSelected] = useState(initialProvider),
-    [search, setSearch] = useState(""),
-    [editor, setEditor] = useState(null),
-    [inspection, setInspection] = useState(null),
-    [providerEditor, setProviderEditor] = useState(false);
-  const p = providers.find((p) => p.id === selected) || providers[0];
-  const balance = state.balances[p.id];
-  return (
-    <>
-      <div className="provider-toolbar">
-        <div className="provider-tabs">
-          {providers.map((p) => (
-            <button
-              key={p.id}
-              className={p.id === selected ? "active" : ""}
-              onClick={() => {
-                setSelected(p.id);
-                onSelectProvider?.(p.id);
-              }}
-            >
-              {p.name}
-            </button>
-          ))}
-        </div>
-        <Button icon={Plus} onClick={() => setProviderEditor("new")}>
-          添加供应商
-        </Button>
-      </div>
-      <div className="provider-detail">
-        <div>
-          <div className="detail-title">
-            <ProviderIcon p={p} />
-            <h2>{p.name}</h2>
-            <Tag good={p.id === "official" || p.hasKey}>
-              {p.id === "official"
-                ? "官方订阅"
-                : p.hasKey
-                  ? "密钥已加密"
-                  : "待填写密钥"}
-            </Tag>
-          </div>
-          <p className="muted mono">{p.baseUrl}</p>
-        </div>
-        <div className="actions">
-          {p.id !== "official" && (
-            <Button icon={Settings2} onClick={() => setProviderEditor("edit")}>
-              供应商设置
-            </Button>
-          )}
-        </div>
-      </div>
-      {p.id !== "official" && (
-        <div className="balance-strip">
-          <div>
-            <Wallet size={19} />
-            <span>账户余额</span>
-            <strong>
-              {balance?.ok
-                ? (balance.rows || [balance])
-                    .map((r) => `${r.label || ""} ${format(r.value)} ${r.unit}`)
-                    .join(" · ")
-                : p.balance?.preset === "auto"
-                  ? "自动识别 · 尚未查询"
-                  : p.balance?.path
-                    ? "尚未查询"
-                    : "待配置余额接口"}
-            </strong>
-            {balance?.time && (
-              <small className="muted">{date(balance.time)} 更新</small>
-            )}
-          </div>
-          <Button
-            icon={RefreshCw}
-            busy={busy === "balance-" + p.id}
-            onClick={() =>
-              p.balance?.preset === "auto" || p.balance?.path
-                ? act("balance-" + p.id, () => api.call("balance", p.id))
-                : setProviderEditor("edit")
-            }
-          >
-            {p.balance?.preset === "auto" || p.balance?.path
-              ? "查询余额"
-              : "配置接口"}
-          </Button>
-          {balance && !balance.ok && (
-            <p className="danger">{balance.message}</p>
-          )}
-        </div>
-      )}
-      {p.id !== "official" && (
-        <ProviderModelCatalog
-          key={p.id}
-          provider={p}
-          {...{ state, act, busy }}
-        />
-      )}
-      <div className="section-heading">
-        <h2>
-          已配置模型 <span className="count">{p.models.length}</span>
-        </h2>
-        <div className="actions">
-          <label className="search">
-            <Search size={16} />
-            <input
-              aria-label="搜索模型"
-              placeholder="搜索模型"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </label>
-          {p.id !== "official" && (
-            <Button icon={Plus} onClick={() => setEditor({ model: null })}>
-              手动添加
-            </Button>
-          )}
-        </div>
-      </div>
-      <div className="models-table">
-        <div className="model-row table-head">
-          <span>模型名称</span>
-          <span>接口类型</span>
-          <span>上下文</span>
-          <span>思维强度</span>
-          <span />
-        </div>
-        {p.models
-          .filter((m) =>
-            (m.model + " " + m.displayName)
-              .toLowerCase()
-              .includes(search.toLowerCase()),
-          )
-          .map((m) => (
-            <div className="model-row" key={m.model}>
-              <button
-                className="model-name model-name-button"
-                aria-label={"配置模型 " + m.model}
-                onClick={() => setEditor({ model: m })}
-              >
-                <strong>{m.displayName}</strong>
-                <small>
-                  {m.enabled === false ? "已停用 · " : ""}
-                  {m.model}
-                </small>
-                {state.diagnostics[modelKey(p.id, m.model)] && (
-                  <small
-                    className={
-                      state.diagnostics[modelKey(p.id, m.model)].ok
-                        ? "success"
-                        : "danger"
-                    }
-                  >
-                    {state.diagnostics[modelKey(p.id, m.model)].ok
-                      ? "连接通过"
-                      : "连接失败"}{" "}
-                    ·{" "}
-                    {Math.round(state.diagnostics[modelKey(p.id, m.model)].ms)}{" "}
-                    ms
-                  </small>
-                )}
-              </button>
-              <span className="muted">{protocols[m.wireApi]}</span>
-              <span>
-                <strong className="mono">{format(m.contextWindow)}</strong>
-                <small className="muted">tokens</small>
-              </span>
-              <span className="model-efforts">
-                {m.efforts.map((e) => (
-                  <i key={e} className={e === m.defaultEffort ? "default" : ""}>
-                    {e}
-                  </i>
-                ))}
-              </span>
-              <ModelActions
-                provider={p}
-                model={m}
-                {...{ state, act, busy }}
-                onEdit={() => setEditor({ model: m })}
-                onInspect={() => setInspection(m)}
-              />
-            </div>
-          ))}
-      </div>
-      <p className="hint">
-        点击模型名称编辑；右侧闪电仅检测该模型。选中的强度进入 Codex
-        菜单；蓝色强度是默认值。上下文默认值可单独覆盖。
-      </p>
-      {p.id !== "official" && (
-        <button
-          className="text-button danger"
-          onClick={() => act("delete", () => api.call("delete-provider", p.id))}
-        >
-          移除此供应商
-        </button>
-      )}
-      {editor && (
-        <ModelEditor
-          provider={p}
-          model={editor.model}
-          onClose={() => setEditor(null)}
-          onSave={(m) => api.call("save-model", p.id, m, editor.model?.model)}
-        />
-      )}{" "}
-      {inspection && (
-        <ModelCapabilityDialog
-          provider={p}
-          model={inspection}
-          {...{ state, act, busy }}
-          onClose={() => setInspection(null)}
-        />
-      )}
-      {providerEditor && (
-        <ProviderEditor
-          presets={state.providerPresets}
-          balancePresets={state.balancePresets}
-          provider={providerEditor === "edit" ? p : null}
-          onClose={() => setProviderEditor(false)}
-          onSave={(m) => api.call("save-provider", m)}
-        />
-      )}
-    </>
-  );
-}
 function Diagnostics({ state, providers, act, busy }) {
   return (
     <>
@@ -567,6 +308,7 @@ function App() {
     [busy, setBusy] = useState(""),
     [toast, setToast] = useState(null);
   const [connectionRequest, setConnectionRequest] = useState(null);
+  const [focusModels, setFocusModels] = useState(false);
   function remember(input) {
     api
       .call("ui-preferences", input)
@@ -575,6 +317,7 @@ function App() {
       );
   }
   function setView(next) {
+    setFocusModels(false);
     setViewLocal(next);
     remember({ view: next });
   }
@@ -668,7 +411,6 @@ function App() {
     overview: "路由总览",
     providers: "供应商与模型",
     clients: "客户端与账户",
-    accounts: "官方账户中心",
     diagnostics: "连接诊断",
     updates: "关于 ASS",
   }[view];
@@ -687,7 +429,6 @@ function App() {
           {[
             ["overview", LayoutGrid, "路由总览"],
             ["providers", Boxes, "供应商与模型"],
-            ["accounts", KeyRound, "官方账户中心"],
             ["clients", Monitor, "客户端与账户"],
             ["diagnostics", Activity, "连接诊断"],
             ["updates", Download, "关于 ASS"],
@@ -765,21 +506,9 @@ function App() {
           <Overview {...{ state, providers, act, busy, setView }} />
         ) : view === "providers" ? (
           <Providers
-            {...{ state, providers, act, busy }}
+            {...{ state, providers, act, busy, focusModels }}
             initialProvider={providerTarget}
             onSelectProvider={setProviderTarget}
-          />
-        ) : view === "accounts" ? (
-          <OfficialAccounts
-            {...{ state, act, busy }}
-            openClient={(id) => {
-              setClientTarget(id);
-              setView("clients");
-            }}
-            openProvider={(id) => {
-              setProviderTarget(id);
-              setView("providers");
-            }}
           />
         ) : view === "clients" ? (
           <Clients
@@ -787,6 +516,11 @@ function App() {
             onManage={setConnectionRequest}
             initialClient={clientTarget}
             onSelectClient={setClientTarget}
+            openProvider={(id) => {
+              setProviderTarget(id);
+              setView("providers");
+              setFocusModels(true);
+            }}
           />
         ) : view === "updates" ? (
           <Updates {...{ state, act, busy }} />

@@ -39,7 +39,7 @@ class OpenRouterAuth {
     this.job = null;
     this.update(state);
   }
-  async start(label) {
+  async start(label, client) {
     if (this.job) throw Error("已有 OpenRouter 授权正在等待浏览器确认");
     const verifier = crypto.randomBytes(48).toString("base64url");
     const callbackPath =
@@ -122,6 +122,7 @@ class OpenRouterAuth {
           String(label || "OpenRouter 浏览器授权")
             .trim()
             .slice(0, 80),
+          client,
         );
         this.finish(job, {
           status: "complete",

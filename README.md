@@ -17,7 +17,8 @@ ASS（AI Switch Servant）是你的 Windows 桌面 AI 路由与账户助手。�
 - Codex、Claude Code、OpenCode、pi、DeepSeek Harness 的启动注入与账户选择。
 - 每个客户端独立的接入开关；简短警告后确定或取消，确认后恢复注入、按需结束 ASS 窗口与停止服务。
 - 在本机 pi 支持时，将 Codex / Claude Code / OpenCode 的兼容 OAuth 导入新的 pi 账户。
-- “官方账户中心”配置 19 组服务的 API 凭据、OpenRouter PKCE 和 Cursor Key；原生登录状态统一在客户端页。
+- “客户端与账户”按客户端绑定显示已有 API / OAuth 账户；添加入口保留官方 API 预设、OpenRouter PKCE 和 Cursor Key 保管。
+- “供应商与模型”聚合卡片与二级菜单；已配置模型可直接修改 ID、显示名称、接口、上下文和默认思维强度，或删除模型。
 - 自动检测五类客户端的本机 OAuth / API 凭据，按账户与供应商在右侧显示卡片。支持默认目录、环境变量目录与手动指定目录。
 - 每个模型右侧的闪电单独检查连接；选中供应商自动获取模型目录，可搜索并一键添加，再用小请求检测协议、工具调用与思维参数。
 - 自动识别客户端入口，支持安装目录、npm 包目录、JS 入口及 DeepSeek Harness 源码目录。
@@ -77,7 +78,9 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 | pi | Responses / Chat Completions / Anthropic | 独立 `PI_CODING_AGENT_DIR`，原生或扩展 `/login /logout` |
 | DeepSeek Harness | DeepSeek 配置直接作为 API 账户，也可用其他兼容供应商 | 检测 `.credentials.yaml` 的 API refs 与 `llm-pi-ai` OAuth records；独立 `DSH_HOME` 支持原生授权设置 |
 
-在客户端页右侧的账户卡片选择账户与模型，点击“启动”。ASS 供应商的 API Key 只留在后端，客户端获得本地路由令牌。API 注入写入专用目录；本机账户直接使用原有凭据目录，不复制或覆盖其令牌。Codex App 的全局配置仍由单独的 Codex 接入开关管理。
+在客户端页右侧选择已有账户，点击“启动”。DeepSeek 官方 API 自动归入 DSH，OpenCode Go 自动归入 OpenCode；其他 API 通过“添加账户”选择已有供应商。旧版本已选择或使用过的 API 保留绑定。解除绑定不会删除供应商、撤销凭据或中断运行中的客户端。
+
+模型在“供应商与模型”统一管理；各已绑定客户端的启动模型也在对应供应商下选择。API Key 只留在后端，客户端获得本地路由令牌。API 注入写入专用目录；本机账户直接使用原有凭据目录，不复制或覆盖其令牌。账户选择作用于下一次由 ASS 启动的客户端，不替换正在运行的 Codex App 登录。
 
 本机 Codex 读取 `CODEX_HOME/auth.json`；Claude Code 读取 `CLAUDE_CONFIG_DIR/.credentials.json` 或环境中的 `CLAUDE_CODE_OAUTH_TOKEN`；OpenCode 读取 `XDG_DATA_HOME/opencode/auth.json`；Pi 读取 `PI_CODING_AGENT_DIR/auth.json`；DSH 读取 `DSH_HOME/.credentials.yaml`。未设置环境目录时使用各客户端默认位置，也可在“客户端路径与凭据目录”指定。多供应商凭据分别显示，不把一个文件当作一个账户。
 
@@ -87,9 +90,9 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 
 官方 OAuth 使用原生客户端刷新机制；ASS 不实现登录服务器、不代替用户授权，不保证某个订阅在另一 harness 中享有相同权益或计费方式。
 
-### 官方账户中心
+### 添加官方账户
 
-侧栏独立页面覆盖 OpenAI / ChatGPT、Anthropic / Claude、DeepSeek、Cursor、Kimi / Moonshot、Z.ai、智谱、OpenCode Go / Zen、OpenRouter、Gemini、GitHub Copilot、MiniMax、MiMo、SiliconFlow、StepFun、Groq、Mistral、xAI、Qwen。
+原独立账户页面已合并至“客户端与账户”。“添加账户 → 新建 API 账户”保留官方服务与地区预设，按当前客户端协议筛选；列表不再铺开未添加的服务。原生授权通过“添加账户 → 原生授权账户”创建，pi 的 OAuth 能力仍由本机安装的客户端确认。
 
 | 账户方式 | 管理范围 |
 | --- | --- |
@@ -102,7 +105,15 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 
 同一服务的不同产品与地区分开列出，例如 Kimi Code / Moonshot、Z.ai 通用 API / Coding Plan、OpenCode Go / Zen。它们的 Key 和额度不应混用。支持的服务名不等于所有账户与模型均已实网验证。
 
-官方归类按已知 API 域名匹配，不按自定义名称或品牌猜测；中转商保留在“供应商与模型”。移除账户只删除本机配置，不撤销官网 Key。Cursor Key 主动复制后，若剪贴板未被替换，30 秒后清空；系统剪贴板历史和其他应用可能保留副本。
+官方归类按已知 API 域名匹配，不按自定义名称或品牌猜测。Cursor Key 从“添加原生客户端 Key”保存；已有 Cursor Key 在对应客户端卡片中管理，不提供路由开关。主动复制后，若剪贴板未被替换，30 秒后清空；系统剪贴板历史和其他应用可能保留副本。
+
+### 模型卡片与行内配置
+
+供应商卡片显示地址、模型数、接口、上下文、思维档位、检测结果与余额；菜单提供发现模型、编辑供应商和余额查询。“查看全部模型”定位到主页面的“已配置模型”。五个常用字段直接编辑，逐行保存或取消；高级设置仍提供思维范围双滑块。
+
+重命名模型同步更新 ASS 保存的启动模型选择；删除模型移除对应配置并清理旧选择，不删除供应商密钥。重复 ID、无效上下文和过时草稿会被拒绝。官方订阅的接口固定为 Responses；不支持将订阅端点改成其他协议。
+
+原生账户能读取的模型声明一并聚合为只读目录（Claude settings、pi models、OpenCode provider 配置、DSH llm-pi-ai 配置）；没有目录时明确标为未读取，不据账户登录状态猜测全部可用模型。它们不是联网验证，也不把原生 OAuth 当作通用 API 密钥。
 
 ### 自动识别安装或源码目录
 

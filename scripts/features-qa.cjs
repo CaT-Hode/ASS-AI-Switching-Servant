@@ -110,13 +110,16 @@ fs.mkdirSync(codex);
     await page
       .getByRole("button", { name: "供应商与模型", exact: true })
       .click();
-    await page.getByRole("button", { name: "检测示例", exact: true }).click();
     await page
+      .getByRole("article", { name: "检测示例 供应商", exact: true })
+      .getByRole("button", { name: /查看全部模型/ })
+      .click();
+    await page
+      .getByRole("form", { name: "probe-b 行内配置", exact: true })
       .getByRole("button", { name: "检测模型 probe-b", exact: true })
       .click();
     await page
-      .locator(".model-row")
-      .filter({ hasText: "probe-b" })
+      .getByRole("form", { name: "probe-b 行内配置", exact: true })
       .getByText("连接通过", { exact: false })
       .waitFor();
     const single = await app.evaluate(() => ({
@@ -130,6 +133,10 @@ fs.mkdirSync(codex);
       true,
     );
     await page
+      .getByRole("region", { name: "检测示例 模型配置", exact: true })
+      .getByRole("button", { name: "发现模型", exact: true })
+      .click();
+    await page
       .locator(".discovered-model")
       .filter({ hasText: "probe-new" })
       .getByRole("button", { name: "加入配置" })
@@ -139,9 +146,12 @@ fs.mkdirSync(codex);
       .filter({ hasText: "probe-new" })
       .getByRole("button", { name: "已添加" })
       .waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
     await page
-      .getByRole("button", { name: "查看模型能力 probe-a", exact: true })
+      .getByRole("button", { name: "probe-a 高级操作", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "能力详情", exact: true }).click();
     await page.getByRole("button", { name: "自动检测能力" }).click();
     await page.getByText("已观察到有效调用", { exact: true }).waitFor();
     assert.equal(
@@ -155,83 +165,111 @@ fs.mkdirSync(codex);
     await page.keyboard.press("Escape");
     await page.getByRole("dialog").waitFor({ state: "hidden" });
     await page
-      .getByRole("button", { name: "官方账户中心", exact: true })
+      .getByRole("button", { name: "客户端与账户", exact: true })
       .click();
-    await page.getByRole("navigation", { name: "官方服务列表" }).waitFor();
     assert.equal(
       await page
-        .getByRole("navigation", { name: "官方服务列表" })
-        .getByRole("button")
+        .getByRole("button", { name: "官方账户中心", exact: true })
         .count(),
+      0,
+    );
+    assert.equal(
+      (await app.evaluate(() => global.assTest.snapshot())).officialServices
+        .length,
       19,
     );
-    await page.getByRole("button", { name: "OpenAI API", exact: true }).click();
+    for (const [name, secret] of [
+      ["OpenAI 工作账户", "synthetic-openai-key"],
+      ["OpenAI 个人账户", "synthetic-personal-key"],
+    ]) {
+      await page.getByRole("button", { name: "添加账户", exact: true }).click();
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "新建 API 账户", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "OpenAI API", exact: true })
+        .click();
+      await page.getByLabel("供应商名称", { exact: true }).fill(name);
+      await page.getByLabel("API Key", { exact: true }).fill(secret);
+      await page
+        .getByRole("button", { name: "保存供应商", exact: true })
+        .click();
+      await page.getByRole("dialog").waitFor({ state: "hidden" });
+      await page
+        .getByRole("article", { name: name + " 账户", exact: true })
+        .waitFor();
+    }
+    await page.getByRole("button", { name: "添加账户", exact: true }).click();
     await page
-      .getByLabel("供应商名称", { exact: true })
-      .fill("OpenAI 工作账户");
-    await page
-      .getByLabel("API Key", { exact: true })
-      .fill("synthetic-openai-key");
-    await page.getByRole("button", { name: "保存供应商" }).click();
-    await page.getByRole("dialog").waitFor({ state: "hidden" });
-    await page.getByText("OpenAI 工作账户", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "OpenAI API", exact: true }).click();
-    await page
-      .getByLabel("供应商名称", { exact: true })
-      .fill("OpenAI 个人账户");
-    await page
-      .getByLabel("API Key", { exact: true })
-      .fill("synthetic-personal-key");
-    await page.getByRole("button", { name: "保存供应商" }).click();
-    await page.getByRole("dialog").waitFor({ state: "hidden" });
-    await page.getByRole("button", { name: "在客户端管理授权", exact: true }).click();
-    await page
-      .getByRole("button", { name: "添加授权账户", exact: true })
+      .getByRole("dialog")
+      .getByRole("button", { name: "原生授权账户", exact: true })
       .click();
     await page.getByLabel("账户名称", { exact: true }).fill("ChatGPT 工作授权");
     await page.getByRole("button", { name: "创建账户", exact: true }).click();
     await page.getByRole("dialog").waitFor({ state: "hidden" });
     await page.getByText("ChatGPT 工作授权", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "官方账户中心", exact: true }).click();
-    assert.equal(await page.getByText("ChatGPT 工作授权", { exact: true }).count(), 0);
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({
-      path: path.join(output, "official-accounts.png"),
-      animations: "disabled",
-    });
     const secretCheck = await app.evaluate(() => {
-      const snapshot = global.assTest.snapshot(),
-        serialized = JSON.stringify(snapshot);
+      const s = global.assTest.snapshot();
       return {
-        apiAccounts: snapshot.providers.filter(
-          (p) => snapshot.officialProviderIds[p.id] === "openai",
+        apiAccounts: s.providers.filter(
+          (p) => s.officialProviderIds[p.id] === "openai",
         ).length,
-        redacted: !serialized.includes("synthetic-openai-key"),
+        redacted: !JSON.stringify(s).includes("synthetic-openai-key"),
         unique:
-          new Set(snapshot.providers.map((p) => p.id)).size ===
-          snapshot.providers.length,
+          new Set(s.providers.map((p) => p.id)).size === s.providers.length,
+        bound: s.harnesses.clients
+          .find((c) => c.id === "codex")
+          .accounts.filter((a) => a.kind === "api").length,
       };
     });
     assert.deepEqual(secretCheck, {
       apiAccounts: 2,
       redacted: true,
       unique: true,
+      bound: 2,
     });
-    await page.getByRole("button", { name: /^C Cursor 原生客户端/ }).click();
-    await page.getByRole("button", { name: "添加 Key", exact: true }).click();
+    await page.screenshot({
+      path: path.join(output, "bound-accounts.png"),
+      animations: "disabled",
+    });
+    await page
+      .getByRole("button", { name: "添加原生客户端 Key", exact: true })
+      .click();
     await page.getByLabel("账户名称", { exact: true }).fill("Cursor 原生 Key");
     await page
       .getByLabel("API Key", { exact: true })
       .fill("synthetic-cursor-key");
     await page.getByRole("button", { name: "保存账户", exact: true }).click();
     await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page
+      .locator(".client-list")
+      .getByRole("button", { name: /^Cursor / })
+      .click();
+    await page
+      .getByRole("article", { name: "Cursor 原生 Key 账户", exact: true })
+      .waitFor();
+    assert.equal(
+      await page
+        .getByRole("article", { name: "OpenAI 工作账户 账户", exact: true })
+        .count(),
+      0,
+    );
     assert.ok(
       !fs
         .readFileSync(path.join(data, "native-accounts.json"), "utf8")
         .includes("synthetic-cursor-key"),
     );
-    await page.getByRole("button", { name: /^O OpenRouter 聚合平台/ }).click();
-    await page.getByRole("button", { name: "浏览器授权", exact: true }).click();
+    await page
+      .locator(".client-list")
+      .getByRole("button", { name: /^Codex / })
+      .click();
+    await page.getByRole("button", { name: "添加账户", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "新建 API 账户", exact: true })
+      .click();
+    await page.getByRole("button", { name: "开始授权", exact: true }).click();
     await page.getByRole("button", { name: "取消授权", exact: true }).waitFor();
     await app.evaluate(async () => {
       const callback = new URL(global.assTest.callbackUrl);
@@ -246,26 +284,26 @@ fs.mkdirSync(codex);
         .readFileSync(path.join(data, "settings.json"), "utf8")
         .includes("synthetic-pkce-key"),
     );
-    await page.screenshot({
-      path: path.join(output, "openrouter-accounts.png"),
-      animations: "disabled",
+    const pkce = await app.evaluate(() => {
+      const s = global.assTest.snapshot(),
+        p = s.providers.find(
+          (p) => s.officialProviderIds[p.id] === "openrouter",
+        );
+      return s.harnesses.clients
+        .find((c) => c.id === "codex")
+        .accounts.some((a) => a.providerId === p.id);
     });
+    assert.equal(pkce, true);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
     await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].setSize(1100, 780),
     );
-    await page.evaluate(() => window.scrollTo(0, 0));
     assert.ok(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     );
-    await page.screenshot({
-      path: path.join(output, "accounts-1100.png"),
-      animations: "disabled",
-    });
-    await page
-      .getByRole("button", { name: "客户端与账户", exact: true })
-      .click();
     await page
       .getByRole("button", {
         name: /^DeepSeek Harness (已找到客户端|未检测到安装)$/,

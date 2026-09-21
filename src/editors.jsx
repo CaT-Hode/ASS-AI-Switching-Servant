@@ -30,7 +30,15 @@ function Field({ label, hint, children }) {
     </div>
   );
 }
-export function Modal({ title, description, onClose, children, dismissible = true, className = "wide", closeButton = true }) {
+export function Modal({
+  title,
+  description,
+  onClose,
+  children,
+  dismissible = true,
+  className = "wide",
+  closeButton = true,
+}) {
   const ref = useRef(null),
     closing = useRef(false);
   useEffect(() => {
@@ -48,7 +56,9 @@ export function Modal({ title, description, onClose, children, dismissible = tru
       ],
       { duration: reduce ? 100 : 180, easing: "cubic-bezier(0.23,1,0.32,1)" },
     );
-    el.querySelector("[data-autofocus],input,select")?.focus({ preventScroll: true });
+    el.querySelector("[data-autofocus],input,select")?.focus({
+      preventScroll: true,
+    });
     return () => {
       animation.cancel();
       if (el.open) el.close();
@@ -96,15 +106,17 @@ export function Modal({ title, description, onClose, children, dismissible = tru
           <h2>{title}</h2>
           {description && <p>{description}</p>}
         </div>
-        {closeButton && <button
-          type="button"
-          className="icon-button"
-          aria-label="关闭"
-          disabled={!dismissible}
-          onClick={close}
-        >
-          <X size={19} />
-        </button>}
+        {closeButton && (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="关闭"
+            disabled={!dismissible}
+            onClick={close}
+          >
+            <X size={19} />
+          </button>
+        )}
       </header>
       {children}
     </dialog>
@@ -202,7 +214,6 @@ export function ModelEditor({ provider, model, onSave, onClose }) {
             <input
               required
               value={draft.model}
-              readOnly={provider.id === "official"}
               onChange={(e) => set("model", e.target.value)}
               onBlur={() => {
                 if (!model) reset();

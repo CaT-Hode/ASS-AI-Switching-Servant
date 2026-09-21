@@ -54,8 +54,9 @@ function temp(t) {
 test("DeepSeek and Go are API accounts; Claude filters incompatible models", () => {
   assert.equal(apiAccounts("dsh", providers)[0].badge, "DeepSeek API");
   assert.equal(apiAccounts("opencode", providers)[1].badge, "OpenCode Go API");
-  assert.equal(apiAccounts("claude", providers)[0].ready, false);
-  assert.equal(apiAccounts("claude", providers)[2].models.length, 1);
+  assert.equal(apiAccounts("claude", providers).length, 1);
+  assert.equal(apiAccounts("claude", providers)[0].ready, true);
+  assert.equal(apiAccounts("claude", providers)[0].models.length, 1);
   assert.ok(
     !JSON.stringify(apiAccounts("pi", providers)).includes(
       "synthetic-deep-key",

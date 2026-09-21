@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Terminal,
   KeyRound,
@@ -11,8 +11,18 @@ import {
   RefreshCw,
   ChevronRight,
   Search,
+  Settings2,
+  Wallet,
+  Unlink,
+  ExternalLink,
 } from "lucide-react";
-import { Modal } from "./editors.jsx";
+import { Modal, ProviderEditor } from "./editors.jsx";
+import {
+  AddAccount,
+  NativeKeyAccounts,
+  NativeKeyForm,
+} from "./account-dialogs.jsx";
+import { ActionMenu } from "./menus.jsx";
 import {
   ConnectionPill,
   ConnectionStatus,
@@ -84,7 +94,16 @@ export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
   );
 }
 
-function AccountCard({ account: a, client, state, act, busy, run }) {
+function AccountCard({
+  account: a,
+  client,
+  state,
+  act,
+  busy,
+  run,
+  openProvider,
+  editProvider,
+}) {
   const selected = a.id === client.selected,
     models = a.models || [];
   const saved = client.modelSelections[a.id],
@@ -98,6 +117,11 @@ function AccountCard({ account: a, client, state, act, busy, run }) {
     "incomplete",
     "external",
   ].includes(a.status);
+  const provider = state.providers.find((p) => p.id === a.providerId);
+  const service = state.officialServices.find(
+    (s) => s.id === state.officialProviderIds[a.providerId],
+  );
+  const balance = state.balances[a.providerId];
   return (
     <article
       className={"client-account-card" + (selected ? " selected" : "")}
@@ -116,6 +140,54 @@ function AccountCard({ account: a, client, state, act, busy, run }) {
           <span>{a.source || "ASS 供应商"}</span>
         </div>
         <span className="tag">{a.badge}</span>
+        {provider && (
+          <ActionMenu
+            label={a.label + " 账户操作"}
+            disabled={!!busy}
+            items={[
+              {
+                label: "编辑凭据",
+                icon: Settings2,
+                action: () => editProvider(provider),
+              },
+              {
+                label: "管理模型",
+                icon: ChevronRight,
+                action: () => openProvider(a.providerId),
+              },
+              {
+                label: "查询余额",
+                icon: Wallet,
+                action: () =>
+                  act("balance-" + a.providerId, () =>
+                    api.call("balance", a.providerId),
+                  ),
+              },
+              service && {
+                label: "官方控制台",
+                icon: ExternalLink,
+                action: () =>
+                  act("official-open", () =>
+                    api.call("official-open", service.id, "console"),
+                  ),
+              },
+              {
+                label: "解除此客户端绑定",
+                icon: Unlink,
+                danger: true,
+                action: () =>
+                  act("account-unbind", () =>
+                    api.call(
+                      "account-bind-api",
+                      client.id,
+                      a.providerId,
+                      false,
+                    ),
+                  ),
+              },
+            ]}
+          />
+        )}
       </header>
       <p
         className={
@@ -131,26 +203,26 @@ function AccountCard({ account: a, client, state, act, busy, run }) {
         </small>
       )}
       {a.kind === "api" && (
-        <label className="field account-model">
-          模型
-          <select
-            aria-label={a.label + " 使用模型"}
-            value={chosen}
-            disabled={!models.length || !!busy}
-            onChange={(e) =>
-              act("client-model", () =>
-                api.call("client-model", client.id, a.id, e.target.value),
-              )
-            }
+        <div className="account-model-summary">
+          <span>启动模型</span>
+          <strong>{chosen || "没有兼容模型"}</strong>
+          <button
+            className="text-button"
+            onClick={() => openProvider(a.providerId)}
           >
-            {!models.length && <option value="">没有兼容模型</option>}
-            {models.map((m) => (
-              <option key={m.model} value={m.model}>
-                {m.name} · {m.protocol}
-              </option>
-            ))}
-          </select>
-        </label>
+            管理模型
+            <ChevronRight size={13} />
+          </button>
+        </div>
+      )}
+      {balance && (
+        <p className="account-balance-summary">
+          {balance.ok
+            ? (balance.rows || [balance])
+                .map((r) => `${r.label || ""} ${r.value} ${r.unit || ""}`)
+                .join(" · ")
+            : balance.message}
+        </p>
       )}
       {a.kind !== "api" && (
         <details className="account-origin">
@@ -172,7 +244,7 @@ function AccountCard({ account: a, client, state, act, busy, run }) {
           }
         >
           {selected && <Check size={13} />}
-          {selected ? "已选择" : "选择"}
+          {selected ? "已选择" : "切换到此账户"}
         </button>
         <div className="actions">
           {a.kind !== "api" && a.authType !== "api" && (
@@ -203,7 +275,8 @@ function AccountCard({ account: a, client, state, act, busy, run }) {
               !client.executable ||
               !!busy ||
               (a.kind === "api" &&
-                (!models.length ||
+                (!a.ready ||
+                  !models.length ||
                   !state.connections.clients[client.id].enabled))
             }
             onClick={() => run(a, "launch", chosen)}
@@ -224,14 +297,37 @@ export function Clients({
   onManage,
   initialClient = "codex",
   onSelectClient,
+  openProvider,
 }) {
   const [selected, setSelected] = useState(initialClient),
     [adding, setAdding] = useState(false),
+    [oauth, setOAuth] = useState(false),
+    [editor, setEditor] = useState(null),
+    [nativeKey, setNativeKey] = useState(null),
     [candidates, setCandidates] = useState(null),
     [notice, setNotice] = useState("");
   const client =
     state.harnesses.clients.find((c) => c.id === selected) ||
     state.harnesses.clients[0];
+  const nativeService = state.officialServices.find(
+    (s) =>
+      s.nativeKey &&
+      s.id === selected &&
+      state.nativeAccounts.some((a) => a.vendorId === s.id),
+  );
+  const nativeServices = state.officialServices.filter(
+    (s) => s.nativeKey && state.nativeAccounts.some((a) => a.vendorId === s.id),
+  );
+  const activeClient = nativeService?.id || client.id;
+  const addButton = useRef(null);
+  function closeAdding() {
+    setAdding(false);
+    requestAnimationFrame(() => addButton.current?.focus());
+  }
+  function closeOAuth() {
+    setOAuth(false);
+    requestAnimationFrame(() => addButton.current?.focus());
+  }
   // Returning from a native login window refreshes status without running auth helpers.
   useEffect(() => {
     const refresh = () =>
@@ -283,11 +379,13 @@ export function Clients({
           {state.harnesses.clients.map((c) => (
             <div
               key={c.id}
-              className={"client-entry" + (c.id === selected ? " active" : "")}
+              className={
+                "client-entry" + (c.id === activeClient ? " active" : "")
+              }
             >
               <button
                 className="client-select"
-                aria-pressed={c.id === selected}
+                aria-pressed={c.id === activeClient}
                 onClick={() => {
                   setSelected(c.id);
                   onSelectClient?.(c.id);
@@ -307,213 +405,280 @@ export function Clients({
               <ConnectionPill client={c} {...{ state, busy, onManage }} />
             </div>
           ))}
+          {nativeServices.map((s) => (
+            <div
+              className={"client-entry" + (selected === s.id ? " active" : "")}
+              key={s.id}
+            >
+              <button
+                className="client-select"
+                aria-pressed={selected === s.id}
+                onClick={() => {
+                  setSelected(s.id);
+                  onSelectClient?.(s.id);
+                  setNotice("");
+                }}
+              >
+                <KeyRound size={19} />
+                <span>
+                  <strong>{s.name}</strong>
+                  <small>原生 Key 保管</small>
+                </span>
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          ))}
+          <button
+            className="text-button native-key-add"
+            onClick={() =>
+              setNativeKey(state.officialServices.find((s) => s.nativeKey))
+            }
+          >
+            <Plus size={14} />
+            添加原生客户端 Key
+          </button>
         </nav>
-        <section
-          className="client-panel"
-          aria-label={client.name + " 账户管理"}
-        >
-          <header className="client-heading">
-            <h2>
-              {client.name}
-              <span className="count">{client.accounts.length}</span>
-            </h2>
-            <div className="actions">
-              <button
-                className="button"
-                disabled={!!busy}
-                onClick={() =>
-                  act("client-refresh", () => api.call("client-refresh"))
-                }
-              >
-                <RefreshCw size={14} />
-                刷新状态
-              </button>
-              {client.oauth && (
-                <button
-                  className="button primary"
-                  onClick={() => setAdding(true)}
-                >
-                  <Plus size={14} />
-                  添加授权账户
-                </button>
-              )}
-            </div>
-          </header>
-          <ConnectionStatus {...{ client, state }} />
-          <div className="client-account-grid">
-            {client.accounts.map((a) => (
-              <AccountCard
-                key={a.id}
-                account={a}
-                {...{ client, state, act, busy, run }}
-              />
-            ))}
-            {!client.accounts.length && (
-              <div className="empty">
-                <KeyRound size={23} />
-                <p>
-                  未检测到本机凭据。可登录原生客户端、添加授权账户或配置 API
-                  供应商。
-                </p>
-              </div>
+        {nativeService ? (
+          <NativeKeyAccounts
+            service={nativeService}
+            accounts={state.nativeAccounts.filter(
+              (a) => a.vendorId === nativeService.id,
             )}
-          </div>
-          <details className="client-settings" key={client.id}>
-            <summary>客户端路径与凭据目录</summary>
-            <div className="client-location-actions" aria-label="客户端位置">
-              <button className="button" disabled={!!busy} onClick={detect}>
-                <Search size={14} />
-                自动识别
-              </button>
-              <button
-                className="button"
-                disabled={!!busy}
-                onClick={() =>
-                  act("client-directory", () =>
-                    api.call("client-executable", client.id, true),
-                  )
-                }
-              >
-                <Folder size={14} />
-                选择目录
-              </button>
-              <button
-                className="button"
-                disabled={!!busy}
-                onClick={() =>
-                  act("client-path", () =>
-                    api.call("client-executable", client.id),
-                  )
-                }
-              >
-                选择文件
-              </button>
-            </div>
-            <div className="client-location" role="status">
-              <p
-                className={
-                  "launcher-state " + (client.launcher?.ready ? "ready" : "")
-                }
-              >
-                {client.launcher?.ready && <Check size={14} />}
-                {client.launcher?.message || "未检测到安装"}
-              </p>
-              {client.launcher?.location && (
-                <p className="client-path mono">{client.launcher.location}</p>
-              )}
-              {client.launcher?.ready && (
-                <details className="launcher-command">
-                  <summary>查看启动入口</summary>
-                  <code>{client.launcher.command}</code>
-                </details>
-              )}
-            </div>
-            <div className="section-heading">
-              <h3>凭据检测位置</h3>
+            {...{ state, act, busy }}
+          />
+        ) : (
+          <section
+            className="client-panel"
+            aria-label={client.name + " 账户管理"}
+          >
+            <header className="client-heading">
+              <h2>
+                {client.name}
+                <span className="count">{client.accounts.length}</span>
+              </h2>
               <div className="actions">
                 <button
-                  className="text-button"
+                  className="button"
                   disabled={!!busy}
                   onClick={() =>
-                    act("client-credentials", () =>
-                      api.call("client-credentials", client.id),
+                    act("client-refresh", () => api.call("client-refresh"))
+                  }
+                >
+                  <RefreshCw size={14} />
+                  刷新状态
+                </button>
+                {
+                  <button
+                    className="button primary"
+                    ref={addButton}
+                    onClick={() => setAdding(true)}
+                  >
+                    <Plus size={14} />
+                    添加账户
+                  </button>
+                }
+              </div>
+            </header>
+            <ConnectionStatus {...{ client, state }} />
+            <div className="client-account-grid">
+              {client.accounts.map((a) => (
+                <AccountCard
+                  key={a.id}
+                  account={a}
+                  {...{ client, state, act, busy, run, openProvider }}
+                  editProvider={setEditor}
+                />
+              ))}
+              {!client.accounts.length && (
+                <div className="empty">
+                  <KeyRound size={23} />
+                  <p>
+                    没有已有账户。点击“添加账户”绑定 API 或创建原生授权账户。
+                  </p>
+                </div>
+              )}
+            </div>
+            <details className="client-settings" key={client.id}>
+              <summary>客户端路径与凭据目录</summary>
+              <div className="client-location-actions" aria-label="客户端位置">
+                <button className="button" disabled={!!busy} onClick={detect}>
+                  <Search size={14} />
+                  自动识别
+                </button>
+                <button
+                  className="button"
+                  disabled={!!busy}
+                  onClick={() =>
+                    act("client-directory", () =>
+                      api.call("client-executable", client.id, true),
                     )
                   }
                 >
-                  指定凭据目录
+                  <Folder size={14} />
+                  选择目录
                 </button>
-                {client.credentialHome && (
-                  <button
-                    className="text-button"
-                    onClick={() =>
-                      act("client-credentials", () =>
-                        api.call("client-credentials", client.id, true),
-                      )
-                    }
-                  >
-                    恢复默认
-                  </button>
+                <button
+                  className="button"
+                  disabled={!!busy}
+                  onClick={() =>
+                    act("client-path", () =>
+                      api.call("client-executable", client.id),
+                    )
+                  }
+                >
+                  选择文件
+                </button>
+              </div>
+              <div className="client-location" role="status">
+                <p
+                  className={
+                    "launcher-state " + (client.launcher?.ready ? "ready" : "")
+                  }
+                >
+                  {client.launcher?.ready && <Check size={14} />}
+                  {client.launcher?.message || "未检测到安装"}
+                </p>
+                {client.launcher?.location && (
+                  <p className="client-path mono">{client.launcher.location}</p>
+                )}
+                {client.launcher?.ready && (
+                  <details className="launcher-command">
+                    <summary>查看启动入口</summary>
+                    <code>{client.launcher.command}</code>
+                  </details>
                 )}
               </div>
-            </div>
-            <div className="credential-sources">
-              {client.credentialSources.map((s) => (
-                <div key={s.file}>
-                  <code>{s.file}</code>
-                  <span>{s.message}</span>
-                </div>
-              ))}
-            </div>
-          </details>
-          <div className="client-workspace">
-            <Folder size={15} />
-            <span className="ellipsis" title={state.harnesses.workspace}>
-              {state.harnesses.workspace || "ASS 独立工作目录"}
-            </span>
-            <button
-              className="text-button"
-              onClick={() =>
-                act("client-workspace", () => api.call("client-workspace"))
-              }
-            >
-              选择工作目录
-            </button>
-          </div>
-          {client.id === "pi" && (
-            <details className="pi-import">
-              <summary>
-                从其他客户端导入 OAuth{" "}
-                <span className="count">
-                  {state.harnesses.oauthSources.length}
-                </span>
-              </summary>
-              <p className="hint">
-                {state.harnesses.piOAuthProviders.length
-                  ? "本机 pi 支持：" +
-                    state.harnesses.piOAuthProviders
-                      .map((p) => p.name)
-                      .join("、")
-                  : "未确认本机 pi 的 OAuth 能力，请选择 pi 程序后刷新。"}
-              </p>
-              {state.harnesses.oauthSources.map((s) => (
-                <div className="oauth-source" key={s.id}>
-                  <div>
-                    <strong>{s.label}</strong>
-                    <small>
-                      {s.provider} ·{" "}
-                      {s.expired ? "需客户端刷新" : "本地授权快照"}
-                    </small>
-                  </div>
+              <div className="section-heading">
+                <h3>凭据检测位置</h3>
+                <div className="actions">
                   <button
-                    className="button"
-                    disabled={!s.compatible || !!busy}
+                    className="text-button"
+                    disabled={!!busy}
                     onClick={() =>
-                      act("pi-import", () =>
-                        api.call("pi-import-oauth", s.id, s.label + " → pi"),
+                      act("client-credentials", () =>
+                        api.call("client-credentials", client.id),
                       )
                     }
                   >
-                    {s.compatible ? "导入到 pi" : "未确认兼容"}
+                    指定凭据目录
                   </button>
+                  {client.credentialHome && (
+                    <button
+                      className="text-button"
+                      onClick={() =>
+                        act("client-credentials", () =>
+                          api.call("client-credentials", client.id, true),
+                        )
+                      }
+                    >
+                      恢复默认
+                    </button>
+                  )}
                 </div>
-              ))}
-              <p className="hint">
-                导入会新建独立账户，不覆盖来源。两端分别刷新令牌，可能使另一端失效。
-              </p>
+              </div>
+              <div className="credential-sources">
+                {client.credentialSources.map((s) => (
+                  <div key={s.file}>
+                    <code>{s.file}</code>
+                    <span>{s.message}</span>
+                  </div>
+                ))}
+              </div>
             </details>
-          )}
-          {notice && (
-            <p className="client-notice" role="status">
-              {notice}
-            </p>
-          )}
-        </section>
+            <div className="client-workspace">
+              <Folder size={15} />
+              <span className="ellipsis" title={state.harnesses.workspace}>
+                {state.harnesses.workspace || "ASS 独立工作目录"}
+              </span>
+              <button
+                className="text-button"
+                onClick={() =>
+                  act("client-workspace", () => api.call("client-workspace"))
+                }
+              >
+                选择工作目录
+              </button>
+            </div>
+            {client.id === "pi" && (
+              <details className="pi-import">
+                <summary>
+                  从其他客户端导入 OAuth{" "}
+                  <span className="count">
+                    {state.harnesses.oauthSources.length}
+                  </span>
+                </summary>
+                <p className="hint">
+                  {state.harnesses.piOAuthProviders.length
+                    ? "本机 pi 支持：" +
+                      state.harnesses.piOAuthProviders
+                        .map((p) => p.name)
+                        .join("、")
+                    : "未确认本机 pi 的 OAuth 能力，请选择 pi 程序后刷新。"}
+                </p>
+                {state.harnesses.oauthSources.map((s) => (
+                  <div className="oauth-source" key={s.id}>
+                    <div>
+                      <strong>{s.label}</strong>
+                      <small>
+                        {s.provider} ·{" "}
+                        {s.expired ? "需客户端刷新" : "本地授权快照"}
+                      </small>
+                    </div>
+                    <button
+                      className="button"
+                      disabled={!s.compatible || !!busy}
+                      onClick={() =>
+                        act("pi-import", () =>
+                          api.call("pi-import-oauth", s.id, s.label + " → pi"),
+                        )
+                      }
+                    >
+                      {s.compatible ? "导入到 pi" : "未确认兼容"}
+                    </button>
+                  </div>
+                ))}
+                <p className="hint">
+                  导入会新建独立账户，不覆盖来源。两端分别刷新令牌，可能使另一端失效。
+                </p>
+              </details>
+            )}
+            {notice && (
+              <p className="client-notice" role="status">
+                {notice}
+              </p>
+            )}
+          </section>
+        )}
       </div>
       <ConnectionService {...{ state, busy, onManage }} />
       {adding && (
+        <AddAccount
+          key={client.id}
+          client={client}
+          state={state}
+          onClose={closeAdding}
+          onOAuth={() => {
+            setAdding(false);
+            setOAuth(true);
+          }}
+        />
+      )}
+      {editor && (
+        <ProviderEditor
+          provider={editor}
+          presets={state.providerPresets}
+          balancePresets={state.balancePresets}
+          onClose={() => setEditor(null)}
+          onSave={(p) => api.call("save-provider", p)}
+        />
+      )}
+      {nativeKey && (
+        <NativeKeyForm service={nativeKey} onClose={() => setNativeKey(null)} />
+      )}
+      {oauth && (
         <AccountForm
           client={client}
-          onClose={() => setAdding(false)}
+          onClose={closeOAuth}
           onSave={async (label, provider) => {
             await api.call("account-add", client.id, label, provider);
             await act("account-refresh", () => api.call("snapshot"));

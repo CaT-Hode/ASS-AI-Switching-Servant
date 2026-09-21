@@ -30,6 +30,7 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
   const running = busy === "diag-" + key;
   return (
     <button
+      type="button"
       className={
         "model-icon check-model " +
         (result ? (result.ok ? "passed" : "failed") : "")
@@ -235,6 +236,7 @@ export function ModelCapabilityDialog({
   );
 }
 export function ProviderModelCatalog({ provider, state, act, busy }) {
+  const available = provider.hasKey || provider.id === "official";
   const directory = state.providerModels?.[provider.id];
   const loading = !!state.modelDirectoryJobs?.[provider.id];
   const revision = state.modelDirectoryRevisions?.[provider.id] || 0;
@@ -244,14 +246,14 @@ export function ProviderModelCatalog({ provider, state, act, busy }) {
   useEffect(() => {
     let active = true;
     setError("");
-    if (provider.hasKey)
+    if (available)
       api.call("models-discover", provider.id).catch((e) => {
         if (active) setError(e.message);
       });
     return () => {
       active = false;
     };
-  }, [provider.id, provider.hasKey, revision]);
+  }, [provider.id, available, revision]);
   const configured = new Set(provider.models.map((m) => m.model));
   const models = (directory?.models || []).filter(
     (m) =>
@@ -287,7 +289,7 @@ export function ProviderModelCatalog({ provider, state, act, busy }) {
         </div>
         <button
           className="button"
-          disabled={loading || !provider.hasKey}
+          disabled={loading || !available}
           onClick={refresh}
         >
           {loading ? (
@@ -298,7 +300,7 @@ export function ProviderModelCatalog({ provider, state, act, busy }) {
           {loading ? "正在读取…" : "刷新模型列表"}
         </button>
       </div>
-      {!provider.hasKey ? (
+      {!available ? (
         <p className="catalog-empty">
           填写供应商 API Key 后自动读取；也可以在下方手动添加模型。
         </p>
@@ -374,7 +376,7 @@ export function ProviderModelCatalog({ provider, state, act, busy }) {
           </div>
         </>
       )}
-      {provider.hasKey &&
+      {available &&
         directory &&
         !issue &&
         !loading &&

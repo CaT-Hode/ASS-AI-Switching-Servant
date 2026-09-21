@@ -465,6 +465,89 @@
   margin-top: 23px;
   padding-top: 23px;
 }
+.account-add-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.account-bind-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 15px;
+  max-height: 390px;
+  overflow: auto;
+}
+.account-preset-list {
+  max-height: 365px;
+  overflow: auto;
+  margin: 18px 0;
+}
+.account-preset-list section {
+  margin-bottom: 18px;
+}
+.account-preset-list h3 {
+  font-size: 13px;
+  margin-bottom: 9px;
+}
+.account-preset-list section > div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.account-pkce {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+  flex-wrap: wrap;
+}
+.account-pkce > p {
+  width: 100%;
+  font-size: 12px;
+  color: var(--muted);
+}
+.account-model-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  padding: 14px 0;
+}
+.account-model-summary > span {
+  color: var(--muted);
+}
+.account-model-summary > strong {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.account-model-summary > .text-button {
+  margin-left: auto;
+}
+.account-balance-summary {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.native-key-add {
+  padding: 14px 6px;
+  justify-content: center;
+  font-size: 11px;
+}
+.client-account-card .account-card-title {
+  min-width: 0;
+}
+.client-account-card .account-card-title h3 {
+  overflow-wrap: anywhere;
+}
+.client-account-card > header > .tag {
+  white-space: nowrap;
+}
+.client-account-card .account-choice {
+  white-space: nowrap;
+}
 .pi-import .hint {
   font-size: 11px;
   line-height: 1.8;

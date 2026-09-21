@@ -39,6 +39,8 @@ const { InjectionFiles } = require("../core/injection-files.cjs");
 const { ClientProcesses } = require("../core/client-processes.cjs");
 const { Connections } = require("../core/connections.cjs");
 const { Preferences } = require("../core/preferences.cjs");
+const accountTransactions = require("../core/account-transactions.cjs");
+const { modelSources } = require("../core/model-inventory.cjs");
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
 if (testMode && customData) app.setPath("userData", customData);
@@ -76,7 +78,9 @@ const modelDirectory = new ModelDirectory({
     source: "Codex 本机目录声明（未实测）",
     time: new Date().toISOString(),
     models: store.officialModels.map((m) => ({
-      model: m.slug, displayName: m.display_name, declared: declaredCapabilities(m),
+      model: m.slug,
+      displayName: m.display_name,
+      declared: declaredCapabilities(m),
     })),
   }),
 });
@@ -98,7 +102,9 @@ async function upstream(url, init, network = "system") {
 }
 function readAuth() {
   const auth = JSON.parse(
-    fs.readFileSync(path.join(store.codexDir, "auth.json"), "utf8").replace(/^\uFEFF/, ""),
+    fs
+      .readFileSync(path.join(store.codexDir, "auth.json"), "utf8")
+      .replace(/^\uFEFF/, ""),
   );
   if (!auth.tokens?.access_token)
     throw new Error("未找到 ChatGPT 登录，请先在 Codex 登录");
@@ -126,10 +132,16 @@ function log(record) {
   push();
 }
 function snapshot() {
+  const publicState = store.public(),
+    clientState = harnesses.snapshot();
   return {
-    ...store.public(),
+    ...publicState,
+    modelSources: modelSources(publicState, clientState, {
+      home: harnesses.nativeHome,
+      env: harnesses.nativeEnv,
+    }),
     preferences: preferences.state,
-    harnesses: harnesses.snapshot(),
+    harnesses: clientState,
     connections: connections.snapshot(),
     providerPresets: PROVIDER_PRESETS,
     officialServices: OFFICIAL_SERVICES,
@@ -216,12 +228,19 @@ async function diagnose(providerId, modelName) {
     const headers = official
       ? readAuth()
       : { authorization: "Bearer ass-local-diagnostic" };
-    const r = await fetch(`http://127.0.0.1:${router.port}/diagnostics/v1/responses`, {
-      method: "POST",
-      headers: { ...headers, "content-type": "application/json", "x-ass-probe-token": router.clientToken },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(90000),
-    });
+    const r = await fetch(
+      `http://127.0.0.1:${router.port}/diagnostics/v1/responses`,
+      {
+        method: "POST",
+        headers: {
+          ...headers,
+          "content-type": "application/json",
+          "x-ass-probe-token": router.clientToken,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(90000),
+      },
+    );
     if (!r.ok) {
       await r.body?.cancel();
       throw new Error(
@@ -347,8 +366,14 @@ function showWindow() {
 }
 function requestSafeExit() {
   showWindow();
-  const request = () => window?.webContents.send("ass:manage", { scope: "all", enabled: false, quit: true });
-  if (window.webContents.isLoading()) window.webContents.once("did-finish-load", request);
+  const request = () =>
+    window?.webContents.send("ass:manage", {
+      scope: "all",
+      enabled: false,
+      quit: true,
+    });
+  if (window.webContents.isLoading())
+    window.webContents.once("did-finish-load", request);
   else request();
 }
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -358,10 +383,14 @@ else {
     .whenReady()
     .then(async () => {
       const dataDir = app.getPath("userData");
-      const codexDir =
-        testMode
-          ? process.env.ASS_TEST_CODEX || path.join(dataDir, "test-home", ".codex")
-          : path.resolve((process.env.CODEX_HOME || path.join(os.homedir(), ".codex")).replace(/^~(?=[/\\]|$)/, os.homedir()));
+      const codexDir = testMode
+        ? process.env.ASS_TEST_CODEX ||
+          path.join(dataDir, "test-home", ".codex")
+        : path.resolve(
+            (
+              process.env.CODEX_HOME || path.join(os.homedir(), ".codex")
+            ).replace(/^~(?=[/\\]|$)/, os.homedir()),
+          );
       fs.mkdirSync(dataDir, { recursive: true });
       systemSession = session.fromPartition("ass-system");
       directSession = session.fromPartition("ass-direct");
@@ -380,8 +409,8 @@ else {
         fetchUpstream: upstream,
         openExternal: (url) => shell.openExternal(url),
         onChange: push,
-        saveKey: (apiKey, name) =>
-          store.updateProvider({
+        saveKey: (apiKey, name, client) => {
+          const input = {
             ...OFFICIAL_SERVICES.find((s) => s.id === "openrouter").profiles[0],
             id: undefined,
             name,
@@ -389,19 +418,34 @@ else {
             models: [],
             enabled: true,
             balance: { preset: "auto" },
-          }),
+          };
+          return client
+            ? accountTransactions.saveBoundApi(store, harnesses, client, input)
+            : store.updateProvider(input);
+        },
       });
       config = new ConfigManager(codexDir, dataDir, servicePort);
       const injections = new InjectionFiles(dataDir);
-      try { injections.adoptLegacy(); } catch { injections.error = "旧注入记录识别失败，请检查独立账户目录；没有删除旧配置"; }
+      try {
+        injections.adoptLegacy();
+      } catch {
+        injections.error =
+          "旧注入记录识别失败，请检查独立账户目录；没有删除旧配置";
+      }
       processes = new ClientProcesses({ dataDir });
       harnesses = new HarnessManager(
         dataDir,
         () => store.state,
         store.officialModels,
         codexDir,
-        { port: servicePort, injections, processes, isConnected: (id) => connections.allow(id),
-          ...(testMode ? { home: path.join(dataDir, "test-home"), env: {} } : {}),
+        {
+          port: servicePort,
+          injections,
+          processes,
+          isConnected: (id) => connections.allow(id),
+          ...(testMode
+            ? { home: path.join(dataDir, "test-home"), env: {} }
+            : {}),
         },
       );
       await harnesses.refreshOAuth();
@@ -412,8 +456,15 @@ else {
         allowClient: (id) => connections.allow(id),
         onActivity: push,
       });
-      connections = new Connections({ dataDir, router, config, injections, processes, port: servicePort,
-        writeCatalog: () => store.writeCatalog(), onChange: push,
+      connections = new Connections({
+        dataDir,
+        router,
+        config,
+        injections,
+        processes,
+        port: servicePort,
+        writeCatalog: () => store.writeCatalog(),
+        onChange: push,
         extraActive: () => probeControllers.size,
       });
       try {
@@ -424,10 +475,15 @@ else {
       }
       register("snapshot", () => snapshot());
       register("ui-preferences", (input) => preferences.update(input));
-      register("connection-preview", (scope, enabled, quit) => connections.preview(scope, enabled, quit));
+      register("connection-preview", (scope, enabled, quit) =>
+        connections.preview(scope, enabled, quit),
+      );
       register("connection-apply", async (input) => {
         const result = await connections.apply(input);
-        if (result.quit) { quitting = true; setImmediate(() => app.quit()); }
+        if (result.quit) {
+          quitting = true;
+          setImmediate(() => app.quit());
+        }
         return result;
       });
       register("update-check", () => updates.check({ manual: true }));
@@ -467,7 +523,12 @@ else {
             "已复制到系统剪贴板，30 秒后清理当前副本。剪贴板历史或其他应用可能保留副本。",
         };
       });
-      register("openrouter-auth-start", (label) => openRouterAuth.start(label));
+      register("openrouter-auth-start", (label, client) => {
+        if (client) harnesses.spec(client);
+        if (client === "claude")
+          throw Error("请先配置兼容 Anthropic 协议的供应商");
+        return openRouterAuth.start(label, client);
+      });
       register("openrouter-auth-cancel", () => openRouterAuth.cancel());
       register("account-add", (id, label, oauthProvider) =>
         harnesses.add(id, label, oauthProvider),
@@ -495,11 +556,30 @@ else {
       register("account-select", (id, account) =>
         harnesses.select(id, account),
       );
-      register("client-model", (id, account, model) => harnesses.selectModel(id, account, model));
+      register("account-bind-api", (id, provider, enabled = true) =>
+        harnesses.bindApi(id, provider, enabled),
+      );
+      register("account-save-api", (id, input) => {
+        const provider = accountTransactions.saveBoundApi(
+          store,
+          harnesses,
+          id,
+          input,
+        );
+        invalidateReports(provider);
+        return provider;
+      });
+      register("client-model", (id, account, model) =>
+        harnesses.selectModel(id, account, model),
+      );
       register("client-credentials", async (id, reset = false) => {
         if (reset) return harnesses.setCredentialHome(id, "");
-        const result = await dialog.showOpenDialog(window, { title: "选择 " + harnesses.spec(id).name + " 凭据目录", properties: ["openDirectory"] });
-        if (!result.canceled) harnesses.setCredentialHome(id, result.filePaths[0]);
+        const result = await dialog.showOpenDialog(window, {
+          title: "选择 " + harnesses.spec(id).name + " 凭据目录",
+          properties: ["openDirectory"],
+        });
+        if (!result.canceled)
+          harnesses.setCredentialHome(id, result.filePaths[0]);
       });
       register("client-detect", async (id) => {
         const candidates = harnesses.detect(id);
@@ -556,8 +636,15 @@ else {
           if (r.response !== 1) return { ok: true, message: "已取消" };
         }
         return connections.launch(async () => {
-          if (connections.enabled[id] && !router.server) await router.start(servicePort);
-          return harnesses.launch(id, account, action, model, router.clientToken);
+          if (connections.enabled[id] && !router.server)
+            await router.start(servicePort);
+          return harnesses.launch(
+            id,
+            account,
+            action,
+            model,
+            router.clientToken,
+          );
         });
       });
       register("import", async () => {
@@ -596,9 +683,35 @@ else {
           invalidateReports(id);
         }
       });
-      register("save-model", (provider, model, originalName) => {
-        store.model(provider, model, originalName);
+      register("save-model", (provider, model, originalName, expected) => {
+        accountTransactions.saveModel(
+          store,
+          harnesses,
+          provider,
+          model,
+          originalName,
+          expected,
+        );
         invalidateReports(provider, false);
+      });
+      register("delete-model", async (provider, name, expected) => {
+        const result = await dialog.showMessageBox(window, {
+          type: "warning",
+          message: "从 ASS 配置中删除模型 " + name + "？",
+          buttons: ["取消", "确定"],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        if (result.response !== 1) return { cancelled: true };
+        accountTransactions.deleteModel(
+          store,
+          harnesses,
+          provider,
+          name,
+          expected,
+        );
+        invalidateReports(provider, false);
+        return { removed: true };
       });
       register("model-defaults", (provider, model) =>
         normalizeModel({ model }, provider, store.officialModels),
@@ -631,6 +744,16 @@ else {
         probeControllers.get(modelKey(id, name))?.abort(),
       );
       register("model-add-discovered", (id, name) => {
+        if (id === "official") {
+          const source = store.officialModels.find((m) => m.slug === name);
+          if (!source) throw Error("本机官方目录中没有该模型");
+          store.model(id, {
+            model: name,
+            displayName: source.display_name,
+            wireApi: "openai-responses",
+          });
+          return;
+        }
         const p = store.state.providers.find((p) => p.id === id);
         const found = providerModels[id]?.models.find((m) => m.model === name);
         if (!p || !found) throw Error("请先读取供应商模型目录");

@@ -43,7 +43,8 @@ function normalizeModel(raw, provider, officialModels = []) {
     !raw ||
     typeof raw.model !== "string" ||
     !raw.model.trim() ||
-    raw.model.length > 250
+    raw.model.length > 250 ||
+    /[\x00-\x1f\x7f]/.test(raw.model)
   )
     throw new Error("模型名称无效");
   const wireApi = raw.wireApi || inferProtocol(provider, raw.model);
@@ -54,7 +55,7 @@ function normalizeModel(raw, provider, officialModels = []) {
   ].sort((a, b) => EFFORTS.indexOf(a) - EFFORTS.indexOf(b));
   if (!efforts.length || efforts.some((x) => !EFFORTS.includes(x)))
     throw new Error("至少选择一个有效思维强度");
-  const contextWindow = Number(raw.contextWindow || base.contextWindow);
+  const contextWindow = Number(raw.contextWindow ?? base.contextWindow);
   if (
     !Number.isSafeInteger(contextWindow) ||
     contextWindow < 4096 ||
@@ -62,9 +63,16 @@ function normalizeModel(raw, provider, officialModels = []) {
   )
     throw new Error("上下文长度须为 4096～10000000 的整数");
   const selected = displayEffort(raw.defaultEffort || base.defaultEffort);
+  if (
+    raw.displayName != null &&
+    (typeof raw.displayName !== "string" ||
+      raw.displayName.length > 250 ||
+      /[\x00-\x1f\x7f]/.test(raw.displayName))
+  )
+    throw new Error("显示名称无效");
   return {
     model: raw.model.trim(),
-    displayName: raw.displayName || raw.model.trim(),
+    displayName: raw.displayName?.trim() || raw.model.trim(),
     wireApi,
     contextWindow,
     contextSource:
@@ -215,7 +223,15 @@ function makeCatalog(officialModels, providers, overrides = {}) {
   });
   for (let i = 0; i < models.length; i++)
     if (overrides[models[i].slug])
-      models[i] = apply(models[i], overrides[models[i].slug]);
+      models[i] = apply(
+        {
+          ...models[i],
+          slug: overrides[models[i].slug].model || models[i].slug,
+          display_name:
+            overrides[models[i].slug].displayName || models[i].display_name,
+        },
+        overrides[models[i].slug],
+      );
   const template =
     models.find((x) => x.slug === "gpt-6-astra") || models[0] || templates[0];
   for (const p of providers.filter((p) => p.enabled))
