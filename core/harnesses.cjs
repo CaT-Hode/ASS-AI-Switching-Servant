@@ -4,6 +4,7 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { atomic } = require("./config.cjs");
+const { legacyBaseline } = require("./injection-files.cjs");
 const { makeCatalog } = require("./models.cjs");
 const {
   findExecutable,
@@ -155,8 +156,9 @@ function authSummary(harness, dir) {
       : "尚未检测到凭据",
   };
 }
-function routeConfig(harness, p, m, dir, token, catalog) {
-  const base = "http://127.0.0.1:25819/harness/" + p.id;
+function routeConfig(harness, p, m, dir, token, catalog, port = 25819) {
+  const clientBase = `http://127.0.0.1:${port}/clients/${harness}`;
+  const base = clientBase + "/harness/" + p.id;
   const env = { ASS_LOCAL_TOKEN: token },
     files = [],
     args = [];
@@ -281,7 +283,7 @@ function routeConfig(harness, p, m, dir, token, catalog) {
     files.push(["catalog.json", JSON.stringify(catalog)]);
     files.push([
       "config.toml",
-      `model = ${JSON.stringify(name)}\nmodel_provider = "ass_api"\nmodel_reasoning_effort = ${JSON.stringify(m.defaultEffort)}\nmodel_catalog_json = ${JSON.stringify(path.join(dir, "catalog.json"))}\n[model_providers.ass_api]\nname = "ASS API"\nbase_url = "http://127.0.0.1:25819/v1"\nwire_api = "responses"\nenv_key = "ASS_LOCAL_TOKEN"\nsupports_websockets = false\n`,
+      `model = ${JSON.stringify(name)}\nmodel_provider = "ass_api"\nmodel_reasoning_effort = ${JSON.stringify(m.defaultEffort)}\nmodel_catalog_json = ${JSON.stringify(path.join(dir, "catalog.json"))}\n[model_providers.ass_api]\nname = "ASS API"\nbase_url = ${JSON.stringify(clientBase + "/v1")}\nwire_api = "responses"\nenv_key = "ASS_LOCAL_TOKEN"\nsupports_websockets = false\n`,
     ]);
   }
   return { env, files, args };
@@ -292,11 +294,13 @@ class HarnessManager {
     getState,
     officialModels,
     codexDir = path.join(os.homedir(), ".codex"),
+    options = {},
   ) {
     this.dataDir = dataDir;
     this.codexDir = codexDir;
     this.getState = getState;
     this.officialModels = officialModels;
+    this.options = options;
     this.piProviders = [];
     this.detected = {};
     this.discovery = {};
@@ -454,6 +458,8 @@ class HarnessManager {
       files = [],
       hint = "";
     if (account.kind === "api") {
+      if (this.options.isConnected && !this.options.isConnected(harness))
+        throw Error("请先在此客户端页面开启 ASS 接入；API 密钥不会注入到未接入的客户端");
       if (action !== "launch")
         throw new Error(
           "API 账户直接使用供应商密钥，无需网页登录；在供应商页编辑或移除",
@@ -488,16 +494,27 @@ class HarnessManager {
           this.getState().providers,
           this.getState().officialOverrides,
         ),
+        this.options.port || 25819,
       ));
     } else {
       dir = this.root(harness, account.id);
       if (harness === "codex") {
         if (action !== "launch") args = [action];
-        if (!fs.existsSync(path.join(dir, "config.toml")))
+        const routed = !this.options.isConnected || this.options.isConnected(harness);
+        if (routed) {
+          const existingFile = path.join(dir, "config.toml");
+          const existing = fs.existsSync(existingFile) ? fs.readFileSync(existingFile, "utf8") : "";
+          const own = this.options.injections?.entries.find((e) => e.relative === path.relative(this.dataDir, existingFile).replaceAll("\\", "/"));
+          const original = own ? own.before || "" : legacyBaseline("codex", "config.toml", existing);
+          if (original && !/^cli_auth_credentials_store = "file"\s*$/.test(original))
+            throw Error("此 Codex 授权账户含既有配置，请先检查其配置；ASS 不会直接覆盖");
           files.push([
             "config.toml",
-            'cli_auth_credentials_store = "file"\nmodel_provider = "ass_official"\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = "http://127.0.0.1:25819/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n',
+            `cli_auth_credentials_store = "file"\nmodel_provider = "ass_official"\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = "http://127.0.0.1:${this.options.port || 25819}/clients/codex/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n`,
           ]);
+        } else if (!fs.existsSync(path.join(dir, "config.toml"))) {
+          files.push(["config.toml", 'cli_auth_credentials_store = "file"\n']);
+        }
       }
       if (harness === "claude" && action !== "launch") args = ["auth", action];
       if (harness === "opencode" && action !== "launch")
@@ -520,10 +537,13 @@ class HarnessManager {
       files,
       hint,
       accountKind: account.kind,
+      harness,
+      routed: account.kind === "api" || (harness === "codex" && (!this.options.isConnected || this.options.isConnected(harness))),
     };
   }
   materialize(plan) {
     fs.mkdirSync(plan.dir, { recursive: true });
+    if (plan.routed && this.options.injections) return this.options.injections.write(plan.harness, plan);
     for (const [name, content] of plan.files)
       atomic(path.join(plan.dir, name), content);
   }
@@ -536,7 +556,9 @@ class HarnessManager {
       this.state.workspace || path.join(this.dataDir, "workspace");
     fs.mkdirSync(workspace, { recursive: true });
     // The terminal is deliberately visible: native login/TUI requires user interaction.
+    const marker = crypto.randomBytes(16).toString("hex");
     const script =
+      `# ASS session ${marker}\n` +
       `Set-Location -LiteralPath ${q(workspace)}\n` +
       (plan.hint ? `Write-Host ${q(plan.hint)}\n` : "") +
       `& ${q(launcher.executable)} ${[...launcher.args, ...plan.args].map(q).join(" ")}\n`;
@@ -551,7 +573,6 @@ class HarnessManager {
       terminal,
       [
         "-NoProfile",
-        "-NoExit",
         "-ExecutionPolicy",
         "Bypass",
         "-EncodedCommand",
@@ -570,10 +591,18 @@ class HarnessManager {
       child.once("error", reject);
     });
     child.unref();
+    let tracking = "";
+    if (this.options.processes) {
+      try {
+        await this.options.processes.register({ id: marker, harness, account, label: this.spec(harness).name + " · " + action, pid: child.pid, marker });
+      } catch {
+        tracking = "；窗口身份登记失败，请手动关闭该窗口后再断开接入";
+      }
+    }
     this.select(harness, account);
     return {
       ok: true,
-      message: plan.hint || "已打开独立客户端窗口；账户切换仅影响本次新启动。",
+      message: (plan.hint || "已打开独立客户端窗口；账户切换仅影响本次新启动。") + tracking,
     };
   }
 }

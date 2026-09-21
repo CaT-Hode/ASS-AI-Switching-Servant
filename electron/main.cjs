@@ -35,6 +35,9 @@ const {
 const { NativeKeyStore } = require("../core/native-key-store.cjs");
 const { OpenRouterAuth } = require("../core/openrouter-auth.cjs");
 const { UpdateChecker } = require("../core/updates.cjs");
+const { InjectionFiles } = require("../core/injection-files.cjs");
+const { ClientProcesses } = require("../core/client-processes.cjs");
+const { Connections } = require("../core/connections.cjs");
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
 if (testMode && customData) app.setPath("userData", customData);
@@ -54,6 +57,8 @@ let window,
   nativeKeys,
   openRouterAuth,
   updates,
+  connections,
+  processes,
   quitting = false;
 let recent = [],
   diagnostics = {},
@@ -110,6 +115,7 @@ function snapshot() {
   return {
     ...store.public(),
     harnesses: harnesses.snapshot(),
+    connections: connections.snapshot(),
     providerPresets: PROVIDER_PRESETS,
     officialServices: OFFICIAL_SERVICES,
     officialProviderIds: Object.fromEntries(
@@ -159,7 +165,8 @@ function register(name, handler) {
   });
 }
 async function diagnose(providerId, modelName) {
-  if (!router.server) throw new Error("请先启动路由服务");
+  if (connections.busy) throw new Error("正在切换接入，请稍后检查模型");
+  if (!router.server) await router.start(servicePort);
   const start = Date.now();
   const official = providerId === "official";
   const p = store.state.providers.find((p) => p.id === providerId);
@@ -192,9 +199,9 @@ async function diagnose(providerId, modelName) {
     const headers = official
       ? readAuth()
       : { authorization: "Bearer ass-local-diagnostic" };
-    const r = await fetch(`http://127.0.0.1:${router.port}/v1/responses`, {
+    const r = await fetch(`http://127.0.0.1:${router.port}/diagnostics/v1/responses`, {
       method: "POST",
-      headers: { ...headers, "content-type": "application/json" },
+      headers: { ...headers, "content-type": "application/json", "x-ass-probe-token": router.clientToken },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(90000),
     });
@@ -346,6 +353,12 @@ function showWindow() {
     window = null;
   });
 }
+function requestSafeExit() {
+  showWindow();
+  const request = () => window?.webContents.send("ass:manage", { scope: "all", enabled: false, quit: true });
+  if (window.webContents.isLoading()) window.webContents.once("did-finish-load", request);
+  else request();
+}
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", showWindow);
@@ -385,25 +398,42 @@ else {
             balance: { preset: "auto" },
           }),
       });
-      config = new ConfigManager(codexDir, dataDir);
+      config = new ConfigManager(codexDir, dataDir, servicePort);
+      const injections = new InjectionFiles(dataDir);
+      try { injections.adoptLegacy(); } catch { injections.error = "旧注入记录识别失败，请检查独立账户目录；没有删除旧配置"; }
+      processes = new ClientProcesses({ dataDir });
       harnesses = new HarnessManager(
         dataDir,
         () => store.state,
         store.officialModels,
         codexDir,
+        { port: servicePort, injections, processes, isConnected: (id) => connections.allow(id) },
       );
       await harnesses.refreshOAuth();
       router = new Router({
         getState: () => store.state,
         fetchUpstream: upstream,
         log,
+        allowClient: (id) => connections.allow(id),
+        onActivity: push,
+      });
+      connections = new Connections({ dataDir, router, config, injections, processes, port: servicePort,
+        writeCatalog: () => store.writeCatalog(), onChange: push,
+        extraActive: () => probeControllers.size,
       });
       try {
-        await router.start(servicePort);
+        if (Object.values(connections.enabled).some(Boolean))
+          await router.start(servicePort);
       } catch (error) {
         startupError = "端口 " + servicePort + " 无法启动：" + error.message;
       }
       register("snapshot", () => snapshot());
+      register("connection-preview", (scope, enabled, quit) => connections.preview(scope, enabled, quit));
+      register("connection-apply", async (input) => {
+        const result = await connections.apply(input);
+        if (result.quit) { quitting = true; setImmediate(() => app.quit()); }
+        return result;
+      });
       register("update-check", () => updates.check({ manual: true }));
       register("update-preferences", (input) => updates.preferences(input));
       register("update-dismiss", () => updates.dismiss());
@@ -447,6 +477,7 @@ else {
         harnesses.add(id, label, oauthProvider),
       );
       register("client-refresh", async () => {
+        await processes.refresh();
         await harnesses.refreshOAuth();
         return snapshot();
       });
@@ -522,9 +553,10 @@ else {
           });
           if (r.response !== 1) return { ok: true, message: "已取消" };
         }
-        if (action === "launch" && !router.server)
-          throw new Error("请先启动路由服务");
-        return harnesses.launch(id, account, action, model, router.clientToken);
+        return connections.launch(async () => {
+          if (connections.enabled[id] && !router.server) await router.start(servicePort);
+          return harnesses.launch(id, account, action, model, router.clientToken);
+        });
       });
       register("import", async () => {
         const chosen = await dialog.showOpenDialog(window, {
@@ -569,31 +601,10 @@ else {
       register("model-defaults", (provider, model) =>
         normalizeModel({ model }, provider, store.officialModels),
       );
-      register("service", async (enabled) => {
-        if (enabled) await router.start(servicePort);
-        else {
-          if (config.status().attached) {
-            const r = await dialog.showMessageBox(window, {
-              type: "warning",
-              message: "停止路由会中断正在使用 ASS 的请求。",
-              buttons: ["取消", "停止服务"],
-              defaultId: 0,
-              cancelId: 0,
-            });
-            if (!r.response) return;
-          }
-          await router.stop();
-        }
-      });
-      register("attach", async () => {
-        if (!router.server) await router.start(servicePort);
-        store.writeCatalog();
-        return config.attach();
-      });
-      register("detach", () => config.detach());
       register("diagnose", diagnose);
       register("models-discover", readModelMetadata);
       register("capabilities-probe", async (id, name) => {
+        if (connections.busy) throw Error("正在切换接入，请稍后检测");
         const p = store.state.providers.find((p) => p.id === id),
           m = p?.models.find((m) => m.model === name);
         if (!m)
@@ -692,10 +703,9 @@ else {
           },
           { type: "separator" },
           {
-            label: "退出（停止路由）",
+            label: "安全退出…",
             click: () => {
-              quitting = true;
-              app.quit();
+              requestSafeExit();
             },
           },
         ]),
@@ -717,6 +727,8 @@ else {
           nativeKeys,
           openRouterAuth,
           updates,
+          connections,
+          processes,
           setFetch: (value) => {
             testFetch = value;
           },
@@ -740,7 +752,12 @@ else {
       app.exit(1);
     });
   app.on("window-all-closed", () => {});
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
+    if (!quitting && !testMode && connections) {
+      event.preventDefault();
+      requestSafeExit();
+      return;
+    }
     quitting = true;
     updates?.stop();
     for (const controller of probeControllers.values()) controller.abort();

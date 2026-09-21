@@ -6,9 +6,8 @@ const allowed = [
   "delete-provider",
   "save-model",
   "model-defaults",
-  "service",
-  "attach",
-  "detach",
+  "connection-preview",
+  "connection-apply",
   "diagnose",
   "models-discover",
   "capabilities-probe",
@@ -39,6 +38,11 @@ const allowed = [
   "update-open",
 ];
 contextBridge.exposeInMainWorld("ass", {
+  onManage: (callback) => {
+    const handler = (_, value) => callback(value);
+    ipcRenderer.on("ass:manage", handler);
+    return () => ipcRenderer.removeListener("ass:manage", handler);
+  },
   call: (name, ...args) => {
     if (!allowed.includes(name)) throw new Error("Unsupported action");
     return ipcRenderer.invoke("ass:" + name, ...args);

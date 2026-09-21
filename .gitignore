@@ -12,6 +12,11 @@ auth.json
 clients.json
 native-accounts.json
 updates.json
+connections.json
+route-injections.json
+client-processes.json
+codex-attachment.json
+backups/
 requests.jsonl*
 test-results/
 playwright-report/

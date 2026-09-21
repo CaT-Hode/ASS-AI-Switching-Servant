@@ -14,6 +14,7 @@ import {
   Search,
 } from "lucide-react";
 import { Modal } from "./editors.jsx";
+import { ConnectionSwitch, ConnectionService } from "./connections.jsx";
 const api = window.ass;
 export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
   const [label, setLabel] = useState(""),
@@ -85,7 +86,7 @@ export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
     </Modal>
   );
 }
-export function Clients({ state, act, busy, initialClient = "codex" }) {
+export function Clients({ state, act, busy, onManage, initialClient = "codex" }) {
   const [selected, setSelected] = useState(initialClient),
     [adding, setAdding] = useState(false),
     [candidates, setCandidates] = useState(null),
@@ -139,6 +140,8 @@ export function Clients({ state, act, busy, initialClient = "codex" }) {
           刷新状态
         </button>
       </div>
+      {state.connections.error && <p role="alert" className="error-box">{state.connections.error}</p>}
+      <ConnectionService {...{ state, busy, onManage }} />
       <div className="clients-layout">
         <div className="client-list" aria-label="客户端列表">
           {state.harnesses.clients.map((c) => (
@@ -167,6 +170,7 @@ export function Clients({ state, act, busy, initialClient = "codex" }) {
               <p>{client.description}</p>
             </div>
           </header>
+          <ConnectionSwitch {...{ client, state, busy, onManage }} />
           <div className="client-location-actions" aria-label="客户端位置">
             <button className="button" disabled={!!busy} onClick={detect}>
               <Search size={14} />
@@ -392,6 +396,7 @@ export function Clients({ state, act, busy, initialClient = "codex" }) {
                   !client.executable ||
                   !!busy ||
                   (account.kind === "api" && !models.length)
+                  || (account.kind === "api" && !state.connections.clients[client.id].enabled)
                 }
                 onClick={() => run("launch")}
               >

@@ -76,10 +76,13 @@ function routeFor(body, state, suffix = "") {
   };
 }
 class Router {
-  constructor({ getState, fetchUpstream, log = () => {} }) {
+  constructor({ getState, fetchUpstream, log = () => {}, allowClient = () => true, onActivity = () => {} }) {
     this.getState = getState;
     this.fetch = fetchUpstream;
     this.log = log;
+    this.allowClient = allowClient;
+    this.onActivity = onActivity;
+    this.requests = new Map();
     this.server = null;
     this.controllers = new Set();
     this.active = 0;
@@ -108,6 +111,9 @@ class Router {
     s.closeAllConnections();
     await new Promise((r) => s.close(r));
   }
+  clientActive(id) {
+    return [...this.requests.values()].filter((r) => !id || r.client === id).length;
+  }
   async handle(req, res) {
     const began = Date.now();
     let route;
@@ -123,6 +129,23 @@ class Router {
           req.headers.host !== `localhost:${this.port}`)
       )
         throw Object.assign(new Error("仅允许本机应用请求"), { status: 403 });
+      if (req.url !== "/health") {
+        const scoped = /^\/clients\/(codex|claude|opencode|pi|dsh)(\/.*)$/.exec(req.url);
+        let client = scoped?.[1] || (req.url.startsWith("/harness/") ? "legacy" : "codex");
+        if (scoped) req.url = scoped[2];
+        if (req.url.startsWith("/diagnostics/")) {
+          if (req.headers["x-ass-probe-token"] !== this.clientToken)
+            throw Object.assign(new Error("无效检测凭据"), { status: 401 });
+          client = "diagnostics";
+          req.url = req.url.slice("/diagnostics".length);
+          if (!this.allowClient(client)) throw Object.assign(new Error("接入正在切换，请稍后检测"), { status: 503 });
+        } else if (!this.allowClient(client)) {
+          throw Object.assign(new Error("此客户端的 ASS 接入已关闭或正在切换，请从客户端页面重新接入"), { status: 503 });
+        }
+        // Count at admission, including uploads: a stop must not race a request body.
+        this.requests.set(req, { client, res });
+        this.onActivity();
+      }
       if (req.url.startsWith("/harness/")) {
         await forwardHarness(this, req, res);
         return;
@@ -339,8 +362,10 @@ class Router {
         error: message.slice(0, 500),
       });
     } finally {
+      this.requests.delete(req);
       clearTimeout(timer);
       if (this.controllers.delete(controller)) this.active--;
+      this.onActivity();
     }
   }
 }

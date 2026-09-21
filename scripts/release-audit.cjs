@@ -5,7 +5,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const root = path.resolve(__dirname, "..");
 const forbidden =
-  /(?:^|\/)(?:auth\.json|\.credentials\.json|settings\.json|clients\.json|native-accounts\.json|updates\.json|requests\.jsonl(?:\.previous)?|[^/]+\.aimami-relay\.json)$/i;
+  /(?:^|\/)(?:auth\.json|\.credentials\.json|settings\.json|clients\.json|native-accounts\.json|updates\.json|connections\.json|route-injections\.json|client-processes\.json|codex-attachment\.json|requests\.jsonl(?:\.previous)?|[^/]+\.aimami-relay\.json)$/i;
 const tokenShape =
   /\b(?:sk-(?:proj-|ant-api\d+-)?[A-Za-z0-9_-]{28,}|gh[pousr]_[A-Za-z0-9]{30,}|eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,})\b/;
 const secrets = [];
@@ -29,6 +29,7 @@ function check(name, buffer, packaged = false) {
   const normalized = name.replaceAll("\\", "/");
   if (forbidden.test(normalized))
     throw Error("Private filename found: " + normalized);
+  if (/^\/?backups\//.test(normalized)) throw Error("Private backup found: " + normalized);
   if (packaged && /^\/?(?:qa|design|tests|scripts)\//.test(normalized))
     throw Error("Development-only artifact found: " + normalized);
   if (

@@ -30,7 +30,7 @@ function Field({ label, hint, children }) {
     </div>
   );
 }
-export function Modal({ title, description, onClose, children }) {
+export function Modal({ title, description, onClose, children, dismissible = true }) {
   const ref = useRef(null),
     closing = useRef(false);
   useEffect(() => {
@@ -56,6 +56,7 @@ export function Modal({ title, description, onClose, children }) {
     };
   }, []);
   function close() {
+    if (!dismissible) return;
     if (closing.current) return;
     closing.current = true;
     const el = ref.current,
@@ -99,6 +100,7 @@ export function Modal({ title, description, onClose, children }) {
           type="button"
           className="icon-button"
           aria-label="关闭"
+          disabled={!dismissible}
           onClick={close}
         >
           <X size={19} />

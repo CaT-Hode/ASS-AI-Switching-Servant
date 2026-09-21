@@ -37,7 +37,7 @@ fs.mkdirSync(codex);
     const state = await app.evaluate(() => global.assTest.snapshot());
     assert.equal(state.providers.length, 0);
     assert.equal(state.harnesses.clients.length, 5);
-    assert.equal(state.service.running, true);
+    assert.equal(state.service.running, false);
     assert.equal(state.encrypted, true);
     assert.equal(state.authReady, false);
     assert.equal(state.codex.attached, false);
@@ -57,6 +57,15 @@ fs.mkdirSync(codex);
       .getByRole("heading", { name: "从其他客户端导入 OAuth" })
       .waitFor();
     assert.equal(fs.existsSync(path.join(codex, "config.toml")), false);
+    assert.equal(await page.getByRole("button", { name: "接入 Codex", exact: true }).count(), 0);
+    const toggle = page.getByRole("switch", { name: "pi ASS 接入", exact: true });
+    assert.equal(await toggle.isChecked(), false);
+    await toggle.click();
+    await page.getByRole("button", { name: "继续查看影响" }).click();
+    assert.equal(await page.getByRole("button", { name: "确认开启接入", exact: true }).isDisabled(), true);
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    assert.equal(await toggle.isChecked(), false);
     assert.deepEqual(errors, []);
     console.log(
       JSON.stringify({

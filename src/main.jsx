@@ -34,6 +34,7 @@ import "./controls.css";
 import "./polish.css";
 import "./clients.css";
 import { Clients } from "./clients.jsx";
+import { ConnectionDialog } from "./connections.jsx";
 import { OfficialAccounts } from "./official-accounts.jsx";
 import { Updates, UpdateBanner } from "./updates.jsx";
 import { ModelEditor, ProviderEditor } from "./editors.jsx";
@@ -535,7 +536,7 @@ function Diagnostics({ state, providers, act, busy }) {
         <dl>
           <div>
             <dt>路由入口</dt>
-            <dd className="mono">http://127.0.0.1:25819/v1</dd>
+            <dd className="mono">http://127.0.0.1:{state.service.port}/clients/codex/v1</dd>
           </div>
           <div>
             <dt>Codex 接入</dt>
@@ -565,20 +566,6 @@ function Diagnostics({ state, providers, act, busy }) {
           >
             导出配置（无密钥）
           </Button>
-          {state.codex.attached && (
-            <Button
-              icon={Unplug}
-              onClick={() =>
-                act(
-                  "detach",
-                  () => api.call("detach"),
-                  "已恢复接入前的配置；请重启 Codex。",
-                )
-              }
-            >
-              断开 Codex
-            </Button>
-          )}
         </div>
       </div>
       <section className="recent-section">
@@ -595,6 +582,11 @@ function App() {
     [providerTarget, setProviderTarget] = useState("official"),
     [busy, setBusy] = useState(""),
     [toast, setToast] = useState(null);
+  const [connectionRequest, setConnectionRequest] = useState(null);
+  useEffect(() => api?.onManage((request) => {
+    setView("clients");
+    setConnectionRequest((previous) => previous || request);
+  }), []);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
   }, [view]);
@@ -735,20 +727,6 @@ function App() {
             >
               导入配置
             </Button>
-            <Button
-              primary={!state.codex.attached}
-              icon={state.codex.attached ? Check : Plug}
-              busy={busy === "attach"}
-              onClick={() =>
-                act(
-                  "attach",
-                  () => api.call("attach"),
-                  "已接入。请重启 Codex 并新建任务使用 ASS；旧任务可能保留原 provider。",
-                )
-              }
-            >
-              {state.codex.attached ? "已接入 Codex" : "接入 Codex"}
-            </Button>
           </div>
         </header>
         {state.startupError && (
@@ -770,13 +748,10 @@ function App() {
           </span>
           <span className="mono endpoint">127.0.0.1:{state.service.port}</span>
           <Button
-            icon={state.service.running ? Square : Play}
-            busy={busy === "service"}
-            onClick={() =>
-              act("service", () => api.call("service", !state.service.running))
-            }
+            icon={Settings2}
+            onClick={() => setView("clients")}
           >
-            {state.service.running ? "停止服务" : "启动服务"}
+            管理客户端接入
           </Button>
         </div>
         {view !== "updates" && (
@@ -806,13 +781,18 @@ function App() {
             }}
           />
         ) : view === "clients" ? (
-          <Clients {...{ state, act, busy }} initialClient={clientTarget} />
+          <Clients {...{ state, act, busy }} onManage={setConnectionRequest} initialClient={clientTarget} />
         ) : view === "updates" ? (
           <Updates {...{ state, act, busy }} />
         ) : (
           <Diagnostics {...{ state, providers, act, busy }} />
         )}
       </main>
+      {connectionRequest && <ConnectionDialog request={connectionRequest}
+        onClose={() => setConnectionRequest(null)} onComplete={(message) => {
+          setToast({ message });
+          api.call("snapshot").then(setState).catch(() => {});
+        }} />}
       {toast && (
         <div role="status" className={"toast " + (toast.error ? "error" : "")}>
           {toast.error ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}

@@ -125,18 +125,23 @@ fs.mkdirSync(output, { recursive: true });
       path: path.join(output, "balance-editor.png"),
     });
     await page.getByRole("button", { name: "保存供应商" }).click();
-    await page.getByRole("button", { name: "接入 Codex", exact: true }).click();
-    await page
-      .getByRole("button", { name: "已接入 Codex", exact: true })
-      .waitFor();
+    assert.equal(await page.getByRole("button", { name: "接入 Codex", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "客户端与账户", exact: true }).click();
+    async function toggleCodex() {
+      await page.getByRole("switch", { name: "Codex ASS 接入", exact: true }).click();
+      await page.getByRole("button", { name: "继续查看影响" }).click();
+      await page.getByRole("dialog").getByRole("checkbox").check();
+      await page.getByRole("dialog").getByRole("button", { name: /^确认(开启|断开)接入$/ }).click();
+      await page.getByRole("dialog").waitFor({ state: "hidden" });
+    }
+    await toggleCodex();
     const config = fs.readFileSync(path.join(codex, "config.toml"), "utf8");
-    assert.match(config, /25819/);
-    await page.getByRole("button", { name: "连接诊断", exact: true }).click();
-    await page.getByRole("button", { name: "断开 Codex" }).click();
+    assert.match(config, /25820\/clients\/codex/);
+    await toggleCodex();
     assert.ok(
       !fs
         .readFileSync(path.join(codex, "config.toml"), "utf8")
-        .includes("25819"),
+        .includes("/clients/codex"),
     );
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
