@@ -6,6 +6,8 @@ const defaults = {
   client: "codex",
   provider: "official",
   officialService: "openai",
+  providerOrder: [],
+  quotaAccounts: {},
 };
 class Preferences {
   constructor(dataDir) {
@@ -19,7 +21,7 @@ class Preferences {
   }
   validate(input) {
     const next = { ...this.state };
-    for (const key of Object.keys(defaults)) {
+    for (const key of ["view", "client", "provider", "officialService"]) {
       const value = input[key];
       if (
         typeof value !== "string" ||
@@ -45,6 +47,40 @@ class Preferences {
       )
         continue;
       next[key] = key === "view" && value === "accounts" ? "clients" : value;
+    }
+    if (Array.isArray(input.providerOrder)) {
+      if (
+        input.providerOrder.length > 5000 ||
+        input.providerOrder.some(
+          (id) =>
+            typeof id !== "string" ||
+            !id ||
+            id.length > 250 ||
+            /[\x00-\x1f]/.test(id),
+        )
+      )
+        throw Error("供应商排序格式无效");
+      next.providerOrder = [...new Set(input.providerOrder)];
+    }
+    if (
+      input.quotaAccounts &&
+      typeof input.quotaAccounts === "object" &&
+      !Array.isArray(input.quotaAccounts)
+    ) {
+      next.quotaAccounts = {
+        ...next.quotaAccounts,
+        ...Object.fromEntries(
+          Object.entries(input.quotaAccounts)
+            .filter(
+              ([id, value]) =>
+                id.length <= 250 &&
+                typeof value === "string" &&
+                value.length <= 250 &&
+                !/[\x00-\x1f]/.test(id + value),
+            )
+            .slice(0, 5000),
+        ),
+      };
     }
     return next;
   }

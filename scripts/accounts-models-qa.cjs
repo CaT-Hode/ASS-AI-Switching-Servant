@@ -120,6 +120,40 @@ async function launch() {
         url,
         model: init?.body ? JSON.parse(init.body).model : null,
       });
+      if (url.endsWith("/wham/usage"))
+        return Response.json({
+          rate_limit: {
+            primary_window: {
+              used_percent: 20,
+              limit_window_seconds: 18000,
+              reset_at: 2100000000,
+            },
+            secondary_window: {
+              used_percent: 40,
+              limit_window_seconds: 604800,
+              reset_at: 2100000000,
+            },
+          },
+        });
+      if (url.endsWith("/api/oauth/usage"))
+        return Response.json({
+          five_hour: { utilization: 30 },
+          seven_day: { utilization: 60 },
+        });
+      if (url.endsWith("/user/balance"))
+        return Response.json({
+          is_available: true,
+          balance_infos: [
+            {
+              currency: "CNY",
+              total_balance: "123.45",
+              granted_balance: "3.45",
+              topped_up_balance: "120",
+            },
+          ],
+        });
+      if (url.endsWith("/zen/go/v1/usage"))
+        return Response.json({ limits: [] });
       if (url.endsWith("/models"))
         return Response.json({
           data: [
@@ -235,7 +269,10 @@ async function run() {
       0,
     );
     assert.equal(
-      await app.evaluate(() => global.assTest.sent.length),
+      await app.evaluate(
+        () =>
+          global.assTest.sent.filter((x) => x.url.endsWith("/models")).length,
+      ),
       0,
       "Gallery must not automatically fetch a provider's models",
     );
@@ -347,7 +384,13 @@ async function run() {
     })) {
       await chooseClient(name);
       assert.equal(await page.getByRole("switch").count(), 1);
-      assert.equal(await page.locator(".client-panel .connection-status").getByRole("switch", {name: name + " ASS 接入", exact: true}).count(), 1);
+      assert.equal(
+        await page
+          .locator(".client-panel .connection-status")
+          .getByRole("switch", { name: name + " ASS 接入", exact: true })
+          .count(),
+        1,
+      );
       const s = await snapshot(),
         c = s.harnesses.clients.find((c) => c.id === id);
       assert.equal(
@@ -715,10 +758,9 @@ async function run() {
       "Closing a card menu must not open its card",
     );
     // Read-only native model sources use the same hierarchy without edit controls.
-    const nativeCard = page
-      .getByRole("article")
-      .filter({ has: page.getByText("原生模型", { exact: true }) })
-      .first();
+    const nativeCard = page.locator(
+      '.supplier-card[data-provider-id="native-pi"]',
+    );
     await nativeCard.scrollIntoViewIfNeeded();
     const galleryY = await page.evaluate(() => scrollY);
     await nativeCard.locator(".supplier-open").click();

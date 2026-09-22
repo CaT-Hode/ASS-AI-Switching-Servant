@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { ShieldCheck, Power, Loader2 } from "lucide-react";
+import { Power, Loader2, RefreshCw } from "lucide-react";
 import { Modal } from "./editors.jsx";
 import "./connections.css";
 const api = window.ass;
 export function ConnectionPill({ client, state, onManage, busy }) {
   const enabled = state.connections.clients[client.id].enabled;
-  const desktopOnly = client.launcher?.kind === "desktop";
   return (
     <button
       type="button"
@@ -13,14 +12,12 @@ export function ConnectionPill({ client, state, onManage, busy }) {
       aria-checked={enabled}
       aria-label={client.name + " ASS 接入"}
       title={
-        desktopOnly && !enabled
-          ? "桌面端已安装；ASS 接入需要 OpenCode CLI"
-          : enabled
+        enabled
           ? "断开 " + client.name + " 接入"
           : "开启 " + client.name + " 接入"
       }
       className="connection-switch"
-      disabled={!!busy || state.connections.busy || (desktopOnly && !enabled)}
+      disabled={!!busy || state.connections.busy}
       onClick={() => onManage({ scope: client.id, enabled: !enabled })}
     >
       <span>{enabled ? "已接入" : "未接入"}</span>
@@ -42,11 +39,25 @@ export function ConnectionStatus({ client, state, busy, onManage }) {
     >
       <div className="connection-overview">
         <div className="connection-metrics">
-          <span>{connection.active} 个请求</span>
+          <span>
+            {connection.mode === "native"
+              ? "原生直连"
+              : `${connection.active} 个请求`}
+          </span>
           <span>{sessions.length} 个窗口</span>
-          <span>{connection.files} 个注入文件</span>
+          <span>{connection.files} 个配置文件</span>
         </div>
-        {client.launcher?.kind === "desktop" ? (
+        {connection.mode === "native" ? (
+          <small role={connection.syncError ? "alert" : undefined}>
+            {connection.syncError
+              ? `未同步：${connection.syncError}`
+              : connection.pending
+                ? "原生配置待同步，请先结束客户端任务。"
+                : connection.enabled
+                  ? "配置已同步；修改可能影响后续请求，请在任务结束后操作。"
+                  : "开启后写入原生配置；OAuth 与其他供应商保留。"}
+          </small>
+        ) : client.launcher?.kind === "desktop" ? (
           <small>桌面端已安装；独立账户与路由接入需要 OpenCode CLI。</small>
         ) : connection.enabled ? (
           <small>
@@ -56,6 +67,18 @@ export function ConnectionStatus({ client, state, busy, onManage }) {
           </small>
         ) : null}
       </div>
+      {connection.mode === "native" && connection.enabled && (
+        <button
+          type="button"
+          className="icon-button"
+          aria-label={`同步 ${client.name} 原生配置`}
+          title="重新同步原生配置"
+          disabled={!!busy || state.connections.busy}
+          onClick={() => onManage({ scope: client.id, enabled: true })}
+        >
+          <RefreshCw size={16} />
+        </button>
+      )}
       <ConnectionPill {...{ client, state, busy, onManage }} />
     </section>
   );
@@ -104,12 +127,16 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
     if (plan.enabled) {
       warning = plan.codexConfig
         ? "将更新 Codex 的接入配置，请在任务结束后手动重启客户端。"
-        : `后续从 ASS 启动的 ${target} 将使用路由配置，不影响已有窗口。`;
+        : plan.native
+          ? "将更新原生供应商、凭据和选中的默认模型。请先结束客户端任务；不会退出 OAuth 登录。"
+          : `后续从 ASS 启动的 ${target} 将使用路由配置，不影响已有窗口。`;
     } else {
       const windows = plan.sessions.length
         ? `并关闭 ${plan.sessions.length} 个由 ASS 启动的窗口`
         : "";
       warning = `将恢复接口配置${windows}${plan.stopService ? "，停止路由服务" : ""}。请先结束任务，并退出自行启动的客户端。`;
+      if (plan.quit && plan.retainedNative?.length)
+        warning = `将退出 ASS 并关闭依赖路由的接入${windows}。${plan.retainedNative.join("、")} 的直连配置与窗口保留。`;
     }
   }
   async function commit() {

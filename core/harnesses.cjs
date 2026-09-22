@@ -5,6 +5,7 @@ const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { atomic } = require("./config.cjs");
 const { legacyBaseline } = require("./injection-files.cjs");
+const { DIRECT, locations, providerId } = require("./native-config.cjs");
 const { makeCatalog } = require("./models.cjs");
 const { apiProfile } = require("./account-info.cjs");
 const {
@@ -91,7 +92,7 @@ function apiAccounts(harness, providers, includeUnavailable = false) {
         providerId: p.id,
         label: p.name,
         kind: "api",
-        profile: apiProfile(p),
+        profile: apiProfile(p, DIRECT.includes(harness)),
         badge:
           harness === "dsh" && deepseek
             ? "DeepSeek API"
@@ -379,7 +380,9 @@ class HarnessManager {
     }
     return resolveLauncher(
       harness,
-      selected || this.detected[harness] || findExecutable(harness, this.launchEnv),
+      selected ||
+        this.detected[harness] ||
+        findExecutable(harness, this.launchEnv),
       this.launchEnv,
     );
   }
@@ -389,7 +392,8 @@ class HarnessManager {
     this.discovery[harness] = candidates;
     const ready = candidates.filter((c) => c.ready);
     const preferred = ready.length ? ready : candidates;
-    this.detected[harness] = preferred.length === 1 ? preferred[0].location : "";
+    this.detected[harness] =
+      preferred.length === 1 ? preferred[0].location : "";
     return candidates;
   }
   desktop(harness) {
@@ -402,7 +406,11 @@ class HarnessManager {
     const desktop = candidates.find((c) => c.kind === "desktop");
     // Recheck immediately before exposing/opening an executable; no stale paths.
     if (!desktop) return null;
-    const current = resolveLauncher(harness, desktop.desktopExecutable, this.launchEnv);
+    const current = resolveLauncher(
+      harness,
+      desktop.desktopExecutable,
+      this.launchEnv,
+    );
     return current.kind === "desktop" ? current.desktopExecutable : null;
   }
   oauthSources() {
@@ -488,7 +496,16 @@ class HarnessManager {
               )),
         );
         const accounts = [
-          ...native.flatMap((source) => source.accounts),
+          ...native
+            .flatMap((source) => source.accounts)
+            .filter(
+              (account) =>
+                !this.options.nativeConfig?.owns(
+                  s.id,
+                  account.sourcePath,
+                  account.provider,
+                ),
+            ),
           ...this.state.profiles
             .filter((p) => p.harness === s.id)
             .flatMap((p) => {
@@ -647,6 +664,8 @@ class HarnessManager {
   }
   setCredentialHome(harness, dir) {
     this.spec(harness);
+    if (DIRECT.includes(harness) && this.options.isConnected?.(harness))
+      throw Error("请先断开此客户端接入，再切换原生配置目录");
     if (
       dir &&
       harness === "opencode" &&
@@ -661,7 +680,8 @@ class HarnessManager {
   setExecutable(harness, file) {
     this.spec(harness);
     const launcher = resolveLauncher(harness, file, this.launchEnv);
-    if (!launcher.ready && launcher.kind !== "desktop") throw new Error(launcher.message);
+    if (!launcher.ready && launcher.kind !== "desktop")
+      throw new Error(launcher.message);
     this.state.executables[harness] = file;
     this.save();
   }
@@ -678,7 +698,8 @@ class HarnessManager {
       args = [],
       addEnv = {},
       files = [],
-      hint = "";
+      hint = "",
+      nativeSelection;
     if (account.kind === "api") {
       if (!account.ready) throw Error(account.message);
       if (this.options.isConnected && !this.options.isConnected(harness))
@@ -701,30 +722,48 @@ class HarnessManager {
         );
       if (!m || !account.models.some((item) => item.model === m.model))
         throw new Error("请选择此客户端兼容且已启用的模型");
-      // One immutable configuration directory per account/model; switching cannot affect running clients.
-      const id = crypto
-        .createHash("sha256")
-        .update(p.id + "\0" + m.model)
-        .digest("hex")
-        .slice(0, 24);
-      dir = this.root(harness, id);
-      ({
-        env: addEnv,
-        files,
-        args,
-      } = routeConfig(
-        harness,
-        p,
-        m,
-        dir,
-        token,
-        makeCatalog(
-          this.officialModels,
-          this.getState().providers,
-          this.getState().officialOverrides,
-        ),
-        this.options.port || 25819,
-      ));
+      if (DIRECT.includes(harness)) {
+        dir = locations(harness, this).dir;
+        nativeSelection = { account: accountId, model: m.model };
+        const id = providerId(p, m.wireApi);
+        if (harness === "opencode") args = ["--model", id + "/" + m.model];
+        if (harness === "pi")
+          args = [
+            "--provider",
+            id,
+            "--model",
+            m.model,
+            "--thinking",
+            m.defaultEffort,
+          ];
+        if (harness === "dsh") args = ["--profile", "tui"];
+        hint = "使用原生配置直连供应商，不经过 ASS 路由。";
+      } else {
+        // One immutable configuration directory per account/model; switching cannot affect running clients.
+        const id = crypto
+          .createHash("sha256")
+          .update(p.id + "\0" + m.model)
+          .digest("hex")
+          .slice(0, 24);
+        dir = this.root(harness, id);
+        ({
+          env: addEnv,
+          files,
+          args,
+        } = routeConfig(
+          harness,
+          p,
+          m,
+          dir,
+          token,
+          makeCatalog(
+            this.officialModels,
+            this.getState().providers,
+            this.getState().officialOverrides,
+          ),
+          this.options.port || 25819,
+        ));
+      }
     } else if (account.kind === "native") {
       // Existing native homes are read/used in place. Never inject config into
       // them or copy refresh tokens during a status check/account selection.
@@ -796,10 +835,10 @@ class HarnessManager {
       }
     }
     const env =
-      account.kind === "native"
+      account.kind === "native" || nativeSelection
         ? isolatedEnv(harness, dir, this.nativeEnv)
         : { ...isolatedEnv(harness, dir), ...addEnv };
-    if (account.kind === "native") {
+    if (account.kind === "native" || nativeSelection) {
       // An inherited API key must not silently override the selected OAuth.
       // Keep native data/config roots, but clear cross-account auth overrides.
       if (account.id === "native:claude-env")
@@ -820,6 +859,9 @@ class HarnessManager {
         ])
           if (this.nativeEnv[key]) env[key] = this.nativeEnv[key];
           else delete env[key];
+        // The global/native config keeps its own precedence and plugins.
+        for (const key of ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"])
+          if (this.nativeEnv[key]) env[key] = this.nativeEnv[key];
       }
     }
     return {
@@ -830,14 +872,19 @@ class HarnessManager {
       hint,
       accountKind: account.kind,
       harness,
+      nativeSelection,
       routed:
-        account.kind === "api" ||
+        (account.kind === "api" && !nativeSelection) ||
         (account.kind === "auth" &&
           harness === "codex" &&
           (!this.options.isConnected || this.options.isConnected(harness))),
     };
   }
   materialize(plan) {
+    if (plan.nativeSelection) {
+      if (!this.options.nativeConfig) throw Error("原生接入管理未初始化");
+      return this.options.nativeConfig.sync(plan.harness, plan.nativeSelection);
+    }
     fs.mkdirSync(plan.dir, { recursive: true });
     if (plan.routed && this.options.injections)
       return this.options.injections.write(plan.harness, plan);
@@ -895,6 +942,7 @@ class HarnessManager {
           id: marker,
           harness,
           account,
+          transport: plan.routed ? "proxy" : "native",
           label: this.spec(harness).name + " · " + action,
           pid: child.pid,
           marker,

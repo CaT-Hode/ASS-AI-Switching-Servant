@@ -8,7 +8,7 @@ import {
   Trash2,
   Check,
   Layers,
-  UserRound,
+  GripVertical,
   RefreshCw,
   AlertTriangle,
 } from "lucide-react";
@@ -21,6 +21,11 @@ import {
   ProviderModelCatalog,
 } from "./model-inspection.jsx";
 import "./providers.css";
+import { DiagnosticTime } from "./diagnostic-time.jsx";
+import { SupplierQuota } from "./supplier-quota.jsx";
+import { providerBrand } from "./provider-brand.mjs";
+import { orderProviders } from "./provider-order.mjs";
+import { useProviderDrag } from "./provider-drag.jsx";
 const api = window.ass;
 const protocols = {
   "openai-responses": "Responses",
@@ -31,13 +36,6 @@ const number = (value) =>
   value != null && value !== "" && Number.isFinite(Number(value))
     ? Number(value).toLocaleString("zh-CN")
     : "未知";
-function balanceText(balance) {
-  if (!balance) return "余额待查询";
-  if (!balance.ok) return balance.message || "余额查询失败";
-  return (balance.rows || [balance])
-    .map((r) => `${r.label || ""} ${number(r.value)} ${r.unit || ""}`)
-    .join(" · ");
-}
 function capabilityText(state, p, m) {
   const d =
     state.providerModels?.[p.id]?.models.find((item) => item.model === m.model)
@@ -103,11 +101,20 @@ function SourceCard({
   onEdit,
   buttonRef,
   draftCount,
+  dragProps,
 }) {
-  const readonly = p.readOnly,
-    official = p.id === "official";
+  const [failedBrand, setFailedBrand] = useState(null);
+  const brand = providerBrand(p, state.officialProviderIds[p.id]);
   return (
-    <article className="supplier-card" aria-label={p.name + " 供应商"}>
+    <article
+      className="supplier-card"
+      aria-label={p.name + " 供应商"}
+      data-provider-id={p.id}
+      onClick={(event) => {
+        if (!event.target.closest("button, select, option, input, a"))
+          onSelect();
+      }}
+    >
       <button
         ref={buttonRef}
         type="button"
@@ -117,104 +124,51 @@ function SourceCard({
       />
       <header>
         <span className="supplier-symbol">
-          {p.kind === "native" || official ? (
-            <UserRound size={23} />
+          {brand && failedBrand !== brand ? (
+            <img
+              src={"./providers/" + brand + ".svg"}
+              alt={brand + " logo"}
+              draggable={false}
+              onError={() => setFailedBrand(brand)}
+            />
+          ) : p.id === "native-pi" ? (
+            "π"
           ) : (
             p.name.slice(0, 1).toUpperCase()
           )}
         </span>
         <div className="supplier-title">
-          <h2>{p.name}</h2>
-          <span title={p.baseUrl || p.catalogSource}>
-            {p.baseUrl
-              ? new URL(p.baseUrl).host
-              : p.catalogSource || "原生客户端目录"}
+          <h2
+            title={p.name + (p.baseUrl ? " · " + new URL(p.baseUrl).host : "")}
+          >
+            {p.name}
+          </h2>
+          <span>
+            {p.id === "official"
+              ? "OAuth 订阅"
+              : p.readOnly
+                ? "原生账户"
+                : "API"}
           </span>
         </div>
-        <span className="tag">
-          {official
-            ? "订阅 OAuth"
-            : readonly
-              ? "原生目录"
-              : state.officialProviderIds[p.id]
-                ? "官方 API"
-                : "自定义 API"}
-        </span>
+        <button
+          type="button"
+          className="model-icon provider-drag-handle"
+          aria-label={"拖动排序 " + p.name}
+          title="拖动排序；方向键移动，Esc 取消"
+          {...dragProps}
+        >
+          <GripVertical size={17} />
+        </button>
         <ProviderActions {...{ p, act, busy, onSelect, onEdit }} />
       </header>
       <div className="supplier-meta">
         <span>{p.models.length} 个模型</span>
-        <span
-          className={
-            p.enabled === false || (readonly && !p.models.length)
-              ? "muted"
-              : "success"
-          }
-        >
-          {p.enabled === false
-            ? "已停用"
-            : readonly
-              ? p.models.length
-                ? "本机已读取"
-                : "未读取到模型"
-              : "已启用"}
-        </span>
-        <span>
-          {readonly || official
-            ? p.accountCount
-              ? `${p.accountCount} 个已有账户`
-              : "本机目录"
-            : balanceText(state.balances[p.id])}
-        </span>
+        {p.enabled === false && <span>已停用</span>}
+        {!!draftCount && <span className="danger">{draftCount} 项未保存</span>}
+        <ChevronRight size={15} />
       </div>
-      <div className="supplier-summary">
-        <span>
-          {[
-            ...new Set(
-              p.models.map(
-                (m) => protocols[m.wireApi] || m.wireApi || "原生协议",
-              ),
-            ),
-          ].join(" · ") || "协议待配置"}
-        </span>
-        <span>
-          最大上下文{" "}
-          {number(
-            p.models.length
-              ? Math.max(...p.models.map((m) => m.contextWindow || 0)) || null
-              : null,
-          )}
-        </span>
-      </div>
-      <div className="supplier-model-tags">
-        {p.models.slice(0, 3).map((m) => (
-          <span key={m.model} title={m.model}>
-            {m.displayName || m.model}
-          </span>
-        ))}
-        {p.models.length > 3 && <span>+{p.models.length - 3}</span>}
-        {!p.models.length && (
-          <p className="supplier-empty">
-            {readonly ? "尚未读取到模型目录" : "尚未配置模型"}
-          </p>
-        )}
-      </div>
-      <footer>
-        <span className="supplier-link">
-          管理模型 <ChevronRight size={14} />
-        </span>
-        <span>
-          {draftCount
-            ? `${draftCount} 项未保存`
-            : readonly
-              ? "只读"
-              : official
-                ? "Responses"
-                : p.network === "direct"
-                  ? "直接连接"
-                  : "系统代理 / CA"}
-        </span>
-      </footer>
+      <SupplierQuota p={p} state={state} />
     </article>
   );
 }
@@ -409,6 +363,7 @@ function InlineModel({
               ? `${diagnostic.ok ? "连接通过" : "连接失败"} · ${Math.round(diagnostic.ms)} ms`
               : capabilityText(state, p, model)}
           </span>
+          {diagnostic && <DiagnosticTime result={diagnostic} />}
         </div>
         <div className="actions">
           {dirty ? (
@@ -539,7 +494,12 @@ export function Providers({
     [drafts, setDrafts] = useState({});
   const gallerySearch = useRef(null),
     cardButtons = useRef(new Map());
-  const all = state.modelSources || providers;
+  const [ordering, setOrdering] = useState(false),
+    [orderError, setOrderError] = useState("");
+  const all = orderProviders(
+    state.modelSources || providers,
+    state.preferences.providerOrder,
+  );
   const matches = all.filter(
     (p) =>
       (filter === "all" ||
@@ -551,6 +511,22 @@ export function Providers({
         .includes(search.toLowerCase()),
   );
   const p = all.find((p) => p.id === activeProvider);
+  const dragProps = useProviderDrag({
+    ids: all.map((p) => p.id),
+    visibleIds: matches.map((p) => p.id),
+    disabled: ordering,
+    onReorder: async (providerOrder) => {
+      setOrdering(true);
+      setOrderError("");
+      try {
+        await api.call("ui-preferences", { providerOrder });
+      } catch {
+        setOrderError("排序保存失败，已保留原顺序");
+      } finally {
+        setOrdering(false);
+      }
+    },
+  });
   const sideOpen = !!(editor || directory || providerEditor);
   const revision = state.modelDirectoryRevisions?.[p?.id] || 0;
   useEffect(() => {
@@ -621,11 +597,17 @@ export function Providers({
             添加供应商
           </button>
         </div>
+        {orderError && (
+          <p className="danger" role="alert">
+            {orderError}
+          </p>
+        )}
         <div className="supplier-grid">
           {matches.map((source) => (
             <SourceCard
               key={source.id}
               p={source}
+              dragProps={dragProps(source.id)}
               {...{ state, act, busy }}
               onSelect={() => select(source)}
               buttonRef={(button) => {

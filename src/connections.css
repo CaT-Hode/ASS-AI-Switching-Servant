@@ -28,6 +28,9 @@
   color: #758298;
   font-size: 10px;
 }
+.connection-status small[role="alert"] {
+  color: #b83848;
+}
 .connection-card-top {
   display: flex;
   align-items: center;

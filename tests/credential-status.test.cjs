@@ -219,14 +219,24 @@ test("native account selection and launch plans never overwrite auth/config; all
     );
   }
   manager.selectModel("pi", "api:fixture", "b");
+  assert.throws(
+    () => manager.setCredentialHome("pi", path.join(home, ".pi/agent")),
+    /先断开/,
+  );
+  manager.options.isConnected = () => false;
   manager.setCredentialHome("pi", path.join(home, ".pi/agent"));
   assert.equal(create().state.modelSelections.pi["api:fixture"], "b");
   assert.equal(create().state.credentialHomes.pi, path.join(home, ".pi/agent"));
   assert.deepEqual(create().plan("pi", "api:fixture").args, [
     "--provider",
-    "ass",
+    require("../core/native-config.cjs").providerId(
+      providers[0],
+      "openai-chat",
+    ),
     "--model",
     "b",
+    "--thinking",
+    "low",
   ]);
   assert.throws(() => manager.selectModel("claude", "api:fixture", "b"));
   assert.ok(!fs.readFileSync(manager.file, "utf8").includes("synthetic"));
@@ -273,6 +283,8 @@ test("UI preferences persist with an allowlist and do not accept secrets or inva
     client: "dsh",
     provider: "fixture",
     officialService: "deepseek",
+    providerOrder: [],
+    quotaAccounts: {},
   });
   preferences.update({ view: "<script>", client: "unknown" });
   assert.equal(new Preferences(dir).state.view, "clients");

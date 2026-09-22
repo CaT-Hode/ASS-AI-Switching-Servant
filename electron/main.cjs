@@ -21,6 +21,7 @@ const { normalizeModel } = require("../core/models.cjs");
 const { BALANCE_PRESETS, queryBalance } = require("../core/balance.cjs");
 const { PROVIDER_PRESETS } = require("../core/presets.cjs");
 const { HarnessManager } = require("../core/harnesses.cjs");
+const { NativeConfig } = require("../core/native-config.cjs");
 const {
   modelKey,
   declaredCapabilities,
@@ -29,6 +30,10 @@ const {
   discoverModels,
 } = require("../core/model-inspection.cjs");
 const { ModelDirectory } = require("../core/model-directory.cjs");
+const {
+  DiagnosticHistory,
+  failureMessage,
+} = require("../core/diagnostic-history.cjs");
 const {
   DiagnosticBatch,
   diagnosticTargets,
@@ -47,6 +52,9 @@ const { Preferences } = require("../core/preferences.cjs");
 const accountTransactions = require("../core/account-transactions.cjs");
 const { modelSources, nativeModels } = require("../core/model-inventory.cjs");
 const { nativeOfficialProvider } = require("../core/native-official.cjs");
+const {
+  nativeSubscriptionProvider,
+} = require("../core/subscription-usage.cjs");
 const { AccountInfo, ACCOUNT_DOCS } = require("../core/account-info.cjs");
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
@@ -64,8 +72,10 @@ let window,
   config,
   router,
   harnesses,
+  nativeConfig,
   nativeKeys,
   accountInfo,
+  diagnosticHistory,
   openRouterAuth,
   updates,
   connections,
@@ -73,7 +83,6 @@ let window,
   preferences,
   quitting = false;
 let recent = [],
-  diagnostics = {},
   balances = {};
 let startupError = "";
 const capabilities = Object.create(null),
@@ -135,6 +144,25 @@ function authReady() {
     return false;
   }
 }
+function diagnosticContext(id, name) {
+  if (id !== "official") {
+    const provider = store.state.providers.find((p) => p.id === id);
+    return { provider, model: provider?.models.find((m) => m.model === name) };
+  }
+  let auth;
+  try {
+    auth = readAuth();
+  } catch {}
+  return {
+    provider: {
+      id,
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      network: "system",
+    },
+    model: store.public().officialModels.find((m) => m.model === name),
+    auth,
+  };
+}
 function log(record) {
   recent.unshift(record);
   recent = recent.slice(0, 100);
@@ -153,7 +181,7 @@ function accountProvider(id) {
   for (const c of harnesses.snapshot().clients)
     for (const a of c.accounts) {
       if (id !== "native-info:" + c.id + ":" + a.id) continue;
-      return nativeOfficialProvider(c, a);
+      return nativeOfficialProvider(c, a) || nativeSubscriptionProvider(c, a);
     }
 }
 async function readNativeModelMetadata(id, signal) {
@@ -214,6 +242,8 @@ function snapshot() {
     clientState = harnesses.snapshot();
   for (const client of clientState.clients)
     for (const account of client.accounts) {
+      const subscription = nativeSubscriptionProvider(client, account);
+      if (subscription) account.quota = accountInfo.public(subscription);
       const provider =
         account.kind === "api"
           ? store.state.providers.find((p) => p.id === account.providerId)
@@ -237,7 +267,11 @@ function snapshot() {
           credentialUpdatedAt:
             account.kind !== "api" ? localProfile?.updatedAt : undefined,
           fields: [
-            ...remote.fields,
+            ...remote.fields.map((field) =>
+              field.id === "network" && nativeConfig.isDirect(client.id)
+                ? { ...field, value: "原生客户端配置" }
+                : field,
+            ),
             {
               id: "models",
               label: account.kind === "api" ? "已配置模型" : "目录模型",
@@ -257,6 +291,9 @@ function snapshot() {
     preferences: preferences.state,
     harnesses: clientState,
     accountDocs: ACCOUNT_DOCS,
+    providerInfo: Object.fromEntries(
+      store.state.providers.map((p) => [p.id, accountInfo.public(p)]),
+    ),
     connections: connections.snapshot(),
     providerPresets: PROVIDER_PRESETS,
     officialServices: OFFICIAL_SERVICES,
@@ -276,7 +313,8 @@ function snapshot() {
     authReady: authReady(),
     encrypted: safeStorage.isEncryptionAvailable(),
     recent,
-    diagnostics,
+    diagnostics: diagnosticHistory.public(),
+    diagnosticHistoryError: diagnosticHistory.error,
     diagnosticBatch: diagnosticBatch.snapshot(),
     diagnosticJobs: Object.fromEntries(
       [...diagnosticControllers.keys()].map((key) => [key, true]),
@@ -305,8 +343,40 @@ function register(name, handler) {
       !url.startsWith("file://")
     )
       throw new Error("Invalid caller");
+    const syncSettings = [
+      "account-select",
+      "account-bind-api",
+      "account-save-api",
+      "client-model",
+      "save-provider",
+      "delete-provider",
+      "save-model",
+      "delete-model",
+      "model-add-discovered",
+      "import",
+      "account-add",
+    ].includes(name);
+    const beforeSettings = syncSettings
+      ? JSON.stringify([store.state, harnesses.state])
+      : null;
     try {
-      return await handler(...args);
+      const result = await handler(...args);
+      // Never migrate legacy injection on a cancelled or unrelated action.
+      // Conflicts leave the saved ASS edit intact and are visible in Clients.
+      if (
+        syncSettings &&
+        beforeSettings !== JSON.stringify([store.state, harnesses.state])
+      ) {
+        for (const id of ["opencode", "pi", "dsh"])
+          if (connections.enabled[id] && nativeConfig.activated.has(id)) {
+            try {
+              nativeConfig.sync(id);
+            } catch {
+              /* status contains the exact conflict */
+            }
+          }
+      }
+      return result;
     } finally {
       push();
     }
@@ -325,6 +395,7 @@ async function diagnose(providerId, modelName, signal) {
   const name = selected.model,
     key = modelKey(providerId, name);
   if (diagnosticControllers.has(key)) throw Error("此模型正在检测");
+  const fingerprint = diagnosticHistory.fingerprint(providerId, name);
   const controller = new AbortController();
   const requestSignal = AbortSignal.any([
     controller.signal,
@@ -399,13 +470,17 @@ async function diagnose(providerId, modelName, signal) {
           ? "已取消"
           : error.name === "TimeoutError"
             ? "请求超时（90 秒）"
-            : error.message,
+            : failureMessage(error.message),
       cancelled: !!signal?.aborted || controller.signal.aborted,
     };
   } finally {
     diagnosticControllers.delete(key);
   }
-  if (!result.cancelled) diagnostics[key] = result;
+  if (signal?.aborted || controller.signal.aborted) result.cancelled = true;
+  if (!result.cancelled && !diagnosticHistory.record(result, fingerprint)) {
+    result.cancelled = true;
+    result.message = "模型或账户配置已变化，请重新测试";
+  }
   push();
   return result;
 }
@@ -413,7 +488,8 @@ function invalidateReports(id, metadata = true) {
   diagnosticBatch.cancel();
   for (const [key, controller] of diagnosticControllers)
     if (!id || JSON.parse(key)[0] === id) controller.abort();
-  for (const results of [diagnostics, capabilities])
+  diagnosticHistory.reconcile();
+  for (const results of [capabilities])
     for (const key of Object.keys(results))
       if (!id || JSON.parse(key)[0] === id) delete results[key];
   if (metadata) modelDirectory.invalidate(id);
@@ -457,17 +533,64 @@ async function probeModel(id, name) {
     push();
   }
 }
-async function balance(id) {
+const balanceAttempts = new Map(),
+  balanceJobs = new Map();
+async function balance(id, automatic = false) {
   const p = store.state.providers.find((p) => p.id === id);
   if (!p) throw new Error("供应商不存在");
+  const key = JSON.stringify([
+    p.id,
+    p.baseUrl,
+    p.apiKey,
+    p.extraHeaders,
+    p.balance,
+    p.network,
+  ]);
+  if (balanceJobs.has(key)) return balanceJobs.get(key);
+  if (automatic && Date.now() - (balanceAttempts.get(key) || 0) < 5 * 60000)
+    return balances[id];
+  balanceAttempts.set(key, Date.now());
+  const job = queryBalance(p, upstream);
+  balanceJobs.set(key, job);
   try {
-    balances[id] = await queryBalance(p, upstream);
+    const result = await job;
+    const current = store.state.providers.find((p) => p.id === id);
+    if (
+      !current ||
+      JSON.stringify([
+        current.id,
+        current.baseUrl,
+        current.apiKey,
+        current.extraHeaders,
+        current.balance,
+        current.network,
+      ]) !== key
+    )
+      return null;
+    balances[id] = result;
   } catch (error) {
+    const current = store.state.providers.find((p) => p.id === id);
+    if (
+      !current ||
+      JSON.stringify([
+        current.id,
+        current.baseUrl,
+        current.apiKey,
+        current.extraHeaders,
+        current.balance,
+        current.network,
+      ]) !== key
+    )
+      return null;
     balances[id] = {
-      ok: false,
-      message: error.message,
-      time: new Date().toISOString(),
+      ...(balances[id] || {}),
+      ok: !!balances[id]?.ok,
+      error: "余额查询失败，请检查接口与 Key 权限",
+      message: "余额查询失败，请检查接口与 Key 权限",
+      checkedAt: new Date().toISOString(),
     };
+  } finally {
+    balanceJobs.delete(key);
   }
   push();
   return balances[id];
@@ -540,6 +663,11 @@ else {
       await systemSession.setProxy({ mode: "system" });
       await directSession.setProxy({ mode: "direct" });
       store = new Store(dataDir, codexDir, safeStorage);
+      diagnosticHistory = new DiagnosticHistory({
+        dataDir,
+        crypto: safeStorage,
+        getContext: diagnosticContext,
+      });
       preferences = new Preferences(dataDir);
       updates = new UpdateChecker({
         dataDir,
@@ -598,6 +726,8 @@ else {
         },
       );
       await harnesses.refreshOAuth();
+      nativeConfig = new NativeConfig(dataDir, safeStorage, harnesses);
+      harnesses.options.nativeConfig = nativeConfig;
       router = new Router({
         getState: () => store.state,
         fetchUpstream: upstream,
@@ -610,6 +740,7 @@ else {
         router,
         config,
         injections,
+        nativeConfig,
         processes,
         port: servicePort,
         writeCatalog: () => store.writeCatalog(),
@@ -617,13 +748,42 @@ else {
         extraActive: () => probeControllers.size,
       });
       try {
-        if (Object.values(connections.enabled).some(Boolean))
-          await router.start(servicePort);
+        if (connections.routerEnabled()) await router.start(servicePort);
       } catch (error) {
         startupError = "端口 " + servicePort + " 无法启动：" + error.message;
       }
       register("snapshot", () => snapshot());
       register("ui-preferences", (input) => preferences.update(input));
+      register(
+        "supplier-refresh",
+        async (sourceId, accountId, automatic = false) => {
+          if (sourceId === "official" || sourceId.startsWith("native-")) {
+            const clientId =
+              sourceId === "official" ? "codex" : sourceId.slice(7);
+            const client = harnesses
+              .snapshot()
+              .clients.find((c) => c.id === clientId);
+            const account = client?.accounts.find(
+              (a) => a.id === accountId && a.kind !== "api",
+            );
+            const provider =
+              account &&
+              (nativeSubscriptionProvider(client, account) ||
+                nativeOfficialProvider(client, account));
+            if (!provider) throw Error("此账户没有可查询的额度接口");
+            return accountInfo.refresh(provider.id, {
+              automatic: automatic === true,
+            });
+          }
+          const provider = store.state.providers.find((p) => p.id === sourceId);
+          if (!provider) throw Error("供应商不存在");
+          return accountInfo.public(provider).canRefresh
+            ? accountInfo.refresh(provider.id, {
+                automatic: automatic === true,
+              })
+            : balance(sourceId, automatic === true);
+        },
+      );
       register("connection-preview", (scope, enabled, quit) =>
         connections.preview(scope, enabled, quit),
       );
@@ -662,7 +822,8 @@ else {
         const provider =
           account.kind === "api"
             ? accountProvider(account.providerId)
-            : nativeOfficialProvider(client, account);
+            : nativeOfficialProvider(client, account) ||
+              nativeSubscriptionProvider(client, account);
         if (!provider) throw Error("此账户没有可查询的官方资料接口");
         return accountInfo.refresh(provider.id);
       });
@@ -763,12 +924,14 @@ else {
       });
       register("client-open-desktop", async (id) => {
         const executable = harnesses.desktop(id);
-        if (!executable) throw Error("未找到已安装的桌面客户端，请重新自动识别");
+        if (!executable)
+          throw Error("未找到已安装的桌面客户端，请重新自动识别");
         const error = await shell.openPath(executable);
         if (error) throw Error("无法打开桌面客户端，请检查安装文件");
         return {
           ok: true,
-          message: "已打开 OpenCode Desktop；沿用其原生账户，没有注入或切换凭据。",
+          message:
+            "已打开 OpenCode Desktop；沿用其原生账户，没有注入或切换凭据。",
         };
       });
       register("client-location", async (id, location) => {
@@ -818,7 +981,11 @@ else {
           if (r.response !== 1) return { ok: true, message: "已取消" };
         }
         return connections.launch(async () => {
-          if (connections.enabled[id] && !router.server)
+          if (
+            connections.enabled[id] &&
+            connections.needsRouter(id) &&
+            !router.server
+          )
             await router.start(servicePort);
           return harnesses.launch(
             id,
@@ -1040,8 +1207,10 @@ else {
           router,
           config,
           harnesses,
+          nativeConfig,
           nativeKeys,
           accountInfo,
+          preferences,
           openRouterAuth,
           updates,
           connections,
@@ -1050,6 +1219,7 @@ else {
             testFetch = value;
           },
           diagnose,
+          diagnosticHistory,
           diagnosticBatch,
           readModelMetadata,
           probeModel,

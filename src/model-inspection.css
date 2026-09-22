@@ -36,6 +36,12 @@
 .model-icon.failed:hover:not(:disabled) {
   color: #bc4b40;
 }
+.diagnostic-time {
+  font-size: 12px;
+}
+.diagnostic-time time {
+  white-space: nowrap;
+}
 .model-icon.delete-model {
   color: #a75158;
 }

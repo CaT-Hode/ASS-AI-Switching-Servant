@@ -29,6 +29,7 @@ import { ConnectionDialog } from "./connections.jsx";
 import { Providers } from "./providers.jsx";
 import { Updates, UpdateBanner } from "./updates.jsx";
 import { modelKey, ModelCheckButton } from "./model-inspection.jsx";
+import { DiagnosticTime } from "./diagnostic-time.jsx";
 const api = window.ass;
 const protocols = {
   "openai-responses": "Responses",
@@ -256,6 +257,11 @@ function Diagnostics({ state, providers, act, busy }) {
           </Button>
         )}
       </div>
+      {state.diagnosticHistoryError && (
+        <p className="danger" role="alert">
+          {state.diagnosticHistoryError}
+        </p>
+      )}
       {!!batch?.entries.length && (
         <div className="diagnostic-progress" role="status" aria-live="polite">
           <div>
@@ -309,9 +315,12 @@ function Diagnostics({ state, providers, act, busy }) {
                   >
                     {run?.message || d?.message || "尚未执行连接检测"}
                   </p>
-                  {showResult && (
+                  {d && (
                     <small>
-                      {d.model} · {(d.ms / 1000).toFixed(2)} s · {date(d.time)}
+                      {showResult
+                        ? `${d.model} · ${(d.ms / 1000).toFixed(2)} s · `
+                        : ""}
+                      <DiagnosticTime result={d} />
                     </small>
                   )}
                 </div>

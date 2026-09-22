@@ -229,7 +229,12 @@ class NativePowerShellAdapter {
 }
 
 function cleanText(value, name, max = 120) {
-  if (typeof value !== "string" || !value.trim() || value.length > max || /[\0-\x1f\x7f]/.test(value))
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > max ||
+    /[\0-\x1f\x7f]/.test(value)
+  )
     throw new Error(name + " 无效");
   return value.trim();
 }
@@ -241,7 +246,12 @@ function cleanPid(value) {
 }
 
 function validCreationDate(value) {
-  return typeof value === "string" && value.length >= 20 && value.length <= 40 && Number.isFinite(Date.parse(value));
+  return (
+    typeof value === "string" &&
+    value.length >= 20 &&
+    value.length <= 40 &&
+    Number.isFinite(Date.parse(value))
+  );
 }
 
 function validateHarness(value) {
@@ -254,12 +264,20 @@ function targetKey(row) {
 }
 
 function publicSession(row, status = row.status || "unknown") {
-  return { id: row.id, harness: row.harness, label: row.label, pid: row.pid, status };
+  return {
+    id: row.id,
+    harness: row.harness,
+    label: row.label,
+    pid: row.pid,
+    status,
+    transport: row.transport || "proxy",
+  };
 }
 
 class ClientProcesses {
   constructor({ dataDir, adapter, onChange } = {}) {
-    if (!dataDir || typeof dataDir !== "string") throw new Error("dataDir 无效");
+    if (!dataDir || typeof dataDir !== "string")
+      throw new Error("dataDir 无效");
     this.file = path.join(dataDir, JOURNAL);
     this.adapter = adapter || new NativePowerShellAdapter();
     this.onChange = typeof onChange === "function" ? onChange : null;
@@ -273,17 +291,28 @@ class ClientProcesses {
   #load() {
     try {
       const stat = fs.statSync(this.file);
-      if (stat.size > MAX_JOURNAL_BYTES) throw new Error("进程记录文件过大，已拒绝读取");
+      if (stat.size > MAX_JOURNAL_BYTES)
+        throw new Error("进程记录文件过大，已拒绝读取");
       const parsed = JSON.parse(fs.readFileSync(this.file, "utf8"));
-      if (parsed?.version !== 1 || !Array.isArray(parsed.sessions)) throw new Error("进程记录格式无效");
-      if (parsed.sessions.length > MAX_SESSIONS) throw new Error("进程记录格式无效");
+      if (parsed?.version !== 1 || !Array.isArray(parsed.sessions))
+        throw new Error("进程记录格式无效");
+      if (parsed.sessions.length > MAX_SESSIONS)
+        throw new Error("进程记录格式无效");
       this.sessions = parsed.sessions.map((row) => this.#validateStored(row));
-      const ids = new Set(), markers = new Set(), identities = new Set();
+      const ids = new Set(),
+        markers = new Set(),
+        identities = new Set();
       for (const row of this.sessions) {
         const identity = targetKey(row);
-        if (ids.has(row.id) || markers.has(row.marker) || identities.has(identity))
+        if (
+          ids.has(row.id) ||
+          markers.has(row.marker) ||
+          identities.has(identity)
+        )
           throw new Error("进程记录格式无效");
-        ids.add(row.id); markers.add(row.marker); identities.add(identity);
+        ids.add(row.id);
+        markers.add(row.marker);
+        identities.add(identity);
       }
     } catch (error) {
       if (error.code === "ENOENT") return;
@@ -300,6 +329,7 @@ class ClientProcesses {
       id: cleanText(row?.id, "会话 ID"),
       harness: validateHarness(row?.harness),
       account: cleanText(row?.account, "账户", 160),
+      transport: row?.transport === "native" ? "native" : "proxy",
       label: cleanText(row?.label, "名称", 160),
       pid: cleanPid(row?.pid),
       marker: cleanText(row?.marker, "marker", 200),
@@ -307,7 +337,8 @@ class ClientProcesses {
       status: "unknown",
     };
     if (result.marker.length < 16) throw new Error("marker 过短");
-    if (!validCreationDate(result.creationDate)) throw new Error("创建时间无效");
+    if (!validCreationDate(result.creationDate))
+      throw new Error("创建时间无效");
     return result;
   }
 
@@ -318,18 +349,41 @@ class ClientProcesses {
   }
 
   #inventory(session, row) {
-    if (!row || row.id !== session.id) throw new Error(`会话 ${session.id} 的进程清单缺失`);
-    if (row.root === null) return { state: "gone", descendants: [], chains: new Map() };
+    if (!row || row.id !== session.id)
+      throw new Error(`会话 ${session.id} 的进程清单缺失`);
+    if (row.root === null)
+      return { state: "gone", descendants: [], chains: new Map() };
     const root = row.root;
-    if (!root || row.invalid || !root.markerMatched || root.pid !== session.pid ||
-        root.creationDate !== session.creationDate || !validCreationDate(root.creationDate))
+    if (
+      !root ||
+      row.invalid ||
+      !root.markerMatched ||
+      root.pid !== session.pid ||
+      root.creationDate !== session.creationDate ||
+      !validCreationDate(root.creationDate)
+    )
       return { state: "unverifiable", descendants: [], chains: new Map() };
     if (!Array.isArray(row.descendants) || row.descendants.length > 4096)
       throw new Error(`会话 ${session.id} 的后代清单无效`);
-    const byPid = new Map([[root.pid, { pid: root.pid, parentPid: root.parentPid, creationDate: root.creationDate }]]);
+    const byPid = new Map([
+      [
+        root.pid,
+        {
+          pid: root.pid,
+          parentPid: root.parentPid,
+          creationDate: root.creationDate,
+        },
+      ],
+    ]);
     for (const child of row.descendants) {
-      const pid = cleanPid(child?.pid), parentPid = cleanPid(child?.parentPid);
-      if (pid === root.pid || pid === process.pid || byPid.has(pid) || !validCreationDate(child.creationDate))
+      const pid = cleanPid(child?.pid),
+        parentPid = cleanPid(child?.parentPid);
+      if (
+        pid === root.pid ||
+        pid === process.pid ||
+        byPid.has(pid) ||
+        !validCreationDate(child.creationDate)
+      )
         throw new Error(`会话 ${session.id} 的后代清单无效`);
       byPid.set(pid, { pid, parentPid, creationDate: child.creationDate });
     }
@@ -339,13 +393,21 @@ class ClientProcesses {
       seen.add(pid);
       const child = byPid.get(pid);
       if (!child) throw new Error(`会话 ${session.id} 的后代链缺失`);
-      if (pid === root.pid) return [{ pid: root.pid, creationDate: root.creationDate }];
+      if (pid === root.pid)
+        return [{ pid: root.pid, creationDate: root.creationDate }];
       const parent = byPid.get(child.parentPid);
-      if (!parent || Date.parse(child.creationDate) < Date.parse(parent.creationDate))
+      if (
+        !parent ||
+        Date.parse(child.creationDate) < Date.parse(parent.creationDate)
+      )
         throw new Error(`会话 ${session.id} 的后代链无效`);
-      return [{ pid: child.pid, creationDate: child.creationDate }, ...depth(parent.pid, seen)];
+      return [
+        { pid: child.pid, creationDate: child.creationDate },
+        ...depth(parent.pid, seen),
+      ];
     };
-    for (const child of row.descendants) chains.set(child.pid, depth(child.pid));
+    for (const child of row.descendants)
+      chains.set(child.pid, depth(child.pid));
     return { state: "running", descendants: row.descendants, chains };
   }
 
@@ -363,40 +425,63 @@ class ClientProcesses {
   #emit() {
     const value = this.snapshot();
     if (this.onChange) {
-      try { this.onChange(value); } catch { /* observers cannot break supervision */ }
+      try {
+        this.onChange(value);
+      } catch {
+        /* observers cannot break supervision */
+      }
     }
     return value;
   }
 
   snapshot() {
-    return { sessions: this.sessions.map((row) => publicSession(row)), error: this.error };
+    return {
+      sessions: this.sessions.map((row) => publicSession(row)),
+      error: this.error,
+    };
   }
 
   register(input) {
     return this.#exclusive(async () => {
       if (this.journalFault) throw new Error(this.error || "进程记录不可用");
       this.#pruneGone();
-      if (this.sessions.length >= MAX_SESSIONS) throw new Error("进程会话数量已达上限");
+      if (this.sessions.length >= MAX_SESSIONS)
+        throw new Error("进程会话数量已达上限");
       const candidate = {
         id: cleanText(input?.id, "会话 ID"),
         harness: validateHarness(input?.harness),
         account: cleanText(input?.account, "账户", 160),
+        transport: input?.transport === "native" ? "native" : "proxy",
         label: cleanText(input?.label, "名称", 160),
         pid: cleanPid(input?.pid),
         marker: cleanText(input?.marker, "marker", 200),
       };
       if (candidate.marker.length < 16) throw new Error("marker 过短");
-      if (this.sessions.some((row) => row.id === candidate.id)) throw new Error("会话 ID 已存在");
-      if (this.sessions.some((row) => row.marker === candidate.marker)) throw new Error("marker 已存在");
+      if (this.sessions.some((row) => row.id === candidate.id))
+        throw new Error("会话 ID 已存在");
+      if (this.sessions.some((row) => row.marker === candidate.marker))
+        throw new Error("marker 已存在");
       const inspected = await this.adapter.inspect([candidate]);
       const matches = inspected.filter((row) => row.id === candidate.id);
       if (matches.length !== 1) throw new Error("无法验证新进程身份");
       const root = matches[0].root;
-      if (!root?.markerMatched || root.pid !== candidate.pid || !validCreationDate(root.creationDate))
+      if (
+        !root?.markerMatched ||
+        root.pid !== candidate.pid ||
+        !validCreationDate(root.creationDate)
+      )
         throw new Error("无法验证新进程身份");
-      if (this.sessions.some((existing) => targetKey(existing) === targetKey(root)))
+      if (
+        this.sessions.some(
+          (existing) => targetKey(existing) === targetKey(root),
+        )
+      )
         throw new Error("PID 和创建时间已登记");
-      const row = { ...candidate, creationDate: root.creationDate, status: "running" };
+      const row = {
+        ...candidate,
+        creationDate: root.creationDate,
+        status: "running",
+      };
       this.sessions.push(row);
       this.error = null;
       this.#save();
@@ -414,7 +499,8 @@ class ClientProcesses {
         for (const session of this.sessions) {
           const matches = inventory.filter((row) => row.id === session.id);
           try {
-            if (matches.length !== 1) throw new Error(`会话 ${session.id} 的进程清单缺失`);
+            if (matches.length !== 1)
+              throw new Error(`会话 ${session.id} 的进程清单缺失`);
             session.status = this.#inventory(session, matches[0]).state;
           } catch (error) {
             session.status = "unverifiable";
@@ -435,7 +521,8 @@ class ClientProcesses {
       if (this.journalFault) throw new Error(this.error || "进程记录不可用");
       const wanted = new Set(Array.isArray(ids) ? ids : [ids]);
       const selected = this.sessions.filter((row) => wanted.has(row.id));
-      if (!selected.length || selected.length !== wanted.size) throw new Error("会话不存在");
+      if (!selected.length || selected.length !== wanted.size)
+        throw new Error("会话不存在");
       try {
         const inventory = await this.adapter.inspect(selected);
         const errors = [];
@@ -447,33 +534,54 @@ class ClientProcesses {
             continue;
           }
           let checked;
-          try { checked = this.#inventory(session, matches[0]); }
-          catch (error) {
+          try {
+            checked = this.#inventory(session, matches[0]);
+          } catch (error) {
             session.status = "unverifiable";
             errors.push(error.message);
             continue;
           }
-          if (checked.state === "gone") { session.status = "gone"; continue; }
+          if (checked.state === "gone") {
+            session.status = "gone";
+            continue;
+          }
           if (checked.state !== "running") {
             session.status = "unverifiable";
             errors.push(`会话 ${session.id} 的根进程身份无法验证`);
             continue;
           }
           const descendants = [...checked.descendants].sort(
-            (a, b) => checked.chains.get(b.pid).length - checked.chains.get(a.pid).length,
+            (a, b) =>
+              checked.chains.get(b.pid).length -
+              checked.chains.get(a.pid).length,
           );
-          const rootIdentity = { pid: session.pid, creationDate: session.creationDate, marker: session.marker };
+          const rootIdentity = {
+            pid: session.pid,
+            creationDate: session.creationDate,
+            marker: session.marker,
+          };
           const targets = descendants.map((child) => ({
-            pid: child.pid, creationDate: child.creationDate, root: rootIdentity,
+            pid: child.pid,
+            creationDate: child.creationDate,
+            root: rootIdentity,
             chain: checked.chains.get(child.pid),
           }));
-          targets.push({ pid: session.pid, creationDate: session.creationDate, root: rootIdentity,
-            chain: [{ pid: session.pid, creationDate: session.creationDate }] });
+          targets.push({
+            pid: session.pid,
+            creationDate: session.creationDate,
+            root: rootIdentity,
+            chain: [{ pid: session.pid, creationDate: session.creationDate }],
+          });
           let failed = 0;
           for (const target of targets) {
             const result = await this.adapter.terminate([target]);
-            if (!Array.isArray(result) || result.length !== 1 ||
-                result[0].pid !== target.pid || result[0].creationDate !== target.creationDate || !result[0].stopped) {
+            if (
+              !Array.isArray(result) ||
+              result.length !== 1 ||
+              result[0].pid !== target.pid ||
+              result[0].creationDate !== target.creationDate ||
+              !result[0].stopped
+            ) {
               failed += 1;
               break;
             }
@@ -482,8 +590,10 @@ class ClientProcesses {
           const verified = new Map();
           if (Array.isArray(verification))
             for (const result of verification)
-              if (result && typeof result.alive === "boolean") verified.set(targetKey(result), result.alive);
-          let alive = 0, missing = 0;
+              if (result && typeof result.alive === "boolean")
+                verified.set(targetKey(result), result.alive);
+          let alive = 0,
+            missing = 0;
           for (const target of targets) {
             const value = verified.get(targetKey(target));
             if (value === undefined) missing += 1;
@@ -491,7 +601,9 @@ class ClientProcesses {
           }
           if (failed || alive || missing) {
             session.status = "unverifiable";
-            errors.push(`会话 ${session.id} 未能完整终止（失败 ${failed}，仍存活 ${alive}，验证缺失 ${missing}）`);
+            errors.push(
+              `会话 ${session.id} 未能完整终止（失败 ${failed}，仍存活 ${alive}，验证缺失 ${missing}）`,
+            );
           } else {
             session.status = "gone";
           }
@@ -499,7 +611,8 @@ class ClientProcesses {
         this.error = errors.length ? errors.join("；") : null;
       } catch (error) {
         this.error = error.message || "停止进程失败";
-        for (const session of selected) if (session.status !== "gone") session.status = "unverifiable";
+        for (const session of selected)
+          if (session.status !== "gone") session.status = "unverifiable";
       }
       return this.#emit();
     });

@@ -106,7 +106,7 @@ async function registered(t, options = {}) {
 test("register verifies marker, persists only minimal identification, and survives restart", async (t) => {
   const changes = [];
   const { dataDir, adapter, manager } = await registered(t, { onChange: (value) => changes.push(value) });
-  assert.deepEqual(manager.snapshot().sessions, [{ id: "one", harness: "codex", label: "Codex One", pid: 100, status: "running" }]);
+  assert.deepEqual(manager.snapshot().sessions, [{ id: "one", harness: "codex", label: "Codex One", pid: 100, status: "running", transport: "proxy" }]);
   const text = fs.readFileSync(path.join(dataDir, "client-processes.json"), "utf8");
   assert.match(text, /"creationDate"/);
   for (const secret of ["token", "env", "auth", "workspace", "commandLine", "EncodedCommand"])

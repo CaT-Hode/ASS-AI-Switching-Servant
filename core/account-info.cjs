@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { atomic } = require("./config.cjs");
+const { parseSubscription } = require("./subscription-usage.cjs");
 
 const ACCOUNT_DOCS = {
   codex: {
@@ -228,6 +229,16 @@ function localProfile(
 
 // Only exact official HTTPS origins are eligible. A provider label/brand alone is not authority.
 function adapter(provider) {
+  if (
+    provider.subscriptionKind === "openai" &&
+    provider.baseUrl === "https://chatgpt.com/backend-api"
+  )
+    return "openai-subscription";
+  if (
+    provider.subscriptionKind === "anthropic" &&
+    provider.baseUrl === "https://api.anthropic.com"
+  )
+    return "anthropic-subscription";
   try {
     const u = new URL(provider.baseUrl);
     if (u.username || u.password || u.search || u.hash) return null;
@@ -249,12 +260,20 @@ function adapter(provider) {
   } catch {}
   return null;
 }
-function apiProfile(provider) {
+function apiProfile(provider, nativeConnection = false) {
   let host;
   try {
     host = new URL(provider.baseUrl).host;
   } catch {}
   const id = adapter(provider);
+  if (id?.endsWith("-subscription"))
+    return {
+      source: "订阅额度 · 上次查询",
+      fields: [],
+      canRefresh: !!provider.apiKey,
+      docs: [provider.subscriptionKind === "openai" ? "codex" : "claude"],
+      note: "只读额度查询；授权到期请由原生客户端刷新。",
+    };
   const oc = id === "opencode" || id === "opencode-go";
   return {
     source: provider.nativeProvider ? "原生 API 登录记录" : "已保存的 API 配置",
@@ -286,12 +305,21 @@ function apiProfile(provider) {
       field(
         "network",
         "网络出口",
-        provider.network === "direct" ? "直连 · 系统 CA" : "系统代理 · 系统 CA",
+        nativeConnection
+          ? "原生客户端配置"
+          : provider.network === "direct"
+            ? "直连 · 系统 CA"
+            : "系统代理 · 系统 CA",
       ),
     ].filter(Boolean),
   };
 }
 function parseRemote(id, data, secrets = []) {
+  if (id.endsWith("-subscription")) {
+    const fields = parseSubscription(id.split("-")[0], data);
+    if (!fields.length) throw Error("未返回订阅额度窗口");
+    return fields;
+  }
   const fields = [],
     d = object(data);
   const add = (key, label, v) => {
@@ -397,6 +425,7 @@ class AccountInfo {
     this.cache = {};
     this.jobs = new Map();
     this.errors = new Map();
+    this.attempts = new Map();
     try {
       if (fs.statSync(this.file).size <= 2 * 1024 * 1024) {
         const stored = JSON.parse(fs.readFileSync(this.file, "utf8"));
@@ -446,12 +475,20 @@ class AccountInfo {
       refreshing: this.jobs.has(key),
     };
   }
-  async refresh(id) {
+  async refresh(id, { automatic = false } = {}) {
     const p = this.getProvider(id),
       kind = p && adapter(p);
     if (!kind || !p.apiKey) throw Error("此账户没有可查询的官方资料接口");
     const key = fingerprint(p);
     if (this.jobs.has(key)) return this.jobs.get(key);
+    const cached =
+      this.cache[id]?.fingerprint === key
+        ? Date.parse(this.cache[id].updatedAt)
+        : 0;
+    const checked = Math.max(cached || 0, this.attempts.get(key) || 0);
+    if (automatic && this.now() - checked < 5 * 60000)
+      return { ok: true, cached: true };
+    this.attempts.set(key, this.now());
     const job = this.query(p, kind, key);
     this.jobs.set(key, job);
     try {
@@ -462,22 +499,28 @@ class AccountInfo {
   }
   async query(p, kind, key) {
     const route =
-      kind === "deepseek"
-        ? "https://api.deepseek.com/user/balance"
-        : ["opencode", "opencode-go"].includes(kind)
-          ? "https://opencode.ai/zen/go/v1/usage"
-          : "https://openrouter.ai/api/v1/key";
+      kind === "openai-subscription"
+        ? "https://chatgpt.com/backend-api/wham/usage"
+        : kind === "anthropic-subscription"
+          ? "https://api.anthropic.com/api/oauth/usage"
+          : kind === "deepseek"
+            ? "https://api.deepseek.com/user/balance"
+            : ["opencode", "opencode-go"].includes(kind)
+              ? "https://opencode.ai/zen/go/v1/usage"
+              : "https://openrouter.ai/api/v1/key";
     try {
       const r = await this.fetcher(
         route,
         {
           method: "GET",
           headers: {
+            ...(kind.endsWith("-subscription") ? p.extraHeaders : {}),
             accept: "application/json",
             authorization: "Bearer " + p.apiKey,
           },
           signal: AbortSignal.timeout(15000),
           redirect: "error",
+          cache: "no-store",
         },
         p.network,
       );
@@ -506,11 +549,16 @@ class AccountInfo {
       } finally {
         reader.releaseLock();
       }
-      const fields = parseRemote(
-        kind,
-        JSON.parse(Buffer.concat(chunks).toString("utf8")),
-        [p.apiKey],
-      );
+      const data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      const expectedAccount = p.extraHeaders?.["chatgpt-account-id"];
+      if (
+        kind === "openai-subscription" &&
+        expectedAccount &&
+        data.account_id &&
+        data.account_id !== expectedAccount
+      )
+        throw Error("额度账户不匹配");
+      const fields = parseRemote(kind, data, [p.apiKey]);
       const current = this.getProvider(p.id);
       if (!current || fingerprint(current) !== key)
         return { ok: false, message: "账户配置已变化，请重新查询" };
@@ -529,13 +577,21 @@ class AccountInfo {
     } catch (e) {
       // Never expose body, auth headers, network error URLs or raw exception strings.
       const message =
-        ["opencode", "opencode-go"].includes(kind) && e.message === "HTTP 403"
-          ? "此 Key 未获 Go 订阅查询权限（HTTP 403）；Zen 余额请在控制台查看"
-          : /^HTTP \d{3}$/.test(e.message)
-            ? "资料查询失败 · " + e.message
-            : e instanceof SyntaxError
-              ? "资料接口返回无效 JSON"
-              : "资料查询失败，请检查网络或接口权限";
+        e.message === "额度账户不匹配"
+          ? "返回额度不属于所选账户，未采用此结果"
+          : kind.endsWith("-subscription") &&
+              ["HTTP 401", "HTTP 403"].includes(e.message)
+            ? "订阅额度未获授权（" +
+              e.message +
+              "），请在原生客户端确认登录与权限"
+            : ["opencode", "opencode-go"].includes(kind) &&
+                e.message === "HTTP 403"
+              ? "此 Key 未获 Go 订阅查询权限（HTTP 403）；Zen 余额请在控制台查看"
+              : /^HTTP \d{3}$/.test(e.message)
+                ? "资料查询失败 · " + e.message
+                : e instanceof SyntaxError
+                  ? "资料接口返回无效 JSON"
+                  : "资料查询失败，请检查网络或接口权限";
       this.errors.set(key, message);
       return { ok: false, message };
     }

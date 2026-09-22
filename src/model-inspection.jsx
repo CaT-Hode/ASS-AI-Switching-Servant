@@ -10,6 +10,7 @@ import {
   Check,
 } from "lucide-react";
 import "./model-inspection.css";
+import { exactTime } from "./relative-time.mjs";
 const api = window.ass;
 export const modelKey = (provider, model) => JSON.stringify([provider, model]);
 const statusText = {
@@ -36,7 +37,11 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
       aria-label={"检测模型 " + model.model}
       title={
         result
-          ? result.message + " · 点击重新检测"
+          ? result.message +
+            " · 上次测试：" +
+            exactTime(result.time) +
+            (result.saveError ? " · " + result.saveError : "") +
+            " · 点击重新检测"
           : "检测此模型连接（小请求，可能计费）"
       }
       disabled={

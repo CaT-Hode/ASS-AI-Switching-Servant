@@ -44,21 +44,21 @@ ASS（AI Switch Servant）是你的 Windows 桌面 AI 路由与账户助手。�
 
 ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_router` provider 和模型目录路径，不覆盖保留的 `openai` provider。旧任务可能保留原 provider，不会自动迁移。在“客户端与账户 → Codex”关闭接入，二次确认后恢复 ASS 接入前的配置字段；接入后修改的无关字段会保留。
 
-关闭 ASS 主窗口只会隐藏到托盘。退出托盘或停止路由后，经 ASS 的请求无法继续。ASS 重启会轮换客户端本地访问令牌，其他 harness 需从 ASS 重新启动。更改模型目录后，Codex 也需要重启刷新。
+关闭 ASS 主窗口只会隐藏到托盘。退出托盘或停止路由后，经 ASS 的请求无法继续；DSH / OpenCode / pi 的原生直连不受路由端口影响。ASS 重启会轮换本地令牌，仍使用代理的客户端需重新启动。更改模型目录后，Codex 也需要重启刷新。
 
 ### 接入开关与安全关闭
 
 全局“接入 Codex”按钮已移除。五种客户端各有接入开关，点击后只显示简短警告和“确定 / 取消”，不再展示分步菜单、勾选项或 PID 清单。默认焦点在取消；取消、Escape 或默认回车都不会更改接入。
 
-- **开启**：启用该客户端的本地路由，API 注入在下次从 ASS 启动时生成。Codex 还会更新 App 配置；ASS 不擅自重启 App。其他客户端的原生 OAuth 保持官方直连。
+- **开启**：DSH / OpenCode / pi 写入原生供应商、API 凭据和选中的默认模型，不启动代理；Codex / Claude Code 保持现有路由方式。Codex 更新 App 配置但不擅自重启 App。已有 OAuth 凭据保持不变。
 - **断开**：警告中提示需要关闭的 ASS 窗口数量；确定后，只结束经身份校验的 ASS 启动窗口及已确认子进程，再恢复接口配置。不按进程名批量结束程序；有进行中请求、身份不明或状态变化时仍拒绝操作。
-- **恢复注入**：只恢复或移除 ASS 登记的配置文件，不删除账户授权、会话、项目和工作目录。配置被其他程序修改时停止操作，不用旧备份覆盖新内容。旧版可明确识别的 ASS 配置会先保留恢复副本。
-- **服务生命周期**：使用 `/clients/<harness>/…` 分开管理。关闭某一接入不会停止其他接入；关闭最后一个接入时才关闭共享路由端口。全部关闭状态跨重启保留；用户主动检测模型时可按需启动检测服务。
-- **停止全部 / 安全退出**：位于客户端页及托盘。退出弹窗提供“取消 / 直接退出”，直接退出仍会检查活跃请求和配置冲突，并恢复接入；不是绕过保护强杀进程。
+- **恢复注入**：原生接入只撤回 ASS 管理字段，保留其他供应商、OAuth、插件与会话；管理字段被改动则报冲突。旧代理配置仍按登记文件恢复，已知旧格式保留恢复副本。
+- **服务生命周期**：代理按 `/clients/<harness>/…` 分开管理；最后一个需要路由的客户端断开时关闭端口。原生接入不依赖路由；用户检测模型可按需启动检测服务。
+- **停止全部 / 安全退出**：停止全部会撤回所有接入；退出 ASS 仅恢复依赖代理的接入，保留原生直连配置与窗口。退出弹窗提供“取消 / 直接退出”，仍检查活跃代理请求和窗口身份，不绕过保护强杀。
 
 **请求数为 0 不代表任务结束。** 客户端可能正在执行工具或等待输入。ASS 不能判断未托管窗口的任务状态；Codex App、旧版 ASS 启动但未登记的窗口，以及自行启动的客户端需用户先退出。PID 会与创建时间、随机会话标记及父子关系重新核对；身份不明时不强制关闭。进程树检查不是 Windows Job Object 隔离，主动脱离进程树的后台服务不在自动关闭保证范围内，需由其原生客户端管理。
 
-接入状态、注入恢复记录与窗口身份分别保存在本机 `connections.json`、`route-injections.json`、`client-processes.json`，不随源码和 Release 发布。退出后已有旧任务可能仍保留旧路由地址；重新进入原生客户端时请新建任务并选择正确账户 / 模型。
+接入状态、代理恢复记录、原生字段加密恢复记录与窗口身份分别保存在本机 `connections.json`、`route-injections.json`、`native-injections.enc.json`、`client-processes.json`，不随源码和 Release 发布。旧代理任务可能保留旧地址，请结束后重新选择账户 / 模型。原生路径、合并规则与 CA 边界见 [原生 API 接入](docs/NATIVE-CONFIG.md)。
 
 ### ASS 更新
 
@@ -79,13 +79,13 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 | --- | --- | --- |
 | Codex CLI | 已保存供应商，经 Responses 入口或协议适配 | 多个 ChatGPT 原生登录目录；不替换正在运行的 Codex App 登录 |
 | Claude Code | 仅 Anthropic Messages 协议模型 | 多个独立 `CLAUDE_CONFIG_DIR`，原生 `auth login / logout` |
-| OpenCode | 自动识别 OpenCode Go，支持其他三种 API 协议 | 独立 XDG 目录，原生 `auth login / logout` |
-| pi | Responses / Chat Completions / Anthropic | 独立 `PI_CODING_AGENT_DIR`，原生或扩展 `/login /logout` |
-| DeepSeek Harness | DeepSeek 配置直接作为 API 账户，也可用其他兼容供应商 | 检测 `.credentials.yaml` 的 API refs 与 `llm-pi-ai` OAuth records；独立 `DSH_HOME` 支持原生授权设置 |
+| OpenCode | 自动识别 OpenCode Go；三种协议直写原生配置 | 原生 / 独立 XDG 目录，`auth login / logout` |
+| pi | 三种协议直写 `models.json` / `auth.json` | 原生 / 独立 `PI_CODING_AGENT_DIR`，`/login /logout` |
+| DeepSeek Harness | DeepSeek 与其他兼容 API 直写 `settings.yaml` / `.credentials.yaml` | 原生 / 独立 `DSH_HOME`，分别检测 API refs 与 OAuth records |
 
-在客户端页右侧选择已有账户，点击“启动”。DeepSeek 官方 API 自动归入 DSH，OpenCode Go 自动归入 OpenCode；其他 API 通过“添加账户”选择已有供应商。旧版本已选择或使用过的 API 保留绑定。解除绑定不会删除供应商、撤销凭据或中断运行中的客户端。
+在客户端页右侧选择已有账户，点击“启动”。DeepSeek 官方 API 自动归入 DSH，OpenCode Go 自动归入 OpenCode；其他 API 通过“添加账户”选择已有供应商。旧版本已选择或使用过的 API 保留绑定。解除绑定不会删除 ASS 中的供应商；已开启原生接入时会撤回其原生条目，请先结束客户端任务。
 
-模型在“供应商与模型”统一管理；各已绑定客户端的启动模型也在对应供应商下选择。API Key 只留在后端，客户端获得本地路由令牌。API 注入写入专用目录；本机账户直接使用原有凭据目录，不复制或覆盖其令牌。账户选择作用于下一次由 ASS 启动的客户端，不替换正在运行的 Codex App 登录。
+模型在“供应商与模型”统一管理。DSH / OpenCode / pi 接入后，已绑定的模型和真实 API Key 写入原生配置；更改会同步对应字段，冲突在客户端页提示并可重试。旧代理接入需先点同步图标确认迁移。Codex / Claude Code 的 API 仍使用专用目录与本地令牌；不替换当前 Codex App 的 OAuth 登录。已有原生 OAuth 由其客户端独立管理。
 
 本机 Codex 读取 `CODEX_HOME/auth.json`；Claude Code 读取 `CLAUDE_CONFIG_DIR/.credentials.json` 或环境中的 `CLAUDE_CODE_OAUTH_TOKEN`；OpenCode 读取 `XDG_DATA_HOME/opencode/auth.json`；Pi 读取 `PI_CODING_AGENT_DIR/auth.json`；DSH 读取 `DSH_HOME/.credentials.yaml`。未设置环境目录时使用各客户端默认位置，也可在“客户端路径与凭据目录”指定。多供应商凭据分别显示，不把一个文件当作一个账户。
 
@@ -114,7 +114,11 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 
 ### 模型卡片与行内配置
 
-供应商卡片显示地址、模型数、接口、上下文、思维档位、检测结果与余额；菜单提供发现模型、编辑供应商和余额查询。“查看全部模型”定位到主页面的“已配置模型”。五个常用字段直接编辑，逐行保存或取消；高级设置仍提供思维范围双滑块。
+供应商卡片保留名称、来源类型、模型数与可查询额度；头像按官方服务 / 品牌名称匹配本地 logo，未知来源保留文字头像。拖动卡片右上角手柄排序，或聚焦手柄后使用方向键；Esc 取消，排序跨应用重启保存。筛选后排序只调整可见卡片，不移动隐藏来源。
+
+点击卡片打开模型列表弹窗，五个常用字段可直接编辑，逐行保存或取消；详细配置在右侧弹窗展开，仍提供思维范围双滑块。模型连接测试成功或失败后均保存最后结果与时间，闪电实心显示，旁边显示“几分钟前 / 小时前”，悬停显示完整日期。取消重测保留旧记录；改变实际连接参数、凭据或删除模型会使对应记录失效。
+
+OpenAI / Anthropic OAuth 显示接口实际返回的剩余额度窗口；不把主窗口固定解释成 5h，也不把缺失值当作 0。多账户可独立选择展示额度的账户，不改变客户端登录。DeepSeek 等 API 按原币种显示可用余额。页面打开时及可见期间每 5 分钟只读刷新，可手动刷新；查询失败保留带时间的上次结果。具体来源、缓存和接口边界见 [额度与图标](docs/SUPPLIER-CARDS.md)。
 
 重命名模型同步更新 ASS 保存的启动模型选择；删除模型移除对应配置并清理旧选择，不删除供应商密钥。重复 ID、无效上下文和过时草稿会被拒绝。官方订阅的接口固定为 Responses；不支持将订阅端点改成其他协议。
 
@@ -154,7 +158,7 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 ## 数据与安全边界
 
 - 应用数据：`%APPDATA%\AI Switch Servant`；退出应用不会删除它。
-- API Key 和额外请求头由 Windows DPAPI 加密。不能直接将加密数据文件复制到另一 Windows 用户使用。
+- ASS 自身的 API Key、额外请求头和原生字段恢复记录由 Windows DPAPI 加密。原生直连需要把真实 Key 写入客户端凭据文件，采用其原生格式而非 DPAPI；不得分享这些文件。加密 ASS 数据不能直接复制到另一 Windows 用户使用。
 - OAuth 文件按各客户端原生方式保存在专用账户目录，不承诺其是 DPAPI 加密文件。不要分享整个应用数据目录。
 - 请求日志只保留模型、来源、状态、耗时和脱敏错误，不记录对话正文和授权头。轮换日志约 2 MiB。
 - 导出配置不含 Key 或额外请求头。发布包不携带账户、个人配置或聊天记录。
@@ -163,7 +167,7 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 
 ## 协议和能力限制
 
-Codex Responses 可透传；转换到 Chat Completions / Anthropic 的路径当前只支持文本与函数工具，不支持图片、文件、跨协议 `previous_response_id` 和服务端 compact。其他 harness 使用相同协议原样转发工具结构，无需经 Codex 格式转换。
+Codex Responses 可透传；转换到 Chat Completions / Anthropic 的路径当前只支持文本与函数工具，不支持图片、文件、跨协议 `previous_response_id` 和服务端 compact。DSH / OpenCode / pi 由原生 SDK 直连，不经 ASS 的协议转换；Claude Code 仍按同协议转发。
 
 **Codex 跨协议工具支持仍为实验性**：若当前 Codex 模式没有发送标准 `tools` 定义，ASS 不能凭提示文本重建所有工具；Anthropic 转换只能验证文本，不等同于完整编程代理。此时请选择原生 Responses 模型，或使用 Claude Code / pi 原生协议接入。ASS 不绕过客户端执行策略。
 
