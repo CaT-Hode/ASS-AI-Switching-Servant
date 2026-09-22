@@ -1,3 +1,4 @@
+// Browser plugin not available; validate the real Electron renderer with Playwright.
 const { _electron: electron } = require("playwright");
 const fs = require("node:fs"),
   path = require("node:path"),
@@ -5,7 +6,7 @@ const fs = require("node:fs"),
 const root = path.resolve(__dirname, ".."),
   out = path.join(process.env.LOCALAPPDATA, "ASS-validation");
 fs.mkdirSync(out, { recursive: true });
-const data = fs.mkdtempSync(path.join(out, "v0110-qa-")),
+const data = fs.mkdtempSync(path.join(out, "v0111-qa-")),
   home = path.join(data, "test-home"),
   codex = path.join(data, "codex");
 const write = (file, d) => {
@@ -65,6 +66,10 @@ let app,
     if (m.type() === "error") errors.push(m.text());
   });
   await page.waitForSelector("h1");
+  assert.match(await page.title(), /ASS/);
+  assert.match(page.url(), /index\.html$/);
+  assert.ok(await page.locator("h1").innerText());
+  assert.equal(await page.locator("vite-error-overlay").count(), 0);
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0].setSize(1380, 940);
     const t = global.assTest;
@@ -179,14 +184,64 @@ let app,
     name: "ok-model 行内配置",
     exact: true,
   });
-  assert.equal(await row.getByRole("button").count(), 2);
+  assert.equal(await row.getByRole("button").count(), 3);
   const openDetails = async () => {
     await row
-      .getByRole("button", { name: "ok-model 模型操作", exact: true })
+      .getByRole("button", { name: "模型详情 ok-model", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "详细设置", exact: true }).click();
     await side.waitFor();
   };
+  await openDetails();
+  assert.equal(await side.locator(".model-section-toggle").count(), 2);
+  assert.equal(
+    await side
+      .getByRole("button", { name: "配置", exact: true })
+      .getAttribute("aria-expanded"),
+    "true",
+  );
+  await side.getByLabel("显示名称", { exact: true }).fill("统一详情草稿");
+  await side.getByLabel("上下文 tokens", { exact: true }).fill("144000");
+  await side.getByRole("button", { name: "能力与检测", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  assert.equal(
+    await side
+      .getByRole("button", { name: "能力与检测", exact: true })
+      .getAttribute("aria-expanded"),
+    "true",
+  );
+  assert.equal(
+    await side.getByLabel("模型 ID", { exact: true }).isVisible(),
+    false,
+  );
+  await side.getByText("接口声明", { exact: true }).waitFor();
+  await page.screenshot({
+    path: path.join(out, "v0111-model-capabilities.png"),
+    animations: "disabled",
+  });
+  await side.getByRole("button", { name: "配置", exact: true }).click();
+  assert.equal(
+    await side.getByLabel("显示名称", { exact: true }).inputValue(),
+    "统一详情草稿",
+  );
+  assert.equal(
+    await side.getByLabel("上下文 tokens", { exact: true }).inputValue(),
+    "144000",
+  );
+  await page.screenshot({
+    path: path.join(out, "v0111-model-details.png"),
+    animations: "disabled",
+  });
+  await side.getByRole("button", { name: "保存模型", exact: true }).click();
+  await side.waitFor({ state: "hidden" });
+  assert.equal(
+    (await state()).providers.find((p) => p.id === "test").models[0]
+      .displayName,
+    "统一详情草稿",
+  );
+  assert.equal(
+    await row.getByLabel("ok-model 上下文长度", { exact: true }).inputValue(),
+    "144000",
+  );
   await openDetails();
   await side.getByLabel("模型 ID", { exact: true }).click();
   const input = await side.getByLabel("模型 ID", { exact: true }).boundingBox();
@@ -204,18 +259,148 @@ let app,
   await page.mouse.click(rect.x + 20, rect.y + 20);
   await side.waitFor({ state: "hidden" });
   assert.equal(await page.locator("dialog[open]").count(), 1);
-  await row
-    .getByRole("button", { name: "ok-model 模型操作", exact: true })
-    .click();
-  assert.equal(await page.getByRole("menuitem").count(), 3);
+  assert.equal(await page.getByRole("menuitem").count(), 0);
   await page.screenshot({
-    path: path.join(out, "v0110-model-actions.png"),
+    path: path.join(out, "v0111-model-actions.png"),
     animations: "disabled",
   });
-  await page.keyboard.press("Escape");
   await page.mouse.click(7, 7);
   await list.waitFor({ state: "hidden" });
   assert.equal(await page.locator("dialog[open]").count(), 0);
+  // Check outside surfaces at each desktop width; one click returns exactly one level.
+  for (const width of [1100, 1380, 1536]) {
+    await app.evaluate(
+      ({ BrowserWindow }, width) =>
+        BrowserWindow.getAllWindows()[0].setSize(width, 940),
+      width,
+    );
+    for (const surface of ["gap", "outside", "parent"]) {
+      await page
+        .getByRole("button", { name: "查看 测试供应商 的模型", exact: true })
+        .click();
+      await openDetails();
+      await page.waitForFunction(() => {
+        const left = document
+            .querySelector(".provider-model-dialog")
+            .getBoundingClientRect(),
+          right = document
+            .querySelector(".provider-side-dialog")
+            .getBoundingClientRect();
+        return left.right + 12 < right.left;
+      });
+      const left = await list.boundingBox(),
+        right = await side.boundingBox();
+      const point =
+        surface === "gap"
+          ? [(left.x + left.width + right.x) / 2, 180]
+          : surface === "parent"
+            ? [left.x + 18, left.y + 18]
+            : [7, 7];
+      await page.mouse.click(...point);
+      await side.waitFor({ state: "hidden" });
+      assert.equal(await page.locator("dialog[open]").count(), 1);
+      assert.equal(
+        await row
+          .getByRole("button", { name: "模型详情 ok-model", exact: true })
+          .evaluate((el) => el === document.activeElement),
+        true,
+      );
+      if (width === 1380 && surface === "gap")
+        await page.screenshot({
+          path: path.join(out, "v0111-blank-return.png"),
+          animations: "disabled",
+        });
+      await page.mouse.click(7, 7);
+      await list.waitFor({ state: "hidden" });
+      assert.equal(await page.locator("dialog[open]").count(), 0);
+    }
+  }
+  // The same dismissal works for all three other model-management dialogs.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page
+    .getByRole("button", { name: "查看 测试供应商 的模型", exact: true })
+    .click();
+  for (const name of ["手动添加", "供应商设置", "发现模型"]) {
+    await list.getByRole("button", { name, exact: true }).click();
+    await side.waitFor();
+    await page.mouse.click(7, 7);
+    await side.waitFor({ state: "hidden" });
+    assert.equal(await page.locator("dialog[open]").count(), 1);
+  }
+  await page.mouse.click(7, 7);
+  await list.waitFor({ state: "hidden" });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  // Anchored confirmation is rendered in-app, not an OS message box.
+  await app.evaluate(({ dialog }) => {
+    global.assTest.systemPrompts = 0;
+    dialog.showMessageBox = async () => {
+      global.assTest.systemPrompts++;
+      return { response: 0 };
+    };
+  });
+  await page
+    .getByRole("button", { name: "查看 测试供应商 的模型", exact: true })
+    .click();
+  const deleteTrigger = row.getByRole("button", {
+    name: "删除模型 ok-model",
+    exact: true,
+  });
+  const confirmation = page.getByRole("dialog", {
+    name: "删除此模型？",
+    exact: true,
+  });
+  for (const width of [1100, 1380, 1536]) {
+    await app.evaluate(
+      ({ BrowserWindow }, w) =>
+        BrowserWindow.getAllWindows()[0].setSize(w, 940),
+      width,
+    );
+    await deleteTrigger.click();
+    await confirmation.waitFor();
+    await confirmation.evaluate(async (el) => {
+      await Promise.all(el.getAnimations().map((a) => a.finished));
+    });
+    const anchor = await deleteTrigger.boundingBox(),
+      bubble = await confirmation.boundingBox();
+    assert.ok(bubble.x >= 0 && bubble.x + bubble.width <= width);
+    assert.ok(bubble.width <= 322);
+    assert.ok(
+      Math.abs(bubble.y - anchor.y - anchor.height) < 10 ||
+        Math.abs(anchor.y - bubble.y - bubble.height) < 10,
+    );
+    assert.equal(await confirmation.getByRole("button").count(), 2);
+    assert.equal(
+      await confirmation
+        .getByRole("button", { name: "取消", exact: true })
+        .evaluate((e) => e === document.activeElement),
+      true,
+    );
+    if (width === 1380)
+      await page.screenshot({
+        path: path.join(out, "v0111-delete-confirm.png"),
+        animations: "disabled",
+      });
+    await page.keyboard.press("Escape");
+    await confirmation.waitFor({ state: "hidden" });
+    assert.equal(await page.locator("dialog[open]").count(), 1);
+    assert.equal(
+      await deleteTrigger.evaluate((el) => el === document.activeElement),
+      true,
+    );
+    await deleteTrigger.click();
+    await confirmation.waitFor();
+    await page.mouse.click(7, 7);
+    await confirmation.waitFor({ state: "hidden" });
+    assert.equal(await page.locator("dialog[open]").count(), 1);
+  }
+  assert.equal(await app.evaluate(() => global.assTest.systemPrompts), 0);
+  assert.ok(
+    (await state()).providers
+      .find((p) => p.id === "test")
+      .models.some((m) => m.model === "ok-model"),
+  );
+  await page.mouse.click(7, 7);
+  await list.waitFor({ state: "hidden" });
   // Native online model lists are now discoverable, without creating API providers.
   let s = await state();
   for (const id of ["dsh", "opencode"]) {
@@ -350,8 +535,11 @@ let app,
   console.log(
     JSON.stringify({
       passed: true,
-      modelActions: 2,
-      blankDismiss: "one level only, drag guarded",
+      modelActions: "three direct icon buttons, no dropdown",
+      blankDismiss:
+        "3 desktop widths, gap/outside/parent, reduced motion, drag guarded",
+      unifiedDetails:
+        "expandable sections, draft preserved, saved, no duplicate entries",
       nativeCatalogs: true,
       batch: "pass/fail/skip/cancel, no duplicates",
       nativeAccountInfo: "DeepSeek balance, Go 3 quotas, Zen403",

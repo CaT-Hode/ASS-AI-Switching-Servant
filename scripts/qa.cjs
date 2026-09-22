@@ -7,7 +7,7 @@ const output = path.join(process.env.LOCALAPPDATA, "ASS-validation", "ui");
 fs.mkdirSync(output, { recursive: true });
 (async () => {
   const data = fs.mkdtempSync(path.join(output, "profile-"));
-  const codex = path.join(output, "codex");
+  const codex = path.join(data, "codex");
   fs.mkdirSync(codex, { recursive: true });
   const cache = path.join(
     process.env.USERPROFILE,
@@ -66,10 +66,9 @@ fs.mkdirSync(output, { recursive: true });
       .getByRole("button", { name: "查看 示例供应商 的模型", exact: true })
       .click();
     await page
-      .getByRole("button", { name: "gpt-6-astra 模型操作", exact: true })
+      .getByRole("button", { name: "模型详情 gpt-6-astra", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "详细设置", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "模型设置", exact: true });
+    const dialog = page.getByRole("dialog", { name: "模型详情", exact: true });
     await dialog
       .getByRole("slider", { name: "最高可选强度", exact: true })
       .fill("5");
@@ -96,9 +95,8 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(saved.defaultEffort, "ultra");
     assert.ok(saved.efforts.includes("max"));
     await page
-      .getByRole("button", { name: "claude-opus-5 模型操作", exact: true })
+      .getByRole("button", { name: "模型详情 claude-opus-5", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "详细设置", exact: true }).click();
     assert.equal(
       await page
         .getByRole("slider", { name: "最高可选强度", exact: true })

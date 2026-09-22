@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import {
   Zap,
   ScanSearch,
-  Settings2,
   Loader2,
   RefreshCw,
   Square,
@@ -10,7 +9,6 @@ import {
   Search,
   Check,
 } from "lucide-react";
-import { Modal } from "./editors.jsx";
 import "./model-inspection.css";
 const api = window.ass;
 export const modelKey = (provider, model) => JSON.stringify([provider, model]);
@@ -56,30 +54,6 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
     </button>
   );
 }
-export function ModelActions(props) {
-  return (
-    <div className="model-actions">
-      <ModelCheckButton {...props} />
-      <button
-        className="model-icon"
-        aria-label={"查看模型能力 " + props.model.model}
-        title="查看声明与能力实测"
-        disabled={!!props.busy}
-        onClick={props.onInspect}
-      >
-        <ScanSearch size={17} />
-      </button>
-      <button
-        className="model-icon"
-        aria-label={"编辑模型 " + props.model.model}
-        title="编辑模型配置"
-        onClick={props.onEdit}
-      >
-        <Settings2 size={17} />
-      </button>
-    </div>
-  );
-}
 function Declared({ value = {} }) {
   return (
     <dl className="capability-facts">
@@ -110,15 +84,7 @@ function Declared({ value = {} }) {
     </dl>
   );
 }
-export function ModelCapabilityDialog({
-  provider,
-  model,
-  state,
-  act,
-  busy,
-  onClose,
-  className,
-}) {
+export function ModelCapabilities({ provider, model, state, act, busy }) {
   const key = modelKey(provider.id, model.model),
     directory = state.providerModels?.[provider.id];
   const declared = directory?.models.find(
@@ -127,12 +93,7 @@ export function ModelCapabilityDialog({
   const report = state.capabilities?.[key],
     progress = state.capabilityJobs?.[key];
   return (
-    <Modal
-      title={"模型能力 · " + model.displayName}
-      description={provider.name + " / " + model.model}
-      className={className}
-      onClose={onClose}
-    >
+    <>
       <section className="capability-section">
         <div className="section-heading">
           <h3>接口声明</h3>
@@ -243,7 +204,7 @@ export function ModelCapabilityDialog({
         视频输入只显示明确声明，不进行大请求盲测。原生 API 能力不等同于 Codex
         跨协议工具兼容性。结果保留在本次应用会话中。
       </p>
-    </Modal>
+    </>
   );
 }
 export function ProviderModelCatalog({ provider, state, act, busy }) {

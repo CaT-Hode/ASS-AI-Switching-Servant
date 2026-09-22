@@ -441,45 +441,31 @@ async function run() {
       false,
     );
     await row.getByRole("button", { name: "取消", exact: true }).click();
-    const menu = row.getByRole("button", {
-      name: "alpha-new 模型操作",
+    const advanced = row.getByRole("button", {
+      name: "模型详情 alpha-new",
       exact: true,
     });
-    await menu.click();
-    await page
-      .getByRole("menuitem", { name: "能力详情", exact: true })
-      .waitFor();
-    await page.keyboard.press("End");
-    assert.equal(
-      await page
-        .getByRole("menuitem", { name: "删除模型", exact: true })
-        .evaluate((e) => e === document.activeElement),
-      true,
-    );
-    await page.keyboard.press("Escape");
-    assert.equal(
-      await menu.evaluate((e) => e === document.activeElement),
-      true,
-    );
+    assert.equal(await row.getByRole("button").count(), 3);
+    assert.equal(await row.getByRole("menu").count(), 0);
     // The right-side level 3 shifts the level-2 list left, with no overlap.
-    const advanced = menu;
     const openAdvanced = async () => {
       await advanced.click();
-      await page
-        .getByRole("menuitem", { name: "详细设置", exact: true })
-        .click();
     };
-    const deleteModel = async (name) => {
+    const deleteModel = async (name, confirm = true) => {
       await page
-        .getByRole("button", { name: name + " 模型操作", exact: true })
+        .getByRole("button", { name: "删除模型 " + name, exact: true })
         .click();
-      await page
-        .getByRole("menuitem", { name: "删除模型", exact: true })
+      const confirmation = page.getByRole("dialog", {
+        name: "删除此模型？",
+        exact: true,
+      });
+      await confirmation
+        .getByRole("button", { name: confirm ? "确定" : "取消", exact: true })
         .click();
     };
     await openAdvanced();
     let detailDialog = page.getByRole("dialog", {
-      name: "模型设置",
+      name: "模型详情",
       exact: true,
     });
     await detailDialog.waitFor();
@@ -529,19 +515,47 @@ async function run() {
     await app.evaluate(() => {
       global.assTest.confirm = 0;
     });
-    await deleteModel("beta");
+    await deleteModel("beta", false);
     await page.waitForTimeout(150);
     assert.equal(
       (await snapshot()).providers.find((p) => p.id === "work").models.length,
       2,
     );
-    const confirm = await app.evaluate(() => global.assTest.lastConfirmation);
-    assert.deepEqual(confirm.buttons, ["取消", "确定"]);
-    assert.equal(confirm.defaultId, 0);
     await app.evaluate(() => {
       global.assTest.confirm = 1;
+      const t = global.assTest,
+        save = t.store.save.bind(t.store);
+      t.store.save = () => {
+        t.store.save = save;
+        throw Error("模拟写入失败");
+      };
     });
     await deleteModel("beta");
+    const deleteDialog = page.getByRole("dialog", {
+      name: "删除此模型？",
+      exact: true,
+    });
+    await deleteDialog
+      .getByRole("alert")
+      .filter({ hasText: "模拟写入失败" })
+      .waitFor();
+    assert.equal(
+      (await snapshot()).providers.find((p) => p.id === "work").models.length,
+      2,
+    );
+    assert.equal(
+      JSON.parse(
+        fs.readFileSync(path.join(data, "settings.json")),
+      ).providers.find((p) => p.id === "work").models.length,
+      2,
+    );
+    await page.screenshot({
+      path: path.join(out, "v0111-delete-error.png"),
+      animations: "disabled",
+    });
+    await deleteDialog
+      .getByRole("button", { name: "确定", exact: true })
+      .click();
     await page
       .getByRole("form", { name: "beta 行内配置", exact: true })
       .waitFor({ state: "hidden" });

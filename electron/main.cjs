@@ -866,15 +866,11 @@ else {
         );
         invalidateReports(provider, false);
       });
-      register("delete-model", async (provider, name, expected) => {
-        const result = await dialog.showMessageBox(window, {
-          type: "warning",
-          message: "从 ASS 配置中删除模型 " + name + "？",
-          buttons: ["取消", "确定"],
-          defaultId: 0,
-          cancelId: 0,
-        });
-        if (result.response !== 1) return { cancelled: true };
+      register("delete-model", (provider, name, expected) => {
+        // The trusted renderer confirms next to the model's delete button.
+        // Keep the selected snapshot mandatory to reject stale confirmations.
+        if (!expected || expected.model !== name)
+          throw Error("请重新选择要删除的模型");
         accountTransactions.deleteModel(
           store,
           harnesses,

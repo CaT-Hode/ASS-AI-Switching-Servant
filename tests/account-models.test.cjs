@@ -177,6 +177,44 @@ test("deleting a model persists, clears stale selections and keeps other models 
   assert.equal(reload().state.modelSelections.pi["api:work"], undefined);
   assert.deepEqual(accounts(reload(), "pi"), ["api:work"]);
 });
+test("equivalent model snapshots with reordered keys can be edited and deleted after restart", (t) => {
+  const { dir, codex, store, harnesses: h } = setup(t);
+  const reorder = (m) => Object.fromEntries(Object.entries(m).reverse());
+  const old = store.public().providers.find((p) => p.id === "work").models[0];
+  tx.saveModel(
+    store,
+    h,
+    "work",
+    { ...old, displayName: "Edited" },
+    old.model,
+    reorder(old),
+  );
+  const edited = store.public().providers.find((p) => p.id === "work")
+    .models[0];
+  tx.deleteModel(store, h, "work", edited.model, reorder(edited));
+  const restored = new Store(dir, codex, crypto)
+    .public()
+    .providers.find((p) => p.id === "work");
+  assert.deepEqual(
+    restored.models.map((m) => m.model),
+    ["beta"],
+  );
+});
+test("stale deletion is rejected without deleting a changed model", (t) => {
+  const { store, harnesses: h } = setup(t);
+  const old = structuredClone(
+    store.public().providers.find((p) => p.id === "work").models[0],
+  );
+  store.model("work", { ...old, displayName: "Latest" }, old.model, old);
+  assert.throws(
+    () => tx.deleteModel(store, h, "work", old.model, old),
+    /已变化/,
+  );
+  assert.equal(
+    store.public().providers.find((p) => p.id === "work").models[0].displayName,
+    "Latest",
+  );
+});
 test("duplicate, invalid, deleted or stale model edits never overwrite current configuration", (t) => {
   const { store } = setup(t),
     old = structuredClone(
@@ -334,6 +372,11 @@ test("aggregated native models are read-only declarations and never leak keys or
     assert.ok(!JSON.stringify(sources).includes(forbidden));
   for (const malformed of ["invalid json", "null", "[]", "true"]) {
     fs.writeFileSync(path.join(agent, "models.json"), malformed);
-    assert.equal(modelSources(store.public(), h.snapshot(), { home }).find(s => s.kind === "native").models.length, 0);
+    assert.equal(
+      modelSources(store.public(), h.snapshot(), { home }).find(
+        (s) => s.kind === "native",
+      ).models.length,
+      0,
+    );
   }
 });

@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { isDeepStrictEqual } = require("node:util");
 const { atomic } = require("./config.cjs");
 const {
   parseImport,
@@ -188,7 +189,7 @@ class Store {
         : this.state.providers
             .find((p) => p.id === providerId)
             ?.models.find((m) => m.model === (originalName || input.model));
-    if (expected && JSON.stringify(current) !== JSON.stringify(expected))
+    if (expected && !isDeepStrictEqual(current, expected))
       throw new Error("模型配置已变化，请取消行内修改并重试");
     if (originalName && !current) throw new Error("原模型已移除，请刷新后重试");
     this.state = structuredClone(previous);
@@ -240,7 +241,7 @@ class Store {
             .find((p) => p.id === providerId)
             ?.models.find((m) => m.model === name);
     if (!current) throw new Error("模型不存在或已移除");
-    if (expected && JSON.stringify(current) !== JSON.stringify(expected))
+    if (expected && !isDeepStrictEqual(current, expected))
       throw new Error("模型配置已变化，请刷新后重试");
     const previous = this.state;
     this.state = structuredClone(previous);

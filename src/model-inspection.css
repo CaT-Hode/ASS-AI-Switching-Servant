@@ -34,6 +34,105 @@
 .model-icon.failed {
   color: #bc4b40;
 }
+.model-icon.delete-model {
+  color: #a75158;
+}
+.model-icon.delete-model:hover:not(:disabled) {
+  color: #bf3344;
+  background: #fff0f2;
+  border-color: #f1d5db;
+}
+.model-detail-section {
+  border-top: 1px solid #e7ecf4;
+  padding: 6px 0;
+}
+.model-detail-section > h3 {
+  margin: 0;
+}
+.model-section-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  padding: 13px 0;
+  border: 0;
+  background: transparent;
+  color: #40556e;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.model-section-toggle > span {
+  flex: 1;
+}
+.model-section-toggle:hover,
+.model-section-toggle[aria-expanded="true"] {
+  color: #0968cc;
+}
+.model-section-toggle > svg:last-child {
+  transition: transform 150ms ease-out;
+}
+.model-section-toggle[aria-expanded="true"] > svg:last-child {
+  transform: rotate(180deg);
+}
+.model-detail-section > div:not([hidden]) {
+  padding-top: 8px;
+}
+.modal.model-delete-confirm {
+  position: fixed;
+  margin: 0;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  box-sizing: border-box;
+  padding: 18px;
+  border-radius: 14px;
+}
+.model-delete-confirm::backdrop {
+  background: transparent;
+  backdrop-filter: none;
+}
+.modal.model-delete-confirm > header {
+  margin-bottom: 10px;
+}
+.modal.model-delete-confirm > header h2 {
+  font-size: 14px;
+  line-height: 1.4;
+}
+.delete-target {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.65;
+  color: #65758a;
+  margin: 0;
+}
+.delete-target svg {
+  color: #b47722;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.delete-target span {
+  overflow-wrap: anywhere;
+}
+.modal.model-delete-confirm > footer {
+  position: static;
+  margin-top: 18px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.model-delete-confirm .button.danger {
+  color: #b72e40;
+  border-color: #efd3d8;
+  background: #fff2f4;
+}
+@media (prefers-reduced-motion: reduce) {
+  .model-section-toggle > svg:last-child {
+    transition: none;
+  }
+}
 .model-icon:disabled {
   opacity: 0.45;
   cursor: not-allowed;

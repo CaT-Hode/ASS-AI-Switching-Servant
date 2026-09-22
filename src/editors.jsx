@@ -1,5 +1,13 @@
 import React, { useState, useRef, useEffect, useId } from "react";
-import { X, Loader2, Wallet, RotateCcw } from "lucide-react";
+import {
+  X,
+  Loader2,
+  Wallet,
+  RotateCcw,
+  Settings2,
+  ScanSearch,
+  ChevronDown,
+} from "lucide-react";
 const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const protocols = {
   "openai-responses": "Responses",
@@ -39,6 +47,7 @@ export function Modal({
   className = "wide",
   closeButton = true,
   fallbackFocus,
+  anchorRef,
 }) {
   const ref = useRef(null),
     closing = useRef(false),
@@ -47,6 +56,25 @@ export function Modal({
     const el = ref.current,
       previous = document.activeElement;
     el.showModal();
+    function position() {
+      if (!anchorRef?.current) return;
+      const anchor = anchorRef.current.getBoundingClientRect();
+      const bounds = el.getBoundingClientRect();
+      const left = Math.max(
+        12,
+        Math.min(anchor.right - bounds.width, innerWidth - bounds.width - 12),
+      );
+      const top =
+        anchor.bottom + bounds.height + 8 <= innerHeight - 12
+          ? anchor.bottom + 8
+          : Math.max(12, anchor.top - bounds.height - 8);
+      el.style.left = left + "px";
+      el.style.top = top + "px";
+    }
+    position();
+    const observer = anchorRef ? new ResizeObserver(position) : null;
+    observer?.observe(el);
+    if (anchorRef) window.addEventListener("resize", position);
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const offset = el.classList.contains("provider-side-dialog")
       ? "translateX(12px)"
@@ -66,6 +94,8 @@ export function Modal({
     });
     return () => {
       animation.cancel();
+      observer?.disconnect();
+      window.removeEventListener("resize", position);
       if (el.open) el.close();
       const target =
         previous?.isConnected && previous !== document.body
@@ -137,6 +167,7 @@ export function Modal({
       }}
       onCancel={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         close();
       }}
     >
@@ -173,7 +204,47 @@ function Stops({ selected }) {
     </div>
   );
 }
-export function ModelEditor({ provider, model, onSave, onClose, className }) {
+function ModelDetailSection({
+  title,
+  icon: Icon,
+  open,
+  onToggle,
+  disabled,
+  children,
+}) {
+  const id = useId();
+  if (!title) return children;
+  return (
+    <section className="model-detail-section">
+      <h3>
+        <button
+          type="button"
+          className="model-section-toggle"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={onToggle}
+          disabled={disabled}
+        >
+          <Icon size={17} aria-hidden="true" />
+          <span>{title}</span>
+          <ChevronDown size={16} aria-hidden="true" />
+        </button>
+      </h3>
+      <div id={id} hidden={!open}>
+        {children}
+      </div>
+    </section>
+  );
+}
+export function ModelEditor({
+  provider,
+  model,
+  onSave,
+  onClose,
+  className,
+  capabilities,
+}) {
+  const [section, setSection] = useState("configuration");
   const [draft, setDraft] = useState(() =>
     model
       ? structuredClone(model)
@@ -195,6 +266,7 @@ export function ModelEditor({ provider, model, onSave, onClose, className }) {
       () => model?.efforts.includes("ultra") || false,
     );
   const pending = useRef(0);
+  const dirty = !!model && JSON.stringify(draft) !== JSON.stringify(model);
   const gpt = draft.model.split("/").at(-1).toLowerCase().startsWith("gpt");
   const ceiling = gpt || allowUltra ? 5 : 4;
   const indexes = draft.efforts.map((e) => efforts.indexOf(e)),
@@ -243,220 +315,248 @@ export function ModelEditor({ provider, model, onSave, onClose, className }) {
   }
   return (
     <Modal
-      title={model ? "模型设置" : "添加模型"}
-      description={provider.name + " · 只作用于此模型"}
+      title={model ? "模型详情" : "添加模型"}
+      description={provider.name + (model ? " / " + model.model : "")}
       className={className}
       dismissible={!busy}
       onClose={onClose}
     >
-      <form onSubmit={save}>
-        <div className="form-grid">
-          <Field label="模型 ID">
-            <input
-              required
-              value={draft.model}
-              onChange={(e) => set("model", e.target.value)}
-              onBlur={() => {
-                if (!model) reset();
-              }}
-              placeholder="例如 xiaomi/mimo-x-pro-preview"
-            />
-          </Field>
-          <Field label="显示名称">
-            <input
-              value={draft.displayName}
-              onChange={(e) => set("displayName", e.target.value)}
-            />
-          </Field>
-          <Field label="接口类型">
-            <select
-              value={draft.wireApi}
-              disabled={provider.id === "official"}
-              onChange={(e) => set("wireApi", e.target.value)}
-            >
-              {Object.entries(protocols).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="最大输出 tokens">
-            <input
-              type="number"
-              min="1024"
-              max={draft.contextWindow}
-              value={draft.maxOutputTokens}
-              onChange={(e) => set("maxOutputTokens", Number(e.target.value))}
-            />
-          </Field>
-        </div>
-        <div className="form-section">
-          <div className="section-heading">
-            <h3>上下文窗口</h3>
-            <button
-              type="button"
-              className="text-button"
-              disabled={!draft.model}
-              onClick={reset}
-            >
-              <RotateCcw size={13} />
-              {provider.id === "official"
-                ? "恢复本机目录默认"
-                : "恢复模型默认值"}
-            </button>
-          </div>
-          <div className="context-input">
-            <input
-              aria-label="上下文 tokens"
-              type="number"
-              min="4096"
-              max="10000000"
-              value={draft.contextWindow}
-              onChange={(e) =>
-                setDraft((d) => ({
-                  ...d,
-                  contextWindow: Number(e.target.value),
-                  contextSource: "手动配置",
-                }))
-              }
-            />
-            <span>tokens</span>
-          </div>
-          <p className="hint">
-            来源：{draft.contextSource}。默认规则不是上游能力承诺。
-          </p>
-        </div>
-        <div className="form-section">
-          <div className="section-heading">
-            <h3>可选思维强度范围</h3>
-            <span className="range-value">
-              {efforts[low]} — {efforts[high]}
-            </span>
-          </div>
-          <p className="hint">
-            拖动两端选择进入 Codex 菜单的范围；实际支持以供应商响应为准。
-          </p>
-          <div className="range-control">
-            <div className="range-rail">
-              <i
-                style={{
-                  left: (low / 5) * 100 + "%",
-                  width: ((high - low) / 5) * 100 + "%",
-                }}
-              />
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="5"
-              step="1"
-              value={low}
-              aria-label="最低可选强度"
-              aria-valuetext={efforts[low]}
-              onChange={(e) =>
-                range(Math.min(Number(e.target.value), high), high)
-              }
-            />
-            <input
-              type="range"
-              min="0"
-              max="5"
-              step="1"
-              value={high}
-              aria-label="最高可选强度"
-              aria-valuetext={efforts[high]}
-              onChange={(e) =>
-                range(
-                  low,
-                  Math.max(low, Math.min(Number(e.target.value), ceiling)),
-                )
-              }
-            />
-          </div>
-          <Stops selected={draft.efforts} />
-          {!gpt && (
-            <label className="check-field ultra-opt">
+      <ModelDetailSection
+        title={capabilities ? "配置" : undefined}
+        icon={Settings2}
+        open={section === "configuration"}
+        onToggle={() =>
+          setSection(section === "configuration" ? null : "configuration")
+        }
+        disabled={busy}
+      >
+        <form onSubmit={save}>
+          <div className="form-grid">
+            <Field label="模型 ID">
               <input
-                type="checkbox"
-                checked={allowUltra}
-                onChange={(e) => {
-                  setAllowUltra(e.target.checked);
-                  if (!e.target.checked)
-                    selected(
-                      draft.efforts.filter((x) => x !== "ultra").length
-                        ? draft.efforts.filter((x) => x !== "ultra")
-                        : ["max"],
-                    );
+                required
+                value={draft.model}
+                onChange={(e) => set("model", e.target.value)}
+                onBlur={() => {
+                  if (!model) reset();
                 }}
+                placeholder="例如 xiaomi/mimo-x-pro-preview"
               />
-              允许非 GPT 模型使用 ultra（默认关闭，需上游支持）
-            </label>
-          )}
-          <details className="effort-details">
-            <summary>逐项选择（非连续范围）</summary>
-            <div className="effort-options">
-              {efforts.map((e, i) => (
-                <label
-                  key={e}
-                  className={draft.efforts.includes(e) ? "selected" : ""}
-                >
-                  <input
-                    type="checkbox"
-                    aria-label={"启用 " + e}
-                    disabled={i > ceiling}
-                    checked={draft.efforts.includes(e)}
-                    onChange={() =>
-                      selected(
-                        draft.efforts.includes(e)
-                          ? draft.efforts.filter((x) => x !== e)
-                          : efforts.filter(
-                              (x) => draft.efforts.includes(x) || x === e,
-                            ),
-                      )
-                    }
-                  />
-                  {e}
-                </label>
-              ))}
-            </div>
-          </details>
-          <div className="default-effort-heading">
-            <label htmlFor="default-effort">默认思维强度</label>
-            <strong>{draft.defaultEffort}</strong>
+            </Field>
+            <Field label="显示名称">
+              <input
+                value={draft.displayName}
+                onChange={(e) => set("displayName", e.target.value)}
+              />
+            </Field>
+            <Field label="接口类型">
+              <select
+                value={draft.wireApi}
+                disabled={provider.id === "official"}
+                onChange={(e) => set("wireApi", e.target.value)}
+              >
+                {Object.entries(protocols).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="最大输出 tokens">
+              <input
+                type="number"
+                min="1024"
+                max={draft.contextWindow}
+                value={draft.maxOutputTokens}
+                onChange={(e) => set("maxOutputTokens", Number(e.target.value))}
+              />
+            </Field>
           </div>
-          <input
-            id="default-effort"
-            className="single-range"
-            type="range"
-            min="0"
-            max={draft.efforts.length - 1}
-            step="1"
-            value={Math.max(0, draft.efforts.indexOf(draft.defaultEffort))}
-            aria-valuetext={draft.defaultEffort}
-            onChange={(e) =>
-              set("defaultEffort", draft.efforts[Number(e.target.value)])
-            }
-          />
-        </div>
-        <label className="check-field">
-          <input
-            type="checkbox"
-            checked={draft.enabled}
-            onChange={(e) => set("enabled", e.target.checked)}
-          />
-          在模型菜单中启用
-        </label>
-        {error && <p className="error-box">{error}</p>}
-        <footer>
-          <Button type="button" onClick={onClose}>
-            取消
-          </Button>
-          <Button primary busy={busy} type="submit">
-            保存模型
-          </Button>
-        </footer>
-      </form>
+          <div className="form-section">
+            <div className="section-heading">
+              <h3>上下文窗口</h3>
+              <button
+                type="button"
+                className="text-button"
+                disabled={!draft.model}
+                onClick={reset}
+              >
+                <RotateCcw size={13} />
+                {provider.id === "official"
+                  ? "恢复本机目录默认"
+                  : "恢复模型默认值"}
+              </button>
+            </div>
+            <div className="context-input">
+              <input
+                aria-label="上下文 tokens"
+                type="number"
+                min="4096"
+                max="10000000"
+                value={draft.contextWindow}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    contextWindow: Number(e.target.value),
+                    contextSource: "手动配置",
+                  }))
+                }
+              />
+              <span>tokens</span>
+            </div>
+            <p className="hint">
+              来源：{draft.contextSource}。默认规则不是上游能力承诺。
+            </p>
+          </div>
+          <div className="form-section">
+            <div className="section-heading">
+              <h3>可选思维强度范围</h3>
+              <span className="range-value">
+                {efforts[low]} — {efforts[high]}
+              </span>
+            </div>
+            <p className="hint">
+              拖动两端选择进入 Codex 菜单的范围；实际支持以供应商响应为准。
+            </p>
+            <div className="range-control">
+              <div className="range-rail">
+                <i
+                  style={{
+                    left: (low / 5) * 100 + "%",
+                    width: ((high - low) / 5) * 100 + "%",
+                  }}
+                />
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="5"
+                step="1"
+                value={low}
+                aria-label="最低可选强度"
+                aria-valuetext={efforts[low]}
+                onChange={(e) =>
+                  range(Math.min(Number(e.target.value), high), high)
+                }
+              />
+              <input
+                type="range"
+                min="0"
+                max="5"
+                step="1"
+                value={high}
+                aria-label="最高可选强度"
+                aria-valuetext={efforts[high]}
+                onChange={(e) =>
+                  range(
+                    low,
+                    Math.max(low, Math.min(Number(e.target.value), ceiling)),
+                  )
+                }
+              />
+            </div>
+            <Stops selected={draft.efforts} />
+            {!gpt && (
+              <label className="check-field ultra-opt">
+                <input
+                  type="checkbox"
+                  checked={allowUltra}
+                  onChange={(e) => {
+                    setAllowUltra(e.target.checked);
+                    if (!e.target.checked)
+                      selected(
+                        draft.efforts.filter((x) => x !== "ultra").length
+                          ? draft.efforts.filter((x) => x !== "ultra")
+                          : ["max"],
+                      );
+                  }}
+                />
+                允许非 GPT 模型使用 ultra（默认关闭，需上游支持）
+              </label>
+            )}
+            <details className="effort-details">
+              <summary>逐项选择（非连续范围）</summary>
+              <div className="effort-options">
+                {efforts.map((e, i) => (
+                  <label
+                    key={e}
+                    className={draft.efforts.includes(e) ? "selected" : ""}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={"启用 " + e}
+                      disabled={i > ceiling}
+                      checked={draft.efforts.includes(e)}
+                      onChange={() =>
+                        selected(
+                          draft.efforts.includes(e)
+                            ? draft.efforts.filter((x) => x !== e)
+                            : efforts.filter(
+                                (x) => draft.efforts.includes(x) || x === e,
+                              ),
+                        )
+                      }
+                    />
+                    {e}
+                  </label>
+                ))}
+              </div>
+            </details>
+            <div className="default-effort-heading">
+              <label htmlFor="default-effort">默认思维强度</label>
+              <strong>{draft.defaultEffort}</strong>
+            </div>
+            <input
+              id="default-effort"
+              className="single-range"
+              type="range"
+              min="0"
+              max={draft.efforts.length - 1}
+              step="1"
+              value={Math.max(0, draft.efforts.indexOf(draft.defaultEffort))}
+              aria-valuetext={draft.defaultEffort}
+              onChange={(e) =>
+                set("defaultEffort", draft.efforts[Number(e.target.value)])
+              }
+            />
+          </div>
+          <label className="check-field">
+            <input
+              type="checkbox"
+              checked={draft.enabled}
+              onChange={(e) => set("enabled", e.target.checked)}
+            />
+            在模型菜单中启用
+          </label>
+          {error && <p className="error-box">{error}</p>}
+          <footer>
+            <Button type="button" disabled={busy} onClick={onClose}>
+              取消
+            </Button>
+            <Button primary busy={busy} type="submit">
+              保存模型
+            </Button>
+          </footer>
+        </form>
+      </ModelDetailSection>
+      {capabilities && (
+        <ModelDetailSection
+          title="能力与检测"
+          icon={ScanSearch}
+          open={section === "capabilities"}
+          onToggle={() =>
+            setSection(section === "capabilities" ? null : "capabilities")
+          }
+          disabled={busy}
+        >
+          {dirty && (
+            <p className="hint" role="status">
+              修改尚未保存；检测仍使用已保存的 {model.model} 配置。
+            </p>
+          )}
+          {capabilities}
+        </ModelDetailSection>
+      )}
     </Modal>
   );
 }

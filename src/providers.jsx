@@ -6,18 +6,18 @@ import {
   Settings2,
   Wallet,
   Trash2,
-  ScanSearch,
   Check,
   Layers,
   UserRound,
   RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 import { Modal, ModelEditor, ProviderEditor } from "./editors.jsx";
 import { ActionMenu } from "./menus.jsx";
 import {
   modelKey,
   ModelCheckButton,
-  ModelCapabilityDialog,
+  ModelCapabilities,
   ProviderModelCatalog,
 } from "./model-inspection.jsx";
 import "./providers.css";
@@ -227,12 +227,14 @@ function InlineModel({
   state,
   act,
   busy,
-  onAdvanced,
-  onInspect,
+  onDetails,
 }) {
   const [saving, setSaving] = useState(false),
     [error, setError] = useState(""),
-    [message, setMessage] = useState("");
+    [message, setMessage] = useState(""),
+    [deleting, setDeleting] = useState(null);
+  const deleteButton = useRef(null),
+    deletePending = useRef(false);
   const value = draft?.value || model,
     dirty = !!draft,
     disabled = saving || !!busy;
@@ -267,6 +269,34 @@ function InlineModel({
         e.message.replace(/^Error invoking remote method '[^']+': Error: /, ""),
       );
     } finally {
+      setSaving(false);
+    }
+  }
+  async function remove() {
+    if (deletePending.current || !deleting) return;
+    deletePending.current = true;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await api.call(
+        "delete-model",
+        p.id,
+        deleting.model,
+        deleting,
+      );
+      if (!result?.removed) throw Error("删除未完成，请重试");
+      setDeleting(null);
+    } catch (e) {
+      setError(
+        "删除失败：" +
+          e.message.replace(
+            /^Error invoking remote method '[^']+': Error: /,
+            "",
+          ),
+      );
+    } finally {
+      deletePending.current = false;
       setSaving(false);
     }
   }
@@ -406,29 +436,79 @@ function InlineModel({
           ) : (
             <>
               <ModelCheckButton provider={p} {...{ model, state, act, busy }} />
-              <ActionMenu
-                label={model.model + " 模型操作"}
-                text="模型操作"
-                items={[
-                  { label: "详细设置", icon: Settings2, action: onAdvanced },
-                  { label: "能力详情", icon: ScanSearch, action: onInspect },
-                  {
-                    label: "删除模型",
-                    icon: Trash2,
-                    danger: true,
-                    action: () =>
-                      act("delete-model", () =>
-                        api.call("delete-model", p.id, model.model, model),
-                      ),
-                  },
-                ]}
+              <button
+                type="button"
+                className="model-icon"
+                aria-label={"模型详情 " + model.model}
+                title="模型详情"
+                onClick={onDetails}
                 disabled={disabled}
-              />
+              >
+                <Settings2 size={17} />
+              </button>
+              <button
+                type="button"
+                ref={deleteButton}
+                className="model-icon delete-model"
+                aria-label={"删除模型 " + model.model}
+                title="删除模型"
+                onClick={() => {
+                  setError("");
+                  setDeleting(structuredClone(model));
+                }}
+                disabled={disabled}
+              >
+                <Trash2 size={17} />
+              </button>
             </>
           )}
         </div>
       </footer>
-      {error && (
+      {deleting && (
+        <Modal
+          title="删除此模型？"
+          className="model-delete-confirm"
+          anchorRef={deleteButton}
+          closeButton={false}
+          dismissible={!saving}
+          onClose={() => setDeleting(null)}
+          fallbackFocus={() =>
+            document.querySelector(
+              '.provider-model-dialog input[aria-label="搜索已配置模型"]',
+            )
+          }
+        >
+          <p className="delete-target">
+            <AlertTriangle size={17} aria-hidden="true" />
+            <span>{deleting.model}</span>
+          </p>
+          {error && (
+            <p className="inline-model-error" role="alert">
+              {error}
+            </p>
+          )}
+          <footer>
+            <button
+              type="button"
+              className="button"
+              data-autofocus
+              disabled={saving}
+              onClick={() => setDeleting(null)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="button danger"
+              disabled={saving}
+              onClick={remove}
+            >
+              {saving ? "删除中…" : "确定"}
+            </button>
+          </footer>
+        </Modal>
+      )}
+      {error && !deleting && (
         <p className="inline-model-error" role="alert">
           {error}
         </p>
@@ -455,7 +535,6 @@ export function Providers({
     [modelSearch, setModelSearch] = useState(""),
     [editor, setEditor] = useState(null),
     [providerEditor, setProviderEditor] = useState(null),
-    [inspection, setInspection] = useState(null),
     [directory, setDirectory] = useState(null),
     [drafts, setDrafts] = useState({});
   const gallerySearch = useRef(null),
@@ -472,7 +551,7 @@ export function Providers({
         .includes(search.toLowerCase()),
   );
   const p = all.find((p) => p.id === activeProvider);
-  const sideOpen = !!(editor || inspection || directory || providerEditor);
+  const sideOpen = !!(editor || directory || providerEditor);
   const revision = state.modelDirectoryRevisions?.[p?.id] || 0;
   useEffect(() => {
     if (p && (p.readOnly || p.hasKey || p.id === "official"))
@@ -780,8 +859,7 @@ export function Providers({
                     change={(k, v) => editDraft(m, k, v)}
                     discard={() => discard(m)}
                     {...{ state, act, busy }}
-                    onAdvanced={() => setEditor({ provider: p, model: m })}
-                    onInspect={() => setInspection({ provider: p, model: m })}
+                    onDetails={() => setEditor({ provider: p, model: m })}
                   />
                 ),
               )}
@@ -805,6 +883,11 @@ export function Providers({
         <ModelEditor
           {...editor}
           className="provider-side-dialog"
+          capabilities={
+            editor.model && (
+              <ModelCapabilities {...editor} {...{ state, act, busy }} />
+            )
+          }
           onClose={() => setEditor(null)}
           onSave={(m) =>
             api.call(
@@ -815,14 +898,6 @@ export function Providers({
               editor.model || undefined,
             )
           }
-        />
-      )}
-      {inspection && (
-        <ModelCapabilityDialog
-          {...inspection}
-          {...{ state, act, busy }}
-          className="provider-side-dialog"
-          onClose={() => setInspection(null)}
         />
       )}
       {providerEditor && (

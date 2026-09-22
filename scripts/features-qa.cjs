@@ -151,22 +151,55 @@ fs.mkdirSync(codex);
       .getByRole("dialog", { name: "检测示例 · 发现模型", exact: true })
       .waitFor({ state: "hidden" });
     await page
-      .getByRole("button", { name: "probe-a 模型操作", exact: true })
+      .getByRole("button", { name: "模型详情 probe-a", exact: true })
       .click();
-    await page.getByRole("menuitem", { name: "能力详情", exact: true }).click();
+    const details = page.getByRole("dialog", { name: "模型详情", exact: true });
+    await details.getByLabel("模型 ID", { exact: true }).fill("unsaved-model");
+    await details.getByLabel("显示名称", { exact: true }).fill("未保存名称");
+    await details
+      .getByRole("button", { name: "能力与检测", exact: true })
+      .click();
+    await details
+      .getByRole("status")
+      .filter({ hasText: "检测仍使用已保存的 probe-a" })
+      .waitFor();
     await page.getByRole("button", { name: "自动检测能力" }).click();
     await page.getByText("已观察到有效调用", { exact: true }).waitFor();
     assert.equal(
       await page.getByText("参数接受 · 非法值被拒", { exact: true }).count(),
       2,
     );
+    const capabilitySnapshot = await app.evaluate(() =>
+      global.assTest.snapshot(),
+    );
+    assert.ok(
+      capabilitySnapshot.capabilities[JSON.stringify(["qa_models", "probe-a"])],
+    );
+    assert.equal(
+      capabilitySnapshot.capabilities[
+        JSON.stringify(["qa_models", "unsaved-model"])
+      ],
+      undefined,
+    );
+    await details.getByRole("button", { name: "配置", exact: true }).click();
+    assert.equal(
+      await details.getByLabel("模型 ID", { exact: true }).inputValue(),
+      "unsaved-model",
+    );
+    assert.equal(
+      await details.getByLabel("显示名称", { exact: true }).inputValue(),
+      "未保存名称",
+    );
+    await details
+      .getByRole("button", { name: "能力与检测", exact: true })
+      .click();
     await page.screenshot({
       path: path.join(output, "capabilities.png"),
       animations: "disabled",
     });
     await page.keyboard.press("Escape");
     await page
-      .getByRole("dialog", { name: /^模型能力/ })
+      .getByRole("dialog", { name: "模型详情", exact: true })
       .waitFor({ state: "hidden" });
     await page.keyboard.press("Escape");
     await page.locator(".provider-model-dialog").waitFor({ state: "hidden" });
