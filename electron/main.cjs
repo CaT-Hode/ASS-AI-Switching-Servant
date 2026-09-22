@@ -761,6 +761,16 @@ else {
         }
         return { candidates };
       });
+      register("client-open-desktop", async (id) => {
+        const executable = harnesses.desktop(id);
+        if (!executable) throw Error("未找到已安装的桌面客户端，请重新自动识别");
+        const error = await shell.openPath(executable);
+        if (error) throw Error("无法打开桌面客户端，请检查安装文件");
+        return {
+          ok: true,
+          message: "已打开 OpenCode Desktop；沿用其原生账户，没有注入或切换凭据。",
+        };
+      });
       register("client-location", async (id, location) => {
         harnesses.setExecutable(id, location);
         await harnesses.refreshOAuth();

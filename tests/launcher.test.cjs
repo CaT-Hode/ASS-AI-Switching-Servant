@@ -98,3 +98,55 @@ test("ambiguous installations are returned separately and package bin cannot esc
     /超出/,
   );
 });
+
+test("OpenCode Desktop outside PATH is detected without being treated as a CLI", (t) => {
+  const { root, write, env } = fixture(t);
+  const relative = "local/Programs/@opencode-aidesktop";
+  write(relative + "/OpenCode.exe");
+  write(relative + "/resources/app.asar");
+  const desktop = path.join(root, relative, "OpenCode.exe");
+  const candidates = discoverLaunchers("opencode", {
+    ...env, LOCALAPPDATA: path.join(root, "local"),
+  });
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].kind, "desktop");
+  assert.equal(candidates[0].installed, true);
+  assert.equal(candidates[0].ready, false);
+  assert.equal(candidates[0].executable, "");
+  assert.equal(candidates[0].desktopExecutable, desktop);
+  assert.equal(resolveLauncher("opencode", path.dirname(desktop), env).kind, "desktop");
+  assert.match(candidates[0].message, /OpenCode CLI/);
+});
+
+test("OpenCode Desktop and CLI remain distinct, with supported bundled CLI detection", (t) => {
+  const { root, write, env } = fixture(t);
+  write("runtime/opencode.exe");
+  write("local/Programs/OpenCode/OpenCode.exe");
+  write("local/Programs/OpenCode/resources/app.asar");
+  write("local/Programs/OpenCode/resources/opencode-cli.exe");
+  const candidates = discoverLaunchers("opencode", {
+    ...env, LOCALAPPDATA: path.join(root, "local"),
+  });
+  assert.equal(candidates.filter(c => c.ready).length, 2);
+  assert.equal(candidates.filter(c => c.kind === "desktop").length, 1);
+  const directory = resolveLauncher("opencode", path.join(root, "local/Programs/OpenCode"), env);
+  assert.equal(directory.kind, "desktop-cli");
+  assert.equal(directory.ready, true);
+  assert.match(directory.executable, /opencode-cli\.exe$/);
+});
+
+test("OpenCode desktop detection skips stale paths and does not confuse standalone CLI", (t) => {
+  const { root, write, env } = fixture(t);
+  write("local/Programs/@opencode-aidesktop/resources/app.asar");
+  assert.equal(discoverLaunchers("opencode", { ...env, LOCALAPPDATA: path.join(root, "local") }).length, 0);
+  write("runtime/opencode.exe");
+  assert.equal(resolveLauncher("opencode", path.join(root, "runtime/opencode.exe"), env).kind, "executable");
+  assert.equal(discoverLaunchers("opencode", env).length, 1);
+});
+
+test("OpenCode ASAR virtual-directory metadata is recognized in Electron as well as Node", (t) => {
+  const { root, write, env } = fixture(t);
+  write("desktop/OpenCode.exe");
+  write("desktop/resources/app.asar/package.json", JSON.stringify({name:"@opencode-ai/desktop"}));
+  assert.equal(resolveLauncher("opencode", path.join(root,"desktop/OpenCode.exe"),env).kind,"desktop");
+});

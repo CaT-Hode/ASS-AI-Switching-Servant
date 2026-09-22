@@ -24,11 +24,7 @@ import {
 } from "./account-dialogs.jsx";
 import { ActionMenu } from "./menus.jsx";
 import { AccountProfile } from "./account-profile.jsx";
-import {
-  ConnectionPill,
-  ConnectionStatus,
-  ConnectionService,
-} from "./connections.jsx";
+import { ConnectionStatus, ConnectionService } from "./connections.jsx";
 const api = window.ass;
 
 export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
@@ -275,6 +271,11 @@ function AccountCard({
           )}
           <button
             className="button"
+            title={
+              client.launcher?.kind === "desktop"
+                ? "独立账户启动需要 OpenCode CLI；可在右上角打开桌面端"
+                : undefined
+            }
             disabled={
               !client.executable ||
               !!busy ||
@@ -401,12 +402,15 @@ export function Clients({
                 <span>
                   <strong>{c.name}</strong>
                   <small>
-                    {c.executable ? "已找到客户端" : "未检测到安装"}
+                    {c.launcher?.kind === "desktop"
+                      ? "已安装桌面端"
+                      : c.executable
+                        ? "已找到客户端"
+                        : "未检测到安装"}
                   </small>
                 </span>
                 <ChevronRight size={14} />
               </button>
-              <ConnectionPill client={c} {...{ state, busy, onManage }} />
             </div>
           ))}
           {nativeServices.map((s) => (
@@ -461,6 +465,22 @@ export function Clients({
                 <span className="count">{client.accounts.length}</span>
               </h2>
               <div className="actions">
+                {client.desktop && (
+                  <button
+                    className="icon-button"
+                    title="打开 OpenCode Desktop"
+                    aria-label="打开 OpenCode Desktop"
+                    disabled={!!busy}
+                    onClick={() =>
+                      act("client-open-desktop", async () => {
+                        const result = await api.call("client-open-desktop", client.id);
+                        setNotice(result.message);
+                      })
+                    }
+                  >
+                    <ExternalLink size={16} />
+                  </button>
+                )}
                 <button
                   className="button"
                   disabled={!!busy}
@@ -483,7 +503,7 @@ export function Clients({
                 }
               </div>
             </header>
-            <ConnectionStatus {...{ client, state }} />
+            <ConnectionStatus {...{ client, state, busy, onManage }} />
             <div className="client-account-grid">
               {client.accounts.map((a) => (
                 <AccountCard
@@ -536,10 +556,13 @@ export function Clients({
               <div className="client-location" role="status">
                 <p
                   className={
-                    "launcher-state " + (client.launcher?.ready ? "ready" : "")
+                    "launcher-state " +
+                    (client.launcher?.ready || client.launcher?.installed ? "ready" : "")
                   }
                 >
-                  {client.launcher?.ready && <Check size={14} />}
+                  {(client.launcher?.ready || client.launcher?.installed) && (
+                    <Check size={14} />
+                  )}
                   {client.launcher?.message || "未检测到安装"}
                 </p>
                 {client.launcher?.location && (

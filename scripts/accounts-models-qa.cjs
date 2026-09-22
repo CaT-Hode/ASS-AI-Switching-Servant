@@ -335,7 +335,7 @@ async function run() {
     );
     assert.equal(
       await page.locator(".client-list").getByRole("switch").count(),
-      5,
+      0,
     );
     const nativeCounts = { codex: 1, claude: 1, opencode: 2, pi: 3, dsh: 2 };
     for (const [id, name] of Object.entries({
@@ -346,6 +346,8 @@ async function run() {
       dsh: "DeepSeek Harness",
     })) {
       await chooseClient(name);
+      assert.equal(await page.getByRole("switch").count(), 1);
+      assert.equal(await page.locator(".client-panel .connection-status").getByRole("switch", {name: name + " ASS 接入", exact: true}).count(), 1);
       const s = await snapshot(),
         c = s.harnesses.clients.find((c) => c.id === id);
       assert.equal(

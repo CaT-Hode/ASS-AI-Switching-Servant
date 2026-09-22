@@ -32,6 +32,7 @@ const allowed = [
   "client-refresh",
   "client-executable",
   "client-detect",
+  "client-open-desktop",
   "client-location",
   "client-workspace",
   "client-launch",

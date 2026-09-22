@@ -17,6 +17,14 @@ const {
 } = require("../core/oauth-import.cjs");
 const { parseImport } = require("../core/models.cjs");
 const { Router } = require("../core/router.cjs");
+function desktopFixture(root) {
+  const local = path.join(root, "local");
+  const desktop = path.join(local, "Programs", "@opencode-aidesktop", "OpenCode.exe");
+  fs.mkdirSync(path.join(path.dirname(desktop), "resources"), { recursive: true });
+  fs.writeFileSync(desktop, "synthetic executable");
+  fs.writeFileSync(path.join(path.dirname(desktop), "resources/app.asar"), "synthetic archive");
+  return { desktop, launchEnv: { PATH: "", USERPROFILE: root, LOCALAPPDATA: local } };
+}
 const providers = parseImport({
   providers: [
     {
@@ -51,6 +59,39 @@ function temp(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
+
+test("desktop-only OpenCode is displayed as installed and never launched with CLI credentials", async (t) => {
+  const root = temp(t), { desktop, launchEnv } = desktopFixture(root);
+  const manager = new HarnessManager(root, () => ({providers: []}), [], path.join(root,"codex"), { home:root, env:{}, launchEnv });
+  await manager.refreshOAuth();
+  const client = manager.snapshot().clients.find(c => c.id === "opencode");
+  assert.equal(client.launcher.installed, true);
+  assert.equal(client.executable, "");
+  assert.equal(client.desktop, desktop);
+  await assert.rejects(manager.launch("opencode", "not-an-account", "login"), /OpenCode CLI/);
+  assert.equal(fs.existsSync(path.join(root,"clients")), false);
+  manager.setExecutable("opencode", desktop);
+  const restored = new HarnessManager(root, () => ({providers: []}), [], path.join(root,"codex"), { home:root, env:{}, launchEnv });
+  assert.equal(restored.launcher("opencode").kind, "desktop");
+  assert.equal(restored.desktop("opencode"), desktop);
+  fs.unlinkSync(desktop);
+  assert.equal(restored.desktop("opencode"), null);
+});
+
+test("auto-discovery prefers CLI when Desktop is also present and respects explicit Desktop selection", async (t) => {
+  const root = temp(t), { desktop, launchEnv } = desktopFixture(root);
+  const bin = path.join(root, "bin"), cli = path.join(bin, "opencode.exe");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(cli, "synthetic CLI");
+  launchEnv.PATH = bin;
+  const manager = new HarnessManager(root, () => ({providers: []}), [], path.join(root,"codex"), { home:root, env:{}, launchEnv });
+  await manager.refreshOAuth();
+  assert.equal(manager.launcher("opencode").executable, cli);
+  assert.equal(manager.desktop("opencode"), desktop);
+  manager.setExecutable("opencode", desktop);
+  await manager.refreshOAuth();
+  assert.equal(manager.launcher("opencode").kind, "desktop");
+});
 test("DeepSeek and Go are API accounts; Claude filters incompatible models", () => {
   assert.equal(apiAccounts("dsh", providers)[0].badge, "DeepSeek API");
   assert.equal(apiAccounts("opencode", providers)[1].badge, "OpenCode Go API");

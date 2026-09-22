@@ -5,6 +5,7 @@ import "./connections.css";
 const api = window.ass;
 export function ConnectionPill({ client, state, onManage, busy }) {
   const enabled = state.connections.clients[client.id].enabled;
+  const desktopOnly = client.launcher?.kind === "desktop";
   return (
     <button
       type="button"
@@ -12,12 +13,14 @@ export function ConnectionPill({ client, state, onManage, busy }) {
       aria-checked={enabled}
       aria-label={client.name + " ASS 接入"}
       title={
-        enabled
+        desktopOnly && !enabled
+          ? "桌面端已安装；ASS 接入需要 OpenCode CLI"
+          : enabled
           ? "断开 " + client.name + " 接入"
           : "开启 " + client.name + " 接入"
       }
       className="connection-switch"
-      disabled={!!busy || state.connections.busy}
+      disabled={!!busy || state.connections.busy || (desktopOnly && !enabled)}
       onClick={() => onManage({ scope: client.id, enabled: !enabled })}
     >
       <span>{enabled ? "已接入" : "未接入"}</span>
@@ -27,7 +30,7 @@ export function ConnectionPill({ client, state, onManage, busy }) {
     </button>
   );
 }
-export function ConnectionStatus({ client, state }) {
+export function ConnectionStatus({ client, state, busy, onManage }) {
   const connection = state.connections.clients[client.id];
   const sessions = state.connections.processes.sessions.filter(
     (s) => s.harness === client.id && s.status !== "gone",
@@ -37,18 +40,23 @@ export function ConnectionStatus({ client, state }) {
       className="connection-status"
       aria-label={client.name + " 接入控制"}
     >
-      <div className="connection-metrics">
-        <span>{connection.active} 个请求</span>
-        <span>{sessions.length} 个窗口</span>
-        <span>{connection.files} 个注入文件</span>
+      <div className="connection-overview">
+        <div className="connection-metrics">
+          <span>{connection.active} 个请求</span>
+          <span>{sessions.length} 个窗口</span>
+          <span>{connection.files} 个注入文件</span>
+        </div>
+        {client.launcher?.kind === "desktop" ? (
+          <small>桌面端已安装；独立账户与路由接入需要 OpenCode CLI。</small>
+        ) : connection.enabled ? (
+          <small>
+            {client.id === "codex"
+              ? "App 配置已接入，任务结束后重启生效。"
+              : "API 路由仅影响从 ASS 新启动的窗口。"}
+          </small>
+        ) : null}
       </div>
-      {connection.enabled && (
-        <small>
-          {client.id === "codex"
-            ? "App 配置已接入，任务结束后重启生效。"
-            : "API 路由仅影响从 ASS 新启动的窗口。"}
-        </small>
-      )}
+      <ConnectionPill {...{ client, state, busy, onManage }} />
     </section>
   );
 }

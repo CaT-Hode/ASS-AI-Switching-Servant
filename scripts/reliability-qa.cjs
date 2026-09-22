@@ -474,7 +474,7 @@ let app,
     const c = s.harnesses.clients.find((c) => c.id === id);
     await page
       .getByRole("button", {
-        name: new RegExp("^" + c.name + " (已找到客户端|未检测到安装)$"),
+        name: new RegExp("^" + c.name + " (已找到客户端|已安装桌面端|未检测到安装)$"),
       })
       .click();
     for (const a of c.accounts.filter(

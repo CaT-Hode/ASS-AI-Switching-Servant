@@ -81,6 +81,32 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
   if (!path.isAbsolute(selectedPath)) return fail("请选择绝对路径");
   const info = stat(location);
   if (!info) return fail("原路径已不存在，请重新选择程序或目录");
+  // Electron Desktop is not the CLI: it ignores auth/model arguments and uses
+  // a shared application profile. Detect it without launching it or injecting
+  // account-specific settings into the user's existing desktop instance.
+  if (harness === "opencode") {
+    const desktop = info.isDirectory()
+      ? path.join(location, "OpenCode.exe")
+      : location;
+    if (
+      path.basename(desktop).toLowerCase() === "opencode.exe" &&
+      stat(desktop)?.isFile() &&
+      (stat(path.join(path.dirname(desktop), "resources", "app.asar"))?.isFile() ||
+        // Electron presents ASAR as a directory; plain Node presents a file.
+        json(path.join(path.dirname(desktop), "resources", "app.asar", "package.json")).name === "@opencode-ai/desktop" ||
+        json(path.join(path.dirname(desktop), "resources", "app", "package.json")).name === "@opencode-ai/desktop")
+    ) {
+      const bundledCli = path.join(path.dirname(desktop), "resources", "opencode-cli.exe");
+      if (info.isDirectory() && stat(bundledCli)?.isFile())
+        return launch(bundledCli, [], "desktop-cli", "OpenCode Desktop · 随附 CLI");
+      return {
+        ...fail("已安装 OpenCode Desktop；独立账户与路由接入需要 OpenCode CLI"),
+        installed: true,
+        kind: "desktop",
+        desktopExecutable: desktop,
+      };
+    }
+  }
   if (info.isFile()) {
     const ext = path.extname(location).toLowerCase();
     if ([".exe", ".cmd", ".ps1"].includes(ext))
@@ -150,6 +176,25 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
 function searchLocations(harness, env = process.env) {
   const home = env.USERPROFILE || os.homedir();
   const locations = [findExecutable(harness, env)];
+  if (harness === "opencode") {
+    // Windows Desktop installers do not necessarily register a PATH command.
+    // Keep this bounded to known install locations; never recursively scan disks.
+    const roots = [
+      env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "Programs"),
+      env.ProgramFiles,
+      env["ProgramFiles(x86)"],
+    ].filter(Boolean);
+    for (const root of roots)
+      for (const folder of ["@opencode-aidesktop", "OpenCode"])
+        locations.push(
+          path.join(root, folder, "resources", "opencode-cli.exe"),
+          path.join(root, folder, "OpenCode.exe"),
+        );
+    locations.push(
+      path.join(home, ".opencode", "bin", "opencode.exe"),
+      path.join(home, ".bun", "bin", "opencode.exe"),
+    );
+  }
   if (harness === "dsh") {
     const roots = [
       home,
@@ -174,9 +219,9 @@ function discoverLaunchers(
     seen = new Set();
   for (const location of locations) {
     const result = resolveLauncher(harness, location, env);
-    if (!result.ready) continue;
+    if (!result.ready && result.kind !== "desktop") continue;
     const identity = JSON.stringify([
-      result.executable,
+      result.desktopExecutable || result.executable,
       result.args,
     ]).toLowerCase();
     if (!seen.has(identity)) {

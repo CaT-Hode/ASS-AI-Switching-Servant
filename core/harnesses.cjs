@@ -333,6 +333,7 @@ class HarnessManager {
     };
     this.nativeHome = options.home || os.homedir();
     this.nativeEnv = options.env || process.env;
+    this.launchEnv = options.launchEnv || process.env;
     this.state.apiBindings =
       this.state.apiBindings && typeof this.state.apiBindings === "object"
         ? this.state.apiBindings
@@ -360,12 +361,7 @@ class HarnessManager {
   }
   async refreshOAuth() {
     for (const { id } of SPECS) {
-      if (!this.state.executables[id]) {
-        const candidates = discoverLaunchers(id);
-        this.discovery[id] = candidates;
-        this.detected[id] =
-          candidates.length === 1 ? candidates[0].location : "";
-      }
+      if (!this.state.executables[id] || id === "opencode") this.detect(id);
     }
     const pi = this.launcher("pi");
     this.piProviders = await piOAuthProviders(pi.ready ? pi.entryPoint : "");
@@ -373,7 +369,9 @@ class HarnessManager {
   launcher(harness) {
     this.spec(harness);
     const selected = this.state.executables[harness];
-    if (!selected && this.discovery[harness]?.length > 1) {
+    const candidates = this.discovery[harness] || [];
+    const ready = candidates.filter((c) => c.ready);
+    if (!selected && (ready.length || candidates.length) > 1) {
       return {
         ...resolveLauncher(harness, ""),
         message: "检测到多套客户端，点击自动识别后选择要使用的一套",
@@ -381,12 +379,31 @@ class HarnessManager {
     }
     return resolveLauncher(
       harness,
-      selected || this.detected[harness] || findExecutable(harness),
+      selected || this.detected[harness] || findExecutable(harness, this.launchEnv),
+      this.launchEnv,
     );
   }
   detect(harness) {
     this.spec(harness);
-    return discoverLaunchers(harness);
+    const candidates = discoverLaunchers(harness, this.launchEnv);
+    this.discovery[harness] = candidates;
+    const ready = candidates.filter((c) => c.ready);
+    const preferred = ready.length ? ready : candidates;
+    this.detected[harness] = preferred.length === 1 ? preferred[0].location : "";
+    return candidates;
+  }
+  desktop(harness) {
+    this.spec(harness);
+    const selected = this.state.executables[harness];
+    const candidates = [
+      ...(selected ? [resolveLauncher(harness, selected, this.launchEnv)] : []),
+      ...(this.discovery[harness] || []),
+    ];
+    const desktop = candidates.find((c) => c.kind === "desktop");
+    // Recheck immediately before exposing/opening an executable; no stale paths.
+    if (!desktop) return null;
+    const current = resolveLauncher(harness, desktop.desktopExecutable, this.launchEnv);
+    return current.kind === "desktop" ? current.desktopExecutable : null;
   }
   oauthSources() {
     return enumerateSources(
@@ -509,6 +526,7 @@ class HarnessManager {
           ...s,
           executable: this.launcher(s.id).executable,
           launcher: this.launcher(s.id),
+          desktop: this.desktop(s.id),
           selected: accounts.some((a) => a.id === saved)
             ? saved
             : legacy.length === 1
@@ -642,8 +660,8 @@ class HarnessManager {
   }
   setExecutable(harness, file) {
     this.spec(harness);
-    const launcher = resolveLauncher(harness, file);
-    if (!launcher.ready) throw new Error(launcher.message);
+    const launcher = resolveLauncher(harness, file, this.launchEnv);
+    if (!launcher.ready && launcher.kind !== "desktop") throw new Error(launcher.message);
     this.state.executables[harness] = file;
     this.save();
   }
