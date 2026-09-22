@@ -180,6 +180,39 @@ let app,
     .click();
   const list = page.locator(".provider-model-dialog"),
     side = page.locator(".provider-side-dialog");
+  const lightning = (model) =>
+    page.getByRole("button", { name: "检测模型 " + model, exact: true });
+  const checkLightning = async (model, result) => {
+    const button = lightning(model);
+    await button
+      .locator(
+        'svg.lucide-zap[fill="' + (result ? "currentColor" : "none") + '"]',
+      )
+      .waitFor();
+    assert.equal(await button.locator(".spin").count(), 0);
+    assert.equal(
+      await button.evaluate((el) => el.classList.contains("passed")),
+      result === "passed",
+    );
+    assert.equal(
+      await button.evaluate((el) => el.classList.contains("failed")),
+      result === "failed",
+    );
+    if (result) {
+      assert.match(await button.getAttribute("title"), /点击重新检测/);
+      const color =
+        result === "passed" ? "rgb(25, 132, 85)" : "rgb(188, 75, 64)";
+      await button.hover();
+      assert.equal(
+        await button.locator("svg").evaluate((el) => getComputedStyle(el).fill),
+        color,
+      );
+      await page.mouse.move(1, 1);
+    }
+  };
+  await checkLightning("ok-model", null);
+  await checkLightning("fail-model", null);
+  await checkLightning("off-model", null);
   const row = page.getByRole("form", {
     name: "ok-model 行内配置",
     exact: true,
@@ -448,6 +481,35 @@ let app,
     path: path.join(out, "v0110-diagnostics.png"),
     animations: "disabled",
   });
+  // Completed results are solid in both views, including failed requests.
+  await checkLightning("ok-model", "passed");
+  await checkLightning("fail-model", "failed");
+  await checkLightning("off-model", null);
+  await page.getByRole("button", { name: "供应商与模型", exact: true }).click();
+  for (const reload of [false, true]) {
+    if (reload) {
+      await page.reload();
+      await page.waitForSelector("h1");
+    }
+    await page
+      .getByRole("button", { name: "查看 测试供应商 的模型", exact: true })
+      .click();
+    await checkLightning("ok-model", "passed");
+    await checkLightning("fail-model", "failed");
+    await checkLightning("off-model", null);
+    if (reload) {
+      await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0].setSize(1380, 940),
+      );
+      await page.screenshot({
+        path: path.join(out, "v0113-model-lightning.png"),
+        animations: "disabled",
+      });
+    }
+    await page.mouse.click(7, 7);
+    await list.waitFor({ state: "hidden" });
+  }
+  await page.getByRole("button", { name: "连接诊断", exact: true }).click();
   await app.evaluate(() => {
     const t = global.assTest;
     t.store.model("test", { model: "queued-model" });
@@ -461,6 +523,10 @@ let app,
       .call("snapshot")
       .then((s) => Object.keys(s.diagnosticJobs).length === 2),
   );
+  for (const model of ["ok-model", "fail-model"]) {
+    await lightning(model).locator(".spin").waitFor();
+    assert.equal(await lightning(model).locator(".lucide-zap").count(), 0);
+  }
   await page.getByRole("button", { name: "取消测试", exact: true }).click();
   await page.waitForFunction(() =>
     window.ass.call("snapshot").then((s) => !s.diagnosticBatch.running),
@@ -468,6 +534,29 @@ let app,
   s = await state();
   assert.equal(s.diagnosticBatch.cancelled, 3);
   assert.equal(await app.evaluate(() => global.assTest.sent.length), 2);
+  await checkLightning("ok-model", "passed");
+  await checkLightning("fail-model", "failed");
+  await checkLightning("queued-model", null);
+  // Cancelling a first, in-flight test must not produce a completed marker.
+  await app.evaluate(() => {
+    const t = global.assTest;
+    t.cancelController = new AbortController();
+    t.cancelledProbe = t.diagnose(
+      "test", "queued-model", t.cancelController.signal,
+    );
+  });
+  await lightning("queued-model").locator(".spin").waitFor();
+  assert.equal(await lightning("queued-model").locator(".lucide-zap").count(), 0);
+  const cancelledProbe = await app.evaluate(async () => {
+    global.assTest.cancelController.abort();
+    return global.assTest.cancelledProbe;
+  });
+  assert.equal(cancelledProbe.cancelled, true);
+  await checkLightning("queued-model", null);
+  assert.equal(
+    (await state()).diagnostics[JSON.stringify(["test", "queued-model"])],
+    undefined,
+  );
   await page.getByRole("button", { name: "客户端与账户", exact: true }).click();
   s = await state();
   for (const id of ["dsh", "opencode"]) {
@@ -542,6 +631,8 @@ let app,
         "expandable sections, draft preserved, saved, no duplicate entries",
       nativeCatalogs: true,
       batch: "pass/fail/skip/cancel, no duplicates",
+      lightning:
+        "untested outline, success/failure solid with hover colors, running spinner, cancellation, reopen and renderer reload",
       nativeAccountInfo: "DeepSeek balance, Go 3 quotas, Zen403",
       exit: "direct button closes isolated app",
       errors: 0,

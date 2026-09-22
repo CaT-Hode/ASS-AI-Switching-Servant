@@ -50,7 +50,11 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
         act("diag-" + key, () => api.call("diagnose", provider.id, model.model))
       }
     >
-      {running ? <Loader2 size={17} className="spin" /> : <Zap size={17} />}
+      {running ? (
+        <Loader2 size={17} className="spin" />
+      ) : (
+        <Zap size={17} fill={result ? "currentColor" : "none"} />
+      )}
     </button>
   );
 }

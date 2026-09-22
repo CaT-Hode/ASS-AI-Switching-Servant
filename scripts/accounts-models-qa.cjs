@@ -595,10 +595,15 @@ async function run() {
       .getByRole("form", { name: "manual-test 行内配置", exact: true })
       .waitFor({ state: "hidden" });
     // Lightning remains model-specific and never submits the inline form.
-    await row
-      .getByRole("button", { name: "检测模型 alpha-new", exact: true })
-      .click();
+    const modelCheck = row.getByRole("button", {
+      name: "检测模型 alpha-new",
+      exact: true,
+    });
+    assert.equal(await modelCheck.locator("svg").getAttribute("fill"), "none");
+    await modelCheck.click();
     await row.getByText(/连接通过/).waitFor();
+    await modelCheck.locator('svg[fill="currentColor"]').waitFor();
+    assert.match(await modelCheck.getAttribute("class"), /passed/);
     assert.equal(
       (await app.evaluate(() => global.assTest.sent.filter((x) => x.model))).at(
         -1,
@@ -822,7 +827,8 @@ async function run() {
         directory: "automatic and one-click add",
         hierarchy:
           "gallery/list/detail dialogs, right-side editor, left yield, restore width, no overlap, nested Escape/focus, direct links, drafts, manual add, readonly, reduced motion",
-        modelCheck: "specific model only",
+        modelCheck:
+          "specific model only, outline before test and solid after result",
         screenshots: out,
         nativeCredentialsUntouched: true,
         pageErrors: 0,

@@ -28,10 +28,12 @@
 .model-icon:active:not(:disabled) {
   background: #dceaff;
 }
-.model-icon.passed {
+.model-icon.passed,
+.model-icon.passed:hover:not(:disabled) {
   color: #198455;
 }
-.model-icon.failed {
+.model-icon.failed,
+.model-icon.failed:hover:not(:disabled) {
   color: #bc4b40;
 }
 .model-icon.delete-model {
