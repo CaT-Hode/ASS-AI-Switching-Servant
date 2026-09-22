@@ -49,6 +49,7 @@ const { InjectionFiles } = require("../core/injection-files.cjs");
 const { ClientProcesses } = require("../core/client-processes.cjs");
 const { Connections } = require("../core/connections.cjs");
 const { Preferences } = require("../core/preferences.cjs");
+const { UsageHistory } = require("../core/usage-history.cjs");
 const accountTransactions = require("../core/account-transactions.cjs");
 const { modelSources, nativeModels } = require("../core/model-inventory.cjs");
 const { nativeOfficialProvider } = require("../core/native-official.cjs");
@@ -81,6 +82,7 @@ let window,
   connections,
   processes,
   preferences,
+  usageHistory,
   quitting = false;
 let recent = [],
   balances = {};
@@ -289,6 +291,7 @@ function snapshot() {
       directories: providerModels,
     }),
     preferences: preferences.state,
+    usage: usageHistory?.public(),
     harnesses: clientState,
     accountDocs: ACCOUNT_DOCS,
     providerInfo: Object.fromEntries(
@@ -726,6 +729,22 @@ else {
         },
       );
       await harnesses.refreshOAuth();
+      usageHistory = new UsageHistory({
+        dataDir,
+        crypto: safeStorage,
+        onChange: push,
+        getOptions: () => ({
+          dataDir,
+          home: harnesses.nativeHome,
+          env: harnesses.nativeEnv,
+          codexDir,
+          overrides: harnesses.state.credentialHomes,
+          profiles: harnesses.state.profiles.map(({ id, harness }) => ({
+            id,
+            harness,
+          })),
+        }),
+      });
       nativeConfig = new NativeConfig(dataDir, safeStorage, harnesses);
       harnesses.options.nativeConfig = nativeConfig;
       router = new Router({
@@ -754,6 +773,9 @@ else {
       }
       register("snapshot", () => snapshot());
       register("ui-preferences", (input) => preferences.update(input));
+      register("usage-refresh", (automatic) =>
+        usageHistory.refresh({ automatic: automatic === true }),
+      );
       register(
         "supplier-refresh",
         async (sourceId, accountId, automatic = false) => {

@@ -8,6 +8,7 @@ const defaults = {
   officialService: "openai",
   providerOrder: [],
   quotaAccounts: {},
+  usage: { client: "all", range: "month", tab: "activity", group: "client" },
 };
 class Preferences {
   constructor(dataDir) {
@@ -21,6 +22,17 @@ class Preferences {
   }
   validate(input) {
     const next = { ...this.state };
+    if (input.usage && typeof input.usage === "object") {
+      next.usage = { ...defaults.usage, ...next.usage };
+      for (const [key, values] of Object.entries({
+        client: ["all", "codex", "claude", "opencode", "pi", "dsh"],
+        range: ["week", "month", "year"],
+        tab: ["activity", "tokens", "quota"],
+        group: ["client", "model"],
+      }))
+        if (values.includes(input.usage[key]))
+          next.usage[key] = input.usage[key];
+    }
     for (const key of ["view", "client", "provider", "officialService"]) {
       const value = input[key];
       if (

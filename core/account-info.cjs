@@ -202,10 +202,10 @@ function localProfile(
     .filter(Boolean);
   return {
     source: chatgpt
-      ? "本地登录令牌 · 未联网核验"
+      ? "本地登录令牌"
       : docs.includes("claude-cache")
-        ? "原生登录缓存 · 未联网核验"
-        : "原生登录记录 · 未联网核验",
+        ? "原生登录缓存"
+        : "原生登录记录",
     updatedAt: iso(savedAt),
     metadataUpdatedAt: docs.includes("claude-cache")
       ? iso(metadataAt)

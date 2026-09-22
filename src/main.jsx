@@ -5,7 +5,6 @@ import {
   LayoutGrid,
   Boxes,
   Activity,
-  ShieldCheck,
   Upload,
   ChevronRight,
   Settings2,
@@ -30,12 +29,8 @@ import { Providers } from "./providers.jsx";
 import { Updates, UpdateBanner } from "./updates.jsx";
 import { modelKey, ModelCheckButton } from "./model-inspection.jsx";
 import { DiagnosticTime } from "./diagnostic-time.jsx";
+import { Overview } from "./overview.jsx";
 const api = window.ass;
-const protocols = {
-  "openai-responses": "Responses",
-  "openai-chat": "Chat Completions",
-  anthropic: "Anthropic Messages",
-};
 const date = (value) =>
   new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
 function Button({
@@ -108,112 +103,6 @@ function RequestTable({ rows }) {
         ))
       )}
     </div>
-  );
-}
-function Overview({ state, providers, act, busy, setView, openProvider }) {
-  return (
-    <>
-      <div className="overview-grid">
-        <section>
-          <div className="section-heading">
-            <h2>模型来源</h2>
-            <button
-              className="text-button"
-              onClick={() => setView("providers")}
-            >
-              管理模型 <ChevronRight size={14} />
-            </button>
-          </div>
-          <div className="source-table">
-            <div className="source-row table-head">
-              <span>来源</span>
-              <span>协议</span>
-              <span>模型</span>
-              <span>操作</span>
-            </div>
-            {providers.map((p) => (
-              <div className="source-row" key={p.id}>
-                <div className="source-name">
-                  <ProviderIcon p={p} />
-                  <div>
-                    <strong>{p.name}</strong>
-                    <small>
-                      {
-                        p.models.filter(
-                          (m) => state.diagnostics[modelKey(p.id, m.model)]?.ok,
-                        ).length
-                      }{" "}
-                      / {p.models.length} 个模型连接已验证
-                    </small>
-                  </div>
-                </div>
-                <span className="muted">
-                  {new Set(p.models.map((m) => m.wireApi)).size > 1
-                    ? "混合协议"
-                    : protocols[p.models[0]?.wireApi] ||
-                      protocols[p.wireApi] ||
-                      "Responses"}
-                </span>
-                <span className="muted">{p.models.length} 个模型</span>
-                <Button icon={ChevronRight} onClick={() => openProvider(p.id)}>
-                  查看模型
-                </Button>
-              </div>
-            ))}
-          </div>
-        </section>
-        <aside className="security-panel">
-          <h2>安全连接</h2>
-          <div className="trust">
-            <ShieldCheck size={43} />
-            <div>
-              <h3>Windows 系统证书</h3>
-              <p>使用系统信任的 CA，保留 TLS 校验。</p>
-            </div>
-          </div>
-          <dl>
-            <div>
-              <dt>凭据存储</dt>
-              <dd>
-                {state.encrypted ? (
-                  <>
-                    <CheckCircle2 size={15} /> Windows 加密
-                  </>
-                ) : (
-                  "加密不可用"
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt>窗口关闭后</dt>
-              <dd>
-                <CheckCircle2 size={15} /> 托盘运行
-              </dd>
-            </div>
-          </dl>
-          <label className="check-field small">
-            <input
-              type="checkbox"
-              checked={state.autoStart}
-              onChange={(e) =>
-                act("auto", () => api.call("autostart", e.target.checked))
-              }
-            />
-            登录 Windows 时启动
-          </label>
-        </aside>
-      </div>
-      <section className="recent-section">
-        <div className="section-heading">
-          <h2>最近请求</h2>
-          <span className="muted tiny">仅记录模型、状态与耗时</span>
-        </div>
-        <RequestTable rows={state.recent} />
-      </section>
-      <footer className="page-footer">
-        模型设置修改后，重新启动相应客户端以加载配置。
-      </footer>
-    </>
   );
 }
 function Diagnostics({ state, providers, act, busy }) {
@@ -600,7 +489,7 @@ function App() {
         )}
         {view === "overview" ? (
           <Overview
-            {...{ state, providers, act, busy, setView, openProvider }}
+            {...{ state, act, setView, setClientTarget }}
           />
         ) : view === "providers" ? (
           <Providers

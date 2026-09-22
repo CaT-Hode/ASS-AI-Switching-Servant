@@ -65,6 +65,16 @@ export function Updates({ state, act, busy }) {
     act("update-open", () => api.call("update-open", kind));
   return (
     <div className="updates-page">
+      <label className="check-field small">
+        <input
+          type="checkbox"
+          checked={state.autoStart}
+          onChange={(e) =>
+            act("auto", () => api.call("autostart", e.target.checked))
+          }
+        />
+        登录 Windows 时启动
+      </label>
       <section className="ass-brand-hero">
         <img src="./ass-logo.png" alt="ASS 菊花标志" />
         <div>

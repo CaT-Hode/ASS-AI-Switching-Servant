@@ -109,7 +109,7 @@ function apiAccounts(harness, providers, includeUnavailable = false) {
           p.enabled === false
             ? "供应商已停用"
             : models.length
-              ? "API Key 已保存 · 未联网验证"
+              ? "API Key"
               : "没有兼容且已启用的模型",
       };
     })

@@ -187,16 +187,16 @@ function AccountCard({
         )}
       </header>
       <AccountProfile account={a} {...{ client, state, act, busy }} />
-      <p
-        className={
-          "account-status" + (warning ? " warning" : a.ready ? " ready" : "")
-        }
-      >
-        <i aria-hidden="true" />
-        {a.profile?.remote && !a.profile.error && !a.profile.stale
-          ? "已读取官方资料 · 模型连接需单独检测"
-          : a.message}
-      </p>
+      {(warning || !a.ready) && (
+        <p
+          className={
+            "account-status" + (warning ? " warning" : a.ready ? " ready" : "")
+          }
+        >
+          <i aria-hidden="true" />
+          {a.message}
+        </p>
+      )}
       {a.expiresAt && (
         <small className="account-expiry">
           令牌到期：{new Date(a.expiresAt).toLocaleString()}
@@ -473,7 +473,10 @@ export function Clients({
                     disabled={!!busy}
                     onClick={() =>
                       act("client-open-desktop", async () => {
-                        const result = await api.call("client-open-desktop", client.id);
+                        const result = await api.call(
+                          "client-open-desktop",
+                          client.id,
+                        );
                         setNotice(result.message);
                       })
                     }
@@ -557,7 +560,9 @@ export function Clients({
                 <p
                   className={
                     "launcher-state " +
-                    (client.launcher?.ready || client.launcher?.installed ? "ready" : "")
+                    (client.launcher?.ready || client.launcher?.installed
+                      ? "ready"
+                      : "")
                   }
                 >
                   {(client.launcher?.ready || client.launcher?.installed) && (

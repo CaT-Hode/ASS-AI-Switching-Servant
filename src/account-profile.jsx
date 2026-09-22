@@ -70,7 +70,7 @@ export function AccountProfile({ account, client, state, act, busy }) {
           {plan && (
             <span
               className="account-plan"
-              title="本地登录记录中的套餐，未联网核验"
+              title="账户套餐"
             >
               {plans[plan.toLowerCase()] || plan}
             </span>
@@ -126,7 +126,7 @@ export function AccountProfile({ account, client, state, act, busy }) {
       <div className="account-profile-source">
         <details>
           <summary>
-            {p.source}
+            资料来源
             {p.stale ? " · 已过时" : ""}
           </summary>
           {p.updatedAt && (
@@ -153,9 +153,6 @@ export function AccountProfile({ account, client, state, act, busy }) {
                 hour12: false,
               })}
             </time>
-          )}
-          {account.authType !== "api" && account.kind !== "api" && (
-            <p>本地声明不等于当前权益；令牌到期也不代表订阅到期。</p>
           )}
           {p.note && <p>{p.note}</p>}
           <div className="account-profile-docs">

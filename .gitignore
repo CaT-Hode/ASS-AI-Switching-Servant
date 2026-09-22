@@ -17,6 +17,7 @@ native-accounts.json
 account-info.enc.json
 diagnostics.enc.json
 native-injections.enc.json
+usage-history.enc.json
 updates.json
 connections.json
 route-injections.json

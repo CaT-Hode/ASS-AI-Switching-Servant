@@ -109,7 +109,7 @@ test("expiry, refresh capability and empty credentials never become verified log
   );
   assert.equal(
     parseRecords("pi", { a: grant })[0].message,
-    "已检测 OAuth · 未联网验证",
+    "OAuth",
   );
   assert.equal(
     parseRecords("opencode", {
@@ -285,6 +285,7 @@ test("UI preferences persist with an allowlist and do not accept secrets or inva
     officialService: "deepseek",
     providerOrder: [],
     quotaAccounts: {},
+    usage: { client: "all", range: "month", tab: "activity", group: "client" },
   });
   preferences.update({ view: "<script>", client: "unknown" });
   assert.equal(new Preferences(dir).state.view, "clients");

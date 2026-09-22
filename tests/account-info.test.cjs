@@ -76,7 +76,7 @@ test("ChatGPT allowlisted identity follows its own native account in all compati
     assert.equal(f.email, "test@example.test", harness);
     assert.equal(f.plan, "pro");
     assert.equal(f.accountId, "workspace-fixture");
-    assert.match(row.profile.source, /未联网核验/);
+    assert.equal(row.profile.source, "本地登录令牌");
     for (const secret of [
       access,
       idToken,

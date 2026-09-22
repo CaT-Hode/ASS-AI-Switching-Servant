@@ -67,7 +67,7 @@ function oauth(provider, access, refresh, expires, now) {
         ? refreshable
           ? "访问令牌已到期 · 由客户端刷新"
           : "授权已到期 · 需要重新登录"
-        : "已检测 OAuth · 未联网验证",
+        : "OAuth",
   };
 }
 function api(provider, value) {
@@ -80,7 +80,7 @@ function api(provider, value) {
     message: dynamic
       ? "外部密钥引用 · 未执行解析"
       : has(value)
-        ? "已检测 API Key · 未联网验证"
+        ? "API Key"
         : "原生凭据链 · 由客户端确认",
   };
 }
