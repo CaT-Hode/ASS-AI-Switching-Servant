@@ -10,7 +10,12 @@ import {
   Zap,
   UserRound,
 } from "lucide-react";
-import { CLIENT_NAMES, overviewAccounts, summarize } from "./usage-view.mjs";
+import {
+  CLIENT_NAMES,
+  dayKey,
+  overviewAccounts,
+  summarize,
+} from "./usage-view.mjs";
 import { ElapsedTime } from "./diagnostic-time.jsx";
 import { exactTime } from "./relative-time.mjs";
 import "./overview.css";
@@ -44,7 +49,7 @@ function DayDetail({ data }) {
     <span className="usage-day-detail" role="status">
       {data ? (
         <>
-          <strong>{data.day}</strong>
+          <strong>{data.label || data.day}</strong>
           <span>
             {data.observations ? count(data.calls) + " 次调用" : "无记录"}
           </span>
@@ -53,12 +58,113 @@ function DayDetail({ data }) {
           )}
         </>
       ) : (
-        <span>指向日期查看用量</span>
+        <span>指向格子查看用量</span>
       )}
     </span>
   );
 }
+function HeatCell({ data, max, selected, onSelect, children }) {
+  return (
+    <button
+      className={
+        "heatmap-cell" + (selected?.key === data.key ? " selected" : "")
+      }
+      data-level={
+        data.calls ? Math.max(1, Math.ceil((data.calls / max) * 4)) : 0
+      }
+      aria-label={`${data.label || data.day} · ${data.observations ? count(data.calls) + " 次调用 · " + count(data.input + data.output) + " Tokens" : "无记录"}`}
+      onMouseEnter={() => onSelect(data)}
+      onFocus={() => onSelect(data)}
+      onClick={() => onSelect(data)}
+    >
+      {children}
+    </button>
+  );
+}
+function HeatFooter({ selected }) {
+  return (
+    <div className="heatmap-footer">
+      <DayDetail data={selected} />
+      <div className="heatmap-legend">
+        <span>少</span>
+        {[0, 1, 2, 3, 4].map((n) => (
+          <i key={n} data-level={n} />
+        ))}
+        <span>多</span>
+      </div>
+    </div>
+  );
+}
+function PeriodHeatmap({ stats, selected, onSelect }) {
+  const max = Math.max(1, ...stats.timeline.map((d) => d.calls));
+  const buckets = new Map(stats.timeline.map((d) => [d.key, d]));
+  const isWeek = stats.range === "week";
+  const dayCount = isWeek
+    ? 7
+    : new Date(
+        stats.start.getFullYear(),
+        stats.start.getMonth() + 1,
+        0,
+      ).getDate();
+  const columnsPerDay = isWeek ? 4 : 1;
+  const dates = Array.from({ length: dayCount }, (_, i) => {
+    const date = new Date(stats.start);
+    date.setDate(date.getDate() + i);
+    return date;
+  });
+  return (
+    <div
+      className={`usage-heatmap usage-periodmap ${isWeek ? "usage-hourmap" : "usage-monthmap"}`}
+      style={{ "--columns": dayCount * columnsPerDay }}
+    >
+      <div className="periodmap-surface">
+        <div className="periodmap-days">
+          {dates.map((date, i) => (
+            <span
+              key={i}
+              style={{ gridColumn: `span ${columnsPerDay}` }}
+              title={dayKey(date)}
+            >
+              {isWeek
+                ? `周${["一", "二", "三", "四", "五", "六", "日"][i]} ${date.getMonth() + 1}/${date.getDate()}`
+                : date.getDate()}
+            </span>
+          ))}
+        </div>
+        {isWeek && (
+          <div className="periodmap-hours">
+            {Array.from({ length: dayCount * columnsPerDay }, (_, i) => (
+              <span key={i}>{String((i % 4) * 6).padStart(2, "0")}</span>
+            ))}
+          </div>
+        )}
+        <div className="periodmap-grid">
+          {dates.flatMap((date) => {
+            const day = dayKey(date);
+            return Array.from({ length: 24 / stats.periodHours }, (_, i) => {
+              const hour = i * stats.periodHours,
+                key = `${day}T${String(hour).padStart(2, "0")}`,
+                d = buckets.get(key);
+              return d ? (
+                <HeatCell key={key} data={d} {...{ max, selected, onSelect }} />
+              ) : (
+                <span
+                  key={key}
+                  className="periodmap-future"
+                  aria-label={`${day} ${hour}:00 · 尚未到来`}
+                />
+              );
+            });
+          })}
+        </div>
+      </div>
+      <HeatFooter selected={selected} />
+    </div>
+  );
+}
 function Heatmap({ stats, selected, onSelect }) {
+  if (stats.grain === "hour")
+    return <PeriodHeatmap {...{ stats, selected, onSelect }} />;
   const max = Math.max(1, ...stats.timeline.map((d) => d.calls));
   const pad = (stats.start.getDay() + 6) % 7;
   const cells = [...Array(pad).fill(null), ...stats.timeline];
@@ -87,35 +193,14 @@ function Heatmap({ stats, selected, onSelect }) {
         <div className="heatmap-grid">
           {cells.map((d, i) =>
             d ? (
-              <button
-                key={d.day}
-                className={
-                  "heatmap-cell" + (selected?.day === d.day ? " selected" : "")
-                }
-                data-level={
-                  d.calls ? Math.max(1, Math.ceil((d.calls / max) * 4)) : 0
-                }
-                aria-label={`${d.day} · ${d.observations ? count(d.calls) + " 次调用 · " + count(d.input + d.output) + " Tokens" : "无记录"}`}
-                onMouseEnter={() => onSelect(d)}
-                onFocus={() => onSelect(d)}
-                onClick={() => onSelect(d)}
-              />
+              <HeatCell key={d.key} data={d} {...{ max, selected, onSelect }} />
             ) : (
               <span key={"pad" + i} />
             ),
           )}
         </div>
       </div>
-      <div className="heatmap-footer">
-        <DayDetail data={selected} />
-        <div className="heatmap-legend">
-          <span>少</span>
-          {[0, 1, 2, 3, 4].map((n) => (
-            <i key={n} data-level={n} />
-          ))}
-          <span>多</span>
-        </div>
-      </div>
+      <HeatFooter selected={selected} />
     </div>
   );
 }
@@ -146,8 +231,8 @@ function TokenChart({ stats, selected, onSelect }) {
         <div className="token-bars">
           {stats.timeline.map((d) => (
             <button
-              key={d.day}
-              aria-label={`${d.day} · ${count(d.input + d.output)} Tokens${!d.observations ? " · 无记录" : ""}`}
+              key={d.key}
+              aria-label={`${d.label || d.day} · ${count(d.input + d.output)} Tokens${!d.observations ? " · 无记录" : ""}`}
               onMouseEnter={() => onSelect(d)}
               onFocus={() => onSelect(d)}
               onClick={() => onSelect(d)}
@@ -173,11 +258,42 @@ function TokenChart({ stats, selected, onSelect }) {
         </div>
       </div>
       <div className="token-dates">
-        <span>{stats.from}</span>
-        <span>{stats.to}</span>
+        <span>
+          {stats.grain === "hour"
+            ? stats.timeline[0]?.label.split("–")[0]
+            : stats.from}
+        </span>
+        <span>
+          {stats.grain === "hour" ? stats.timeline.at(-1)?.label : stats.to}
+        </span>
       </div>
       <DayDetail data={selected} />
     </>
+  );
+}
+function DailyOnly({ stats }) {
+  if (!stats.unallocated.observations) return null;
+  return (
+    <details className="usage-daily-only">
+      <summary>
+        <span>仅按日记录</span>
+        <strong>
+          {count(stats.unallocated.input + stats.unallocated.output)} Tokens
+        </strong>
+        <span>已计入总量，未分配到小时</span>
+      </summary>
+      <dl>
+        {stats.dailyOnly.map((d) => (
+          <div key={d.key}>
+            <dt>{d.day}</dt>
+            <dd>{count(d.calls)} 次调用</dd>
+            <dd>
+              <strong>{count(d.input + d.output)} Tokens</strong>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   );
 }
 function AccountCard({ row, refresh, busy }) {
@@ -314,7 +430,8 @@ export function Overview({ state, act, setView, setClientTarget }) {
     }
   }
   const hasData = stats.total.observations > 0;
-  const day = selected && stats.timeline.find((d) => d.day === selected.day);
+  const day = selected && stats.timeline.find((d) => d.key === selected.key);
+  const hasTimedData = stats.timeline.some((d) => d.observations > 0);
   return (
     <div className="usage-overview">
       <div
@@ -416,6 +533,11 @@ export function Overview({ state, act, setView, setClientTarget }) {
                 {options.tab === "tokens" ? " Token 趋势" : "活跃趋势"}
               </h2>
               <span>
+                {options.range !== "year" && (
+                  <span className="usage-grain">
+                    {stats.periodHours === 4 ? "每 4 小时" : "按小时"}
+                  </span>
+                )}
                 {stats.from} — {stats.to}
               </span>
             </header>
@@ -429,6 +551,11 @@ export function Overview({ state, act, setView, setClientTarget }) {
                 <Activity size={28} />
                 <strong>此范围暂无用量记录</strong>
               </div>
+            ) : stats.grain === "hour" && !hasTimedData ? (
+              <div className="usage-empty">
+                <Activity size={28} />
+                <strong>此范围只有日汇总，暂无小时记录</strong>
+              </div>
             ) : options.tab === "tokens" ? (
               <TokenChart
                 {...{ stats, selected: day, onSelect: setSelected }}
@@ -436,6 +563,7 @@ export function Overview({ state, act, setView, setClientTarget }) {
             ) : (
               <Heatmap {...{ stats, selected: day, onSelect: setSelected }} />
             )}
+            <DailyOnly stats={stats} />
             <div className="usage-chart-meta">
               <span>
                 {hasData

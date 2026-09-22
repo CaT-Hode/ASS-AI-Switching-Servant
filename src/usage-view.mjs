@@ -39,22 +39,47 @@ function add(to, row) {
   for (const s of row.sessions || []) to.sessions.add(s);
   to.observations++;
 }
-export function summarize(rows, options, now) {
+export function summarize(rows, options, now = new Date()) {
   const bounds = rangeBounds(options.range, now),
     total = empty(),
     days = new Map(),
+    hours = new Map(),
+    dailyOnly = new Map(),
+    unallocated = empty(),
     groups = new Map();
+  const periodHours =
+    options.range === "week" ? 1 : options.range === "month" ? 4 : 24;
+  const grain = periodHours < 24 ? "hour" : "day";
+  const hourKey = (day, hour) => `${day}T${String(hour).padStart(2, "0")}`;
   for (const r of rows) {
+    const hasHour = Number.isInteger(r.hour) && r.hour >= 0 && r.hour < 24;
     if (
       r.day < bounds.from ||
       r.day > bounds.to ||
-      (options.client !== "all" && r.client !== options.client)
+      (options.client !== "all" && r.client !== options.client) ||
+      (r.day === bounds.to && hasHour && r.hour > now.getHours())
     )
       continue;
     add(total, r);
     const day = days.get(r.day) || empty();
     add(day, r);
     days.set(r.day, day);
+    if (grain === "hour") {
+      if (hasHour) {
+        const key = hourKey(
+            r.day,
+            Math.floor(r.hour / periodHours) * periodHours,
+          ),
+          bucket = hours.get(key) || empty();
+        add(bucket, r);
+        hours.set(key, bucket);
+      } else {
+        const bucket = dailyOnly.get(r.day) || empty();
+        add(bucket, r);
+        add(unallocated, r);
+        dailyOnly.set(r.day, bucket);
+      }
+    }
     const name =
       options.group === "model" ? r.model : CLIENT_NAMES[r.client] || r.client;
     const group = groups.get(name) || { name, ...empty() };
@@ -66,12 +91,40 @@ export function summarize(rows, options, now) {
     let d = new Date(bounds.start);
     d <= bounds.end;
     d.setDate(d.getDate() + 1)
-  )
-    timeline.push({ day: dayKey(d), ...(days.get(dayKey(d)) || empty()) });
+  ) {
+    const day = dayKey(d);
+    if (grain === "day")
+      timeline.push({ key: day, day, ...(days.get(day) || empty()) });
+    else {
+      const lastHour = day === bounds.to ? now.getHours() : 23;
+      for (let hour = 0; hour <= lastHour; hour += periodHours) {
+        const key = hourKey(day, hour);
+        timeline.push({
+          key,
+          day,
+          hour,
+          label: `${day} ${String(hour).padStart(2, "0")}:00–${String(hour + periodHours).padStart(2, "0")}:00`,
+          ...(hours.get(key) || empty()),
+        });
+      }
+    }
+  }
   return {
     ...bounds,
+    range: options.range,
+    grain,
+    periodHours,
     total,
     timeline,
+    unallocated,
+    dailyOnly: [...dailyOnly]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([day, value]) => ({
+        key: day + "-daily",
+        day,
+        label: day + " · 仅按日记录",
+        ...value,
+      })),
     groups: [...groups.values()].sort(
       (a, b) => b.input + b.output - (a.input + a.output),
     ),

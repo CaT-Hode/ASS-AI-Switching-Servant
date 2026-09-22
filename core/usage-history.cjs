@@ -17,7 +17,11 @@ class UsageHistory {
       const value = JSON.parse(
         crypto.decryptString(Buffer.from(envelope.encrypted, "base64")),
       );
-      if (value.version === 1) {
+      if (
+        value.version === 2 &&
+        value.snapshot?.timeZone ===
+          Intl.DateTimeFormat().resolvedOptions().timeZone
+      ) {
         this.cache = value.cache || {};
         this.state = value.snapshot;
       }
@@ -50,7 +54,7 @@ class UsageHistory {
               this.file,
               JSON.stringify({
                 encrypted: this.crypto
-                  .encryptString(JSON.stringify({ version: 1, ...value }))
+                  .encryptString(JSON.stringify({ version: 2, ...value }))
                   .toString("base64"),
               }),
             );

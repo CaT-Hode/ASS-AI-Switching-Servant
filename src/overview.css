@@ -173,10 +173,82 @@
     transform 0.12s;
 }
 .heatmap-cell:hover,
+.heatmap-cell:focus-visible,
 .heatmap-cell.selected {
   filter: brightness(0.93);
   outline: 2px solid #6554aa;
   outline-offset: 1px;
+}
+.periodmap-surface {
+  max-width: calc(var(--columns) * 28px - 4px);
+}
+.periodmap-days,
+.periodmap-hours,
+.periodmap-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+  gap: 4px;
+}
+.periodmap-days,
+.periodmap-hours {
+  text-align: center;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+}
+.periodmap-grid {
+  grid-auto-flow: column;
+  grid-template-rows: repeat(6, auto);
+}
+.periodmap-grid > * {
+  aspect-ratio: 1;
+}
+.periodmap-future {
+  border: 1px dashed #e8eaf1;
+  border-radius: 4px;
+}
+.usage-grain {
+  margin-right: 12px;
+  color: #7654b7;
+}
+.usage-daily-only {
+  margin-top: 18px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.usage-daily-only summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.usage-daily-only summary > * {
+  margin-right: 12px;
+}
+.usage-daily-only strong {
+  color: #354967;
+  font-weight: 550;
+}
+.usage-daily-only dl {
+  margin: 10px 0 0;
+  display: grid;
+  gap: 5px;
+}
+.usage-daily-only dl > div {
+  border: 0;
+  border-radius: 7px;
+  background: #f6f5fa;
+  padding: 10px 12px;
+  display: flex;
+  gap: 18px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: left;
+}
+.usage-daily-only dd {
+  margin: 0;
+}
+.usage-daily-only dd:last-child {
+  margin-left: auto;
 }
 .usage-overview [data-level="0"] {
   background: #f0eff5;

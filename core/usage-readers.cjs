@@ -21,6 +21,16 @@ function dayKey(value) {
     ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
     : "";
 }
+function localHour(value) {
+  // Date-only ledgers have no time precision; midnight is not an observation.
+  if (
+    value == null ||
+    (typeof value === "string" && !/[T ]\d{2}:\d{2}/.test(value))
+  )
+    return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.getHours() : null;
+}
 function normalized(
   input,
   output,
@@ -64,6 +74,7 @@ function parser(client, fileKey) {
       key: hash(client + "\0" + key),
       client,
       day,
+      hour: localHour(time),
       session: hash(client + "\0" + session),
       model: label(model),
       provider: label(provider),
@@ -234,6 +245,7 @@ function readOpenCode(file) {
         key: hash("opencode\0" + x.id),
         client: "opencode",
         day: dayKey(x.time_created),
+        hour: localHour(x.time_created),
         session: hash("opencode\0" + x.session_id),
         model: label(x.model),
         provider: label(x.provider),
@@ -271,6 +283,7 @@ function readDsh(file) {
         key: hash("dsh\0" + file + "\0" + day + "\0" + key),
         client: "dsh",
         day,
+        hour: null,
         model: label(model),
         provider: label(provider),
         calls: num(u.calls),
@@ -336,6 +349,7 @@ async function scan(options, previousCache = {}) {
   earliest.setDate(earliest.getDate() - 364);
   const from = dayKey(earliest),
     to = dayKey(now);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   let bytes = 0;
   for (const client of CLIENTS) {
     const source = {
@@ -387,9 +401,14 @@ async function scan(options, previousCache = {}) {
               return null;
             }
           })();
-      const signature = [stat.size, stat.mtimeMs, wal?.size, wal?.mtimeMs].join(
-        ":",
-      );
+      const signature = [
+        2,
+        timeZone,
+        stat.size,
+        stat.mtimeMs,
+        wal?.size,
+        wal?.mtimeMs,
+      ].join(":");
       try {
         let entry = previousCache[key];
         if (entry?.signature !== signature) {
@@ -427,9 +446,10 @@ async function scan(options, previousCache = {}) {
   }
   const buckets = new Map();
   for (const r of records.values()) {
-    const key = JSON.stringify([r.day, r.client, r.provider, r.model]);
+    const key = JSON.stringify([r.day, r.hour, r.client, r.provider, r.model]);
     const b = buckets.get(key) || {
       day: r.day,
+      hour: r.hour,
       client: r.client,
       model: r.model,
       provider: r.provider,
@@ -466,7 +486,7 @@ async function scan(options, previousCache = {}) {
       from,
       to,
       updatedAt: new Date(now).toISOString(),
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timeZone,
     },
   };
 }
