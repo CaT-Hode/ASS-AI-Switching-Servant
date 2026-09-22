@@ -18,6 +18,7 @@ class Connections {
     injections,
     processes,
     nativeConfig,
+    proxyConfig,
     port = 25819,
     writeCatalog = () => {},
     onChange = () => {},
@@ -29,6 +30,7 @@ class Connections {
       injections,
       processes,
       nativeConfig,
+      proxyConfig,
       port,
       writeCatalog,
       onChange,
@@ -92,7 +94,9 @@ class Connections {
       error: this.error || this.injections.error,
       clients: Object.fromEntries(
         IDS.map((id) => {
-          const native = this.nativeConfig?.status(id, this.enabled[id]) || {};
+          const native = this.proxyConfig?.supports(id)
+            ? this.proxyConfig.status(id, this.enabled[id])
+            : this.nativeConfig?.status(id, this.enabled[id]) || {};
           return [
             id,
             {
@@ -104,6 +108,9 @@ class Connections {
               mode: native.mode || "proxy",
               syncError: native.error || "",
               pending: native.pending || false,
+              modelCount: native.modelCount,
+              applied: native.applied,
+              runtimeStatus: native.runtimeStatus,
               configAttached:
                 id === "codex" ? this.config.status().attached : undefined,
             },
@@ -125,6 +132,7 @@ class Connections {
         this.revision,
         this.injections.fingerprint(ids),
         quit ? null : this.nativeConfig?.fingerprint(ids, enabled),
+        quit ? null : this.proxyConfig?.fingerprint(ids, enabled),
         ids.includes("codex") && fs.existsSync(this.config.file)
           ? hash(fs.readFileSync(this.config.file))
           : null,
@@ -140,6 +148,7 @@ class Connections {
     if (this.error) throw Error(this.error);
     this.injections.preflight(ids);
     if (!quit) this.nativeConfig?.preflight(ids, enabled);
+    if (!quit) this.proxyConfig?.preflight(ids, enabled);
     if (ids.includes("codex")) {
       if (!enabled) this.config.preflightDetach();
       else if (!this.config.status().attached) {
@@ -229,10 +238,16 @@ class Connections {
         throw Error("配置或窗口清单已变化，请重新预览后确认");
       this.preflight(plan.ids, plan.enabled, plan.quit);
       if (plan.enabled) {
+        // Model/routing changes affect later requests of the same task too.
+        // Never apply while uploads or in-flight responses still use this scope.
+        for (const id of plan.ids) this.blocked.add(id);
+        if (plan.ids.some((id) => this.router.clientActive(id)))
+          throw Error("仍有请求正在进行，未同步；请等待任务结束后重新确认");
         for (const id of plan.ids) this.nativeConfig?.sync(id);
         if (plan.ids.some((id) => this.needsRouter(id)))
           await this.router.start(this.port);
-        if (plan.ids.includes("codex")) {
+        for (const id of plan.ids) this.proxyConfig?.sync(id);
+        if (plan.ids.includes("codex") && !this.proxyConfig) {
           this.writeCatalog();
           this.config.attach();
         }
@@ -282,6 +297,7 @@ class Connections {
         if (plan.ids.includes("codex")) this.config.detach();
         if (!plan.quit) this.nativeConfig?.restore(plan.ids);
         this.injections.restore(plan.ids);
+        this.proxyConfig?.restore(plan.ids);
         for (const id of plan.ids)
           if (!plan.quit || !this.nativeConfig?.isDirect(id))
             this.enabled[id] = false;

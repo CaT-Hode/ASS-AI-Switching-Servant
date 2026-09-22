@@ -1,4 +1,5 @@
 // Real Electron UI/DPAPI, isolated client homes, synthetic credentials only.
+// Browser plugin not available; validate the native window using Playwright Electron.
 const { _electron: electron } = require("playwright");
 const fs = require("node:fs"),
   path = require("node:path"),
@@ -66,6 +67,7 @@ async function start() {
   page = await app.firstWindow();
   page.setDefaultTimeout(15000);
   page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => { if (["error", "warning"].includes(m.type())) errors.push(m.text()); });
   await page.waitForSelector("h1");
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0].setSize(1380, 940);
@@ -87,6 +89,7 @@ async function choose(name) {
     .locator(".client-list")
     .getByRole("button", { name: new RegExp(name) })
     .click();
+  assert.equal(await page.locator(".client-injection").count(), 1);
 }
 async function toggle(name) {
   await page
@@ -108,8 +111,8 @@ async function toggle(name) {
       models: [{ model: "qa-model", wireApi: "openai-chat" }],
     });
     for (const id of ["pi", "opencode", "dsh"]) {
-      await call("account-bind-api", id, provider);
-      await call("account-select", id, "api:" + provider);
+      await assert.rejects(call("account-bind-api", id, provider), /官方 API/);
+      await call("client-injection", id, { defaultModel: JSON.stringify([provider, "qa-model"]) });
     }
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
@@ -120,6 +123,7 @@ async function toggle(name) {
       ["dsh", "DeepSeek Harness"],
     ]) {
       await choose(name);
+      assert.equal(await page.getByRole("region", { name: name + " 模型接入", exact: true }).count(), 1);
       await toggle(name);
       const state = await call("snapshot"),
         client = state.connections.clients[id];
@@ -131,7 +135,7 @@ async function toggle(name) {
         state.harnesses.clients
           .find((c) => c.id === id)
           .accounts.filter((a) => a.kind === "native").length,
-        1,
+        id === "pi" ? 1 : 0,
       );
     }
     assert.equal(
@@ -150,11 +154,11 @@ async function toggle(name) {
     for (const id of ["pi", "opencode", "dsh"])
       assert.equal(
         (await call("snapshot")).connections.clients[id].pending,
-        false,
+        true,
       );
     await choose("pi");
     await page.screenshot({
-      path: path.join(out, "v0114-native-config.png"),
+      path: path.join(out, "account-separation-native-config.png"),
       animations: "disabled",
     });
     assert.ok(
@@ -170,7 +174,11 @@ async function toggle(name) {
     );
     const restarted = await call("snapshot");
     for (const id of ["pi", "opencode", "dsh"])
-      assert.equal(restarted.connections.clients[id].pending, false);
+      assert.equal(restarted.connections.clients[id].pending, true);
+    for (const id of ["pi", "opencode", "dsh"]) {
+      const preview = await call("connection-preview", id, true);
+      await call("connection-apply", { ticket: preview.ticket, mode: "safe", acknowledged: true });
+    }
     // Simulate native OAuth refresh; an ASS model edit must preserve it.
     const authFile = path.join(home, ".pi/agent/auth.json"),
       auth = JSON.parse(fs.readFileSync(authFile));
@@ -189,6 +197,8 @@ async function toggle(name) {
       JSON.parse(fs.readFileSync(authFile))["openai-codex"].access,
       "synthetic-rotated-access",
     );
+    const resync = await call("connection-preview", "pi", true);
+    await call("connection-apply", { ticket: resync.ticket, mode: "safe", acknowledged: true });
     const modelsFile = path.join(home, ".pi/agent/models.json"),
       models = JSON.parse(fs.readFileSync(modelsFile));
     const key = Object.keys(models.providers)[0];
@@ -227,6 +237,31 @@ async function toggle(name) {
       .click();
     await page.getByRole("dialog").waitFor({ state: "hidden" });
     assert.equal((await call("snapshot")).connections.clients.pi.syncError, "");
+    await choose("DeepSeek Harness");
+    await page.getByRole("button", { name: "添加账户", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "新建 API 账户", exact: true }).click();
+    assert.equal(await page.getByRole("dialog").getByRole("button", { name: /DeepSeek 官方/ }).count(), 1);
+    assert.equal(await page.getByRole("dialog").getByText("自定义 API", { exact: true }).count(), 0);
+    assert.equal(await page.getByRole("dialog").getByText("OpenRouter 浏览器授权", { exact: true }).count(), 0);
+    await page.keyboard.press("Escape");
+    await choose("Codex");
+    await page.getByRole("button", { name: "添加账户", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "新建 API 账户", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: /OpenAI API/ }).click();
+    await page.getByRole("dialog").getByLabel("账户名称", { exact: true }).fill("QA 官方 API");
+    await page.getByRole("dialog").getByLabel("API Key", { exact: true }).fill("synthetic-official-new");
+    await page.getByRole("dialog").getByRole("button", { name: "保存账户", exact: true }).click();
+    await page.keyboard.press("Escape");
+    const officialCard = page.getByRole("article", { name: "QA 官方 API 账户", exact: true });
+    await officialCard.waitFor();
+    const officialState = await call("snapshot");
+    assert.equal(officialState.connections.clients.codex.enabled, false);
+    assert.equal(officialState.harnesses.clients.find((c) => c.id === "codex").accounts.find((a) => a.label === "QA 官方 API").ready, true);
+    await officialCard.getByRole("button", { name: "设为启动账户", exact: true }).click();
+    await officialCard.getByText("下次启动使用", { exact: true }).waitFor();
+    assert.deepEqual(fs.readFileSync(path.join(data, "codex/auth.json")), codexOriginal);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: path.join(out, "account-separation-official-account.png"), animations: "disabled" });
     // Real exit path keeps native configuration while restoring proxy-only clients.
     const quit = await call("connection-preview", "all", false, true);
     assert.equal(quit.retainedNative.length, 3);
@@ -275,6 +310,8 @@ async function toggle(name) {
         exitRetainsNative: true,
         disconnectRestoresFields: true,
         codexUntouched: true,
+        accountPolicy: true,
+        pendingDoesNotAutoApply: true,
         pageErrors: 0,
       }),
     );

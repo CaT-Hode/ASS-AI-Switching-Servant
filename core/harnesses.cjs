@@ -8,6 +8,11 @@ const { legacyBaseline } = require("./injection-files.cjs");
 const { DIRECT, locations, providerId } = require("./native-config.cjs");
 const { makeCatalog } = require("./models.cjs");
 const { apiProfile } = require("./account-info.cjs");
+const { officialAccountPlan } = require("./official-account-plan.cjs");
+const { assertClaudeAccount } = require("./claude-launch-policy.cjs");
+const { safePath, read: readNative, document: nativeDocument } = require("./native-fields.cjs");
+const { ACCOUNT_SERVICES, officialApiService, acceptsApiAccount, acceptsNativeAccount,
+  modelRef, injectionCatalog } = require("./client-policy.cjs");
 const {
   inspectCredentials,
   discoverNative,
@@ -37,28 +42,28 @@ const SPECS = [
     name: "Claude Code",
     command: "claude",
     oauth: true,
-    description: "Claude 授权账户 / Anthropic 协议 API 账户。",
+    description: "Claude 授权账户 / Anthropic 官方 API 账户。",
   },
   {
     id: "opencode",
     name: "OpenCode",
     command: "opencode",
-    oauth: true,
-    description: "Go API 自动识别，其他 API 与原生登录账户独立切换。",
+    oauth: false,
+    description: "OpenCode Go / Zen 官方 API 账户。",
   },
   {
     id: "pi",
     name: "pi",
     command: "pi",
     oauth: true,
-    description: "API 账户与原生 / 扩展 OAuth；实际登录选项由本机 pi 提供。",
+    description: "原生支持的 OAuth 账户；自定义 API 通过模型接入管理。",
   },
   {
     id: "dsh",
     name: "DeepSeek Harness",
     command: "dsh",
-    oauth: true,
-    description: "DeepSeek API、兼容 API 与原生 OAuth 记录。",
+    oauth: false,
+    description: "DeepSeek 官方 API 账户。",
   },
 ];
 const APIS = {
@@ -66,17 +71,32 @@ const APIS = {
   "openai-chat": "openai-completions",
   anthropic: "anthropic-messages",
 };
-const json = (file, fallback = {}) => {
+const json = (file) => {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!fs.existsSync(file)) return {};
+    if (fs.statSync(file).size > 4 * 1024 * 1024) throw Error();
+    const value = JSON.parse(fs.readFileSync(file, "utf8"));
+    const object = (v) => v && typeof v === "object" && !Array.isArray(v);
+    const strings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
+    if (!object(value) || (value.schemaVersion !== undefined && ![1, 2].includes(value.schemaVersion))) throw Error();
+    for (const key of ["selected", "credentialHomes", "executables", "accountBindings", "accountExclusions", "apiBindings", "apiExclusions", "injections", "nativeProfileTargets", "modelSelections"])
+      if (value[key] !== undefined && !object(value[key])) throw Error();
+    for (const key of ["selected", "credentialHomes", "executables"])
+      if (Object.values(value[key] || {}).some((v) => typeof v !== "string")) throw Error();
+    for (const key of ["accountBindings", "accountExclusions", "apiBindings", "apiExclusions", "nativeProfileTargets"])
+      if (Object.values(value[key] || {}).some((v) => !strings(v))) throw Error();
+    for (const config of Object.values(value.injections || {}))
+      if (!object(config) || !strings(config.excluded) || (config.defaultModel !== null && typeof config.defaultModel !== "string")) throw Error();
+    if (value.profiles !== undefined && (!Array.isArray(value.profiles) || value.profiles.some((p) => !p || !/^[a-f0-9]{24}$/.test(p.id) || !SPECS.some((s) => s.id === p.harness)))) throw Error();
+    return value;
   } catch {
-    return fallback;
+    throw Error("客户端账户配置损坏或版本不兼容，未覆盖 clients.json；请检查数据目录和备份");
   }
 };
 const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
 function apiAccounts(harness, providers, includeUnavailable = false) {
   return providers
-    .filter((p) => (includeUnavailable || p.enabled) && p.apiKey)
+    .filter((p) => p.apiKey && acceptsApiAccount(harness, p))
     .map((p) => {
       const models = p.models.filter(
         (m) => m.enabled && (harness !== "claude" || m.wireApi === "anthropic"),
@@ -99,18 +119,17 @@ function apiAccounts(harness, providers, includeUnavailable = false) {
             : harness === "opencode" && go
               ? "OpenCode Go API"
               : "API",
-        ready: p.enabled !== false && !!models.length,
+        // A saved credential is not made invalid by disabling catalog models.
+        ready: true,
+        authType: "api",
+        provider: officialApiService(p),
+        source: "官方 API",
         models: models.map((m) => ({
           model: m.model,
           name: m.displayName,
           protocol: m.wireApi,
         })),
-        message:
-          p.enabled === false
-            ? "供应商已停用"
-            : models.length
-              ? "API Key"
-              : "没有兼容且已启用的模型",
+        message: "API Key 已保存",
       };
     })
     .filter(
@@ -123,30 +142,16 @@ function apiAccounts(harness, providers, includeUnavailable = false) {
     );
 }
 function apiCompatible(harness, provider) {
-  return (
-    harness !== "claude" ||
-    provider?.wireApi === "anthropic" ||
-    provider?.models.some((m) => m.wireApi === "anthropic")
-  );
+  return !!provider && acceptsApiAccount(harness, provider);
 }
 function automaticBinding(harness, provider) {
-  try {
-    const url = new URL(provider.baseUrl);
-    return (
-      (harness === "dsh" && url.hostname === "api.deepseek.com") ||
-      (harness === "opencode" &&
-        url.hostname === "opencode.ai" &&
-        /^\/zen\/go(?:\/|$)/.test(url.pathname))
-    );
-  } catch {
-    return false;
-  }
+  return ["dsh", "opencode"].includes(harness) && acceptsApiAccount(harness, provider);
 }
 function isolatedEnv(harness, dir, env = process.env) {
   const result = { ...env };
   for (const key of Object.keys(result))
     if (
-      /^(ANTHROPIC_|CLAUDE_CODE_OAUTH|CLAUDE_CODE_USE_|CLAUDE_CONFIG_DIR|OPENAI_|CODEX_HOME|PI_CODING_AGENT_DIR|PI_CODING_AGENT_SESSION_DIR|OPENCODE_|DSH_HOME|DEEPSEEK_|ASS_LOCAL_TOKEN|ELECTRON_RUN_AS_NODE|NODE_TLS_REJECT_UNAUTHORIZED|XDG_(CONFIG|DATA|STATE|CACHE)_HOME$)/i.test(
+      /^(ANTHROPIC_|CLAUDE_CODE_OAUTH|CLAUDE_CODE_USE_|CLAUDE_CONFIG_DIR|OPENAI_|CODEX_HOME|PI_CODING_AGENT_DIR|PI_CODING_AGENT_SESSION_DIR|OPENCODE_|DSH_HOME|DEEPSEEK_|ASS_LOCAL_TOKEN|ASS_PI_AUTH_REQUIRED|ELECTRON_RUN_AS_NODE|NODE_TLS_REJECT_UNAUTHORIZED|XDG_(CONFIG|DATA|STATE|CACHE)_HOME$)/i.test(
         key,
       ) ||
       /^(GEMINI|GOOGLE|GROQ|MISTRAL|CEREBRAS|XAI|OPENROUTER|KIMI|MINIMAX|ZAI|SILICONFLOW)_API_KEY$/i.test(
@@ -292,7 +297,7 @@ function routeConfig(harness, p, m, dir, token, catalog, port = 25819) {
         2,
       ),
     ]);
-    args.push("--profile", "tui");
+    args.push("--profile", "web");
   }
   if (harness === "codex") {
     const name = p.id + "::" + m.model;
@@ -328,37 +333,44 @@ class HarnessManager {
       credentialHomes: {},
       executables: {},
       workspace: "",
-      apiBindings: {},
-      apiExclusions: {},
+      accountBindings: {},
+      accountExclusions: {},
+      injections: {},
       ...json(this.file),
     };
     this.nativeHome = options.home || os.homedir();
     this.nativeEnv = options.env || process.env;
     this.launchEnv = options.launchEnv || process.env;
-    this.state.apiBindings =
-      this.state.apiBindings && typeof this.state.apiBindings === "object"
-        ? this.state.apiBindings
-        : {};
-    this.state.apiExclusions =
-      this.state.apiExclusions && typeof this.state.apiExclusions === "object"
-        ? this.state.apiExclusions
-        : {};
-    for (const { id } of SPECS) {
-      const bindings = new Set(
-        Array.isArray(this.state.apiBindings[id])
-          ? this.state.apiBindings[id]
-          : [],
-      );
-      for (const account of [
-        this.state.selected[id],
-        ...Object.keys(this.state.modelSelections[id] || {}),
-      ])
-        if (account?.startsWith("api:")) bindings.add(account.slice(4));
-      this.state.apiBindings[id] = [...bindings];
-      this.state.apiExclusions[id] = Array.isArray(this.state.apiExclusions[id])
-        ? this.state.apiExclusions[id]
-        : [];
+    // One-time metadata migration. Never touch native config or credentials here.
+    const legacy = this.state.schemaVersion !== 2;
+    if (legacy && fs.existsSync(this.file)) {
+      const backup = path.join(dataDir, "clients.before-account-separation.json");
+      if (!fs.existsSync(backup)) atomic(backup, fs.readFileSync(this.file, "utf8"));
     }
+    for (const { id } of SPECS) {
+      const providers = this.getState().providers;
+      const bindings = this.state.accountBindings[id] || (legacy ? this.state.apiBindings?.[id] : []) || [];
+      this.state.accountBindings[id] = bindings.filter((pid) =>
+        apiCompatible(id, providers.find((p) => p.id === pid)));
+      this.state.accountExclusions[id] ||= (legacy ? this.state.apiExclusions?.[id] : []) || [];
+      this.state.injections[id] ||= { excluded: [], defaultModel: null };
+      const selected = this.state.selected[id];
+      if (legacy && selected?.startsWith("api:")) {
+        const p = providers.find((p) => p.id === selected.slice(4));
+        const name = this.state.modelSelections[id]?.[selected] ||
+          injectionCatalog(id, p ? [p] : []).find((m) => m.included)?.model;
+        if (p && name && p.models.some((m) => m.model === name))
+          this.state.injections[id].defaultModel = modelRef(p.id, name);
+        if (p && acceptsApiAccount(id, p)) {
+          if (!this.state.accountBindings[id].includes(p.id)) this.state.accountBindings[id].push(p.id);
+        } else delete this.state.selected[id];
+      }
+    }
+    this.state.schemaVersion = 2;
+    delete this.state.apiBindings;
+    delete this.state.apiExclusions;
+    delete this.state.modelSelections;
+    if (legacy && fs.existsSync(this.file)) this.save();
   }
   async refreshOAuth() {
     for (const { id } of SPECS) {
@@ -479,16 +491,10 @@ class HarnessManager {
           this.getState().providers,
           true,
         );
-        const bound = new Set(this.state.apiBindings[s.id] || []);
-        // Preserve API accounts actually selected/used by an earlier release.
-        for (const id of [
-          this.state.selected[s.id],
-          ...Object.keys(this.state.modelSelections[s.id] || {}),
-        ])
-          if (id?.startsWith("api:")) bound.add(id.slice(4));
+        const bound = new Set(this.state.accountBindings[s.id] || []);
         const apiRows = apiCandidates.filter(
           (a) =>
-            !(this.state.apiExclusions[s.id] || []).includes(a.providerId) &&
+            !(this.state.accountExclusions[s.id] || []).includes(a.providerId) &&
             (bound.has(a.providerId) ||
               automaticBinding(
                 s.id,
@@ -537,26 +543,36 @@ class HarnessManager {
             }),
           ...apiRows,
         ];
+        // Native model discovery is independent of which account cards we show.
+        const modelAccounts = accounts.filter((a) => a.kind !== "api");
+        const visible = accounts.filter((a) => a.kind === "api" ||
+          acceptsNativeAccount(s.id, a, this.piProviders) ||
+          (a.kind === "auth" && !a.provider && s.oauth &&
+            (!a.oauthProvider || (s.id === "pi" ? this.piProviders.some((p) => p.id === a.oauthProvider)
+              : ACCOUNT_SERVICES[s.id].includes(a.oauthProvider)))));
         const saved = this.state.selected[s.id];
-        const legacy = accounts.filter((a) => a.profileId === saved);
+        const legacy = visible.filter((a) => a.profileId === saved);
         return {
           ...s,
           executable: this.launcher(s.id).executable,
           launcher: this.launcher(s.id),
           desktop: this.desktop(s.id),
-          selected: accounts.some((a) => a.id === saved)
+          selected: visible.some((a) => a.id === saved)
             ? saved
             : legacy.length === 1
               ? legacy[0].id
               : "",
-          modelSelections: this.state.modelSelections[s.id] || {},
+          accountServices: ACCOUNT_SERVICES[s.id],
+          oauthProviders: s.id === "pi" ? this.piProviders : [],
+          injection: this.injection(s.id),
+          modelAccounts,
           credentialHome: this.state.credentialHomes[s.id] || "",
           credentialSources: native.map(({ file, status, message }) => ({
             file,
             status,
             message,
           })),
-          accounts,
+          accounts: visible,
           availableApiAccounts: apiCandidates.filter(
             (a) =>
               !apiRows.some((b) => b.id === a.id) &&
@@ -571,10 +587,14 @@ class HarnessManager {
   }
   add(harness, label, oauthProvider = "") {
     const s = this.spec(harness);
-    if (!s.oauth) throw new Error("此客户端直接使用 API 供应商作为账户");
+    if (!s.oauth) throw new Error("此客户端只管理对应官方 API 账户");
     if (!label?.trim()) throw new Error("请输入账户名称");
     if (oauthProvider && !/^[a-z0-9-]{1,80}$/.test(oauthProvider))
       throw new Error("OAuth provider ID 格式无效");
+    if (harness === "pi" && !this.piProviders.some((p) => p.id === oauthProvider))
+      throw Error("请选择本机 pi 已确认支持的 OAuth 服务");
+    if (harness !== "pi" && oauthProvider && !ACCOUNT_SERVICES[harness].includes(oauthProvider))
+      throw Error("此客户端不支持该官方账户");
     const p = {
       id: crypto.randomBytes(12).toString("hex"),
       harness,
@@ -600,17 +620,32 @@ class HarnessManager {
     this.save();
   }
   selectModel(harness, accountId, model) {
-    const client = this.snapshot().clients.find((s) => s.id === harness);
-    const account =
-      client &&
-      [...client.accounts, ...client.availableApiAccounts].find(
-        (a) => a.id === accountId,
-      );
-    if (!account?.models?.some((m) => m.model === model))
-      throw Error("请选择此账户的兼容模型");
-    this.state.modelSelections[harness] ||= {};
-    this.state.modelSelections[harness][accountId] = model;
-    this.save();
+    // Legacy IPC compatibility: selecting a model never adds/selects an account.
+    const provider = accountId.replace(/^api:/, "");
+    return this.setInjection(harness, { defaultModel: modelRef(provider, model) });
+  }
+  injection(harness) {
+    this.spec(harness);
+    const settings = this.state.injections[harness];
+    return { ...settings, models: injectionCatalog(harness, this.getState().providers, settings) };
+  }
+  setInjection(harness, changes) {
+    this.spec(harness);
+    if (!changes || typeof changes !== "object" || Object.keys(changes).some((k) => !["excluded", "defaultModel"].includes(k)))
+      throw Error("无效模型接入设置");
+    const next = { ...this.state.injections[harness], ...changes };
+    if (!Array.isArray(next.excluded) || next.excluded.some((r) => typeof r !== "string"))
+      throw Error("无效模型排除列表");
+    const catalog = injectionCatalog(harness, this.getState().providers, next);
+    if (next.excluded.some((ref) => !catalog.some((m) => m.ref === ref)))
+      throw Error("模型目录已变化，请刷新");
+    if (next.defaultModel !== null && !catalog.some((m) => m.ref === next.defaultModel && m.included))
+      throw Error("默认模型必须是已纳入接入的兼容模型");
+    next.excluded = [...new Set(next.excluded)];
+    const previous = this.state.injections[harness];
+    this.state.injections[harness] = next;
+    try { this.save(); } catch (e) { this.state.injections[harness] = previous; throw e; }
+    return this.injection(harness);
   }
   bindApi(harness, providerId, bound = true) {
     this.spec(harness);
@@ -624,10 +659,10 @@ class HarnessManager {
           (a) => a.providerId === providerId,
         ))
     )
-      throw Error("供应商缺少凭据或不兼容此客户端");
+      throw Error("只能添加此客户端对应的官方 API 账户；第三方模型请通过模型接入管理");
     const previous = structuredClone(this.state);
-    const bindings = new Set(this.state.apiBindings[harness] || []);
-    const excluded = new Set(this.state.apiExclusions[harness] || []);
+    const bindings = new Set(this.state.accountBindings[harness] || []);
+    const excluded = new Set(this.state.accountExclusions[harness] || []);
     if (bound) {
       bindings.add(providerId);
       excluded.delete(providerId);
@@ -636,11 +671,9 @@ class HarnessManager {
       excluded.add(providerId);
       if (this.state.selected[harness] === "api:" + providerId)
         delete this.state.selected[harness];
-      if (this.state.modelSelections[harness])
-        delete this.state.modelSelections[harness]["api:" + providerId];
     }
-    this.state.apiBindings[harness] = [...bindings];
-    this.state.apiExclusions[harness] = [...excluded];
+    this.state.accountBindings[harness] = [...bindings];
+    this.state.accountExclusions[harness] = [...excluded];
     try {
       this.save();
     } catch (error) {
@@ -650,10 +683,11 @@ class HarnessManager {
   }
   reconcileModel(providerId, previousName, nextName) {
     const previous = structuredClone(this.state);
-    for (const selections of Object.values(this.state.modelSelections)) {
-      if (selections["api:" + providerId] !== previousName) continue;
-      if (nextName) selections["api:" + providerId] = nextName;
-      else delete selections["api:" + providerId];
+    const previousRef = modelRef(providerId, previousName);
+    const nextRef = nextName ? modelRef(providerId, nextName) : null;
+    for (const settings of Object.values(this.state.injections)) {
+      if (settings.defaultModel === previousRef) settings.defaultModel = nextRef;
+      settings.excluded = settings.excluded.flatMap((ref) => ref !== previousRef ? [ref] : nextRef ? [nextRef] : []);
     }
     try {
       this.save();
@@ -699,71 +733,20 @@ class HarnessManager {
       addEnv = {},
       files = [],
       hint = "",
-      nativeSelection;
+      nativeSelection,
+      credentialCheck;
     if (account.kind === "api") {
       if (!account.ready) throw Error(account.message);
-      if (this.options.isConnected && !this.options.isConnected(harness))
-        throw Error(
-          "请先在此客户端页面开启 ASS 接入；API 密钥不会注入到未接入的客户端",
-        );
       if (action !== "launch")
         throw new Error(
           "API 账户直接使用供应商密钥，无需网页登录；在供应商页编辑或移除",
         );
-      const p = this.getState().providers.find(
-          (p) => p.id === account.providerId,
-        ),
-        m = p.models.find(
-          (m) =>
-            m.model ===
-              (modelName ||
-                this.state.modelSelections[harness]?.[accountId] ||
-                account.models[0]?.model) && m.enabled,
-        );
-      if (!m || !account.models.some((item) => item.model === m.model))
-        throw new Error("请选择此客户端兼容且已启用的模型");
-      if (DIRECT.includes(harness)) {
-        dir = locations(harness, this).dir;
-        nativeSelection = { account: accountId, model: m.model };
-        const id = providerId(p, m.wireApi);
-        if (harness === "opencode") args = ["--model", id + "/" + m.model];
-        if (harness === "pi")
-          args = [
-            "--provider",
-            id,
-            "--model",
-            m.model,
-            "--thinking",
-            m.defaultEffort,
-          ];
-        if (harness === "dsh") args = ["--profile", "tui"];
-        hint = "使用原生配置直连供应商，不经过 ASS 路由。";
-      } else {
-        // One immutable configuration directory per account/model; switching cannot affect running clients.
-        const id = crypto
-          .createHash("sha256")
-          .update(p.id + "\0" + m.model)
-          .digest("hex")
-          .slice(0, 24);
-        dir = this.root(harness, id);
-        ({
-          env: addEnv,
-          files,
-          args,
-        } = routeConfig(
-          harness,
-          p,
-          m,
-          dir,
-          token,
-          makeCatalog(
-            this.officialModels,
-            this.getState().providers,
-            this.getState().officialOverrides,
-          ),
-          this.options.port || 25819,
-        ));
-      }
+      const p = this.getState().providers.find((p) => p.id === account.providerId);
+      // Key rotation creates a new runtime home, never overwriting another window.
+      const id = crypto.createHash("sha256").update("official\0" + p.id + "\0" + p.apiKey).digest("hex").slice(0, 24);
+      dir = this.root(harness, id);
+      ({ env: addEnv, files, args, credentialCheck } = officialAccountPlan(harness, p));
+      hint = "官方 API 账户仅用于本次新启动；已有窗口和模型接入设置不变。";
     } else if (account.kind === "native") {
       // Existing native homes are read/used in place. Never inject config into
       // them or copy refresh tokens during a status check/account selection.
@@ -806,9 +789,12 @@ class HarnessManager {
             throw Error(
               "此 Codex 授权账户含既有配置，请先检查其配置；ASS 不会直接覆盖",
             );
+          const applied = this.options.proxyConfig?.clients.codex;
+          const catalog = applied ? `model_catalog_json = ${JSON.stringify(this.options.proxyConfig.config.catalog)}\n` : "";
+          const defaultModel = applied?.defaultModel ? `model = ${JSON.stringify(applied.defaultModel.model)}\nmodel_reasoning_effort = ${JSON.stringify(applied.defaultModel.effort)}\n` : "";
           files.push([
             "config.toml",
-            `cli_auth_credentials_store = "file"\nmodel_provider = "ass_official"\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = "http://127.0.0.1:${this.options.port || 25819}/clients/codex/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n`,
+            `cli_auth_credentials_store = "file"\n${catalog}${defaultModel}model_provider = "ass_official"\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = "http://127.0.0.1:${this.options.port || 25819}/clients/codex/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n`,
           ]);
         } else if (!fs.existsSync(path.join(dir, "config.toml"))) {
           files.push(["config.toml", 'cli_auth_credentials_store = "file"\n']);
@@ -828,12 +814,15 @@ class HarnessManager {
             "，由原生客户端完成授权。";
       }
       if (harness === "dsh") {
-        args = ["--profile", "tui"];
+        args = ["--profile", "web"];
         if (action !== "launch")
           hint =
             "请在 DSH 的授权设置中完成登录或退出；登录方式由已安装的插件提供。";
       }
     }
+    // Current DSH ships web/headless/ACP profiles, not a built-in "tui".
+    // Native-account launches need the launcher flag too (bare dsh errors).
+    if (harness === "dsh" && !args.includes("--profile")) args.unshift("--profile", "web");
     const env =
       account.kind === "native" || nativeSelection
         ? isolatedEnv(harness, dir, this.nativeEnv)
@@ -871,30 +860,137 @@ class HarnessManager {
       files,
       hint,
       accountKind: account.kind,
+      authType: account.authType || (account.kind === "api" ? "api" : "oauth"),
       harness,
       nativeSelection,
+      nativeProfile: DIRECT.includes(harness) && account.kind !== "native" && action === "launch" && !!this.options.isConnected?.(harness),
+      initializeOnly: account.kind === "api",
+      credentialCheck,
       routed:
-        (account.kind === "api" && !nativeSelection) ||
+        (account.kind === "native" && harness === "codex" &&
+          path.join(dir, "config.toml") === this.options.proxyConfig?.config.file &&
+          this.options.proxyConfig.config.status().attached) ||
         (account.kind === "auth" &&
           harness === "codex" &&
           (!this.options.isConnected || this.options.isConnected(harness))),
     };
   }
   materialize(plan) {
+    assertClaudeAccount(plan, this.state.workspace || path.join(this.dataDir, "workspace"));
+    if (plan.requiresNativeInjection) {
+      const status = this.options.nativeConfig?.status(plan.harness, true);
+      if (!status?.applied) throw Error("模型接入配置尚未同步，请先在接入控制中同步后再启动");
+      for (const [file, content] of plan.launchFiles || []) {
+        safePath(file);
+        atomic(file, content);
+      }
+      return;
+    }
     if (plan.nativeSelection) {
       if (!this.options.nativeConfig) throw Error("原生接入管理未初始化");
       return this.options.nativeConfig.sync(plan.harness, plan.nativeSelection);
     }
+    safePath(plan.dir);
+    for (const [name] of plan.files) safePath(path.join(plan.dir, name));
+    if (plan.credentialCheck) {
+      const check = plan.credentialCheck;
+      const current = readNative(path.join(plan.dir, check.file));
+      if (current !== null) {
+        const data = nativeDocument(current, check.format).data;
+        const value = check.path.reduce((object, key) => object?.[key], data);
+        if (value !== check.value || (plan.harness === "codex" && data.tokens?.access_token))
+          throw Error("此独立窗口的登录凭据已被客户端更改；未覆盖，请先确认该账户身份");
+      }
+    }
     fs.mkdirSync(plan.dir, { recursive: true });
-    if (plan.routed && this.options.injections)
+    if (plan.routed && plan.files.length && this.options.injections)
       return this.options.injections.write(plan.harness, plan);
-    for (const [name, content] of plan.files)
-      atomic(path.join(plan.dir, name), content);
+    for (const [name, content] of plan.files) {
+      const file = path.join(plan.dir, name);
+      // Immutable API runtime home: do not erase fields added by the client or
+      // model injector on the next launch. Key rotation uses a different home.
+      if (!plan.initializeOnly || !fs.existsSync(file)) atomic(file, content);
+    }
+    if (plan.nativeProfile) {
+      if (!this.options.nativeConfig) throw Error("原生接入管理未初始化");
+      this.options.nativeConfig.syncProfile(plan.harness, plan.dir);
+    }
   }
   async launch(harness, account, action, model, token) {
     const launcher = this.launcher(harness);
     if (!launcher.ready) throw new Error(launcher.message);
     const plan = this.plan(harness, account, action, model, token);
+    const result = await this.launchPlan(harness, plan, account, action, launcher);
+    this.select(harness, account);
+    return result;
+  }
+  modelPlan(harness, ref, token = "") {
+    if (!this.options.isConnected?.(harness)) throw Error("请先开启此客户端的模型接入");
+    const row = this.injection(harness).models.find((m) => m.ref === ref && m.included);
+    if (!row) throw Error("请选择已纳入接入的兼容模型");
+    const p = this.getState().providers.find((p) => p.id === row.providerId);
+    const m = p.models.find((m) => m.model === row.model);
+    if (DIRECT.includes(harness)) {
+      if (harness !== "opencode" && !["low", "medium", "high", "xhigh", "max"].includes(m.defaultEffort))
+        throw Error("此客户端原生思维强度不支持所选模型的默认档位，请先调整模型配置");
+      const dir = locations(harness, this).dir, id = providerId(p, m.wireApi);
+      const env = isolatedEnv(harness, dir, this.nativeEnv);
+      if (harness === "opencode") {
+        env.XDG_DATA_HOME = path.dirname(dir);
+        for (const k of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"])
+          if (this.nativeEnv[k]) env[k] = this.nativeEnv[k]; else delete env[k];
+      }
+      const launchFiles = [], dshArgs = ["--profile", "web"];
+      if (harness === "dsh") {
+        // DSH's settings user layer overrides agent-default-model composition
+        // config. Use its documented --patch settings-path override with a
+        // per-launch snapshot, rather than editing the shared default live.
+        const runtime = this.root(harness, crypto.randomBytes(12).toString("hex"));
+        const settingsFile = path.join(runtime, "launch-settings.yaml"), patchFile = path.join(runtime, "launch.patch.yml");
+        const settings = nativeDocument(readNative(locations(harness, this).config), "yaml").data;
+        settings["agent-default-model"] = { provider: id, model: m.model, reasoningEffort: m.defaultEffort };
+        launchFiles.push([settingsFile, JSON.stringify(settings, null, 2)],
+          [patchFile, JSON.stringify([{ id: "settings", config: { path: settingsFile, watch: false } }])]);
+        dshArgs.push("--patch", patchFile);
+      }
+      return { harness, dir, env, files: [], launchFiles, routed: false, accountKind: "model",
+        requiresNativeInjection: true,
+        args: harness === "pi" ? ["--provider", id, "--model", m.model, "--thinking", m.defaultEffort]
+          : harness === "opencode" ? ["--model", id + "/" + m.model] : dshArgs,
+        hint: "使用模型所属供应商的凭据；不切换官方登录账户。" };
+    }
+    this.options.proxyConfig?.requireApplied(harness);
+    const id = crypto.createHash("sha256").update("model\0" + ref).digest("hex").slice(0, 24);
+    const dir = this.root(harness, id);
+    const config = routeConfig(harness, p, m, dir, token,
+      // An API-only model window must not advertise subscription models: its
+      // local route token is not a ChatGPT credential and must never fall back.
+      makeCatalog([], this.getState().providers.map((provider) => ({ ...provider,
+        models: provider.models.filter((model) => this.injection(harness).models.some((row) => row.included && row.ref === modelRef(provider.id, model.model))),
+      })), {}), this.options.port || 25819);
+    if (harness === "codex") {
+      const entry = config.files.find(([name]) => name === "catalog.json");
+      const catalog = JSON.parse(entry[1]);
+      // makeCatalog supplies an official template when its source cache is
+      // empty; retain that only as a template, never as an API-window choice.
+      entry[1] = JSON.stringify({ ...catalog, models: catalog.models.filter((m) => m.slug.includes("::")) });
+    }
+    if (harness === "claude") {
+      const name = p.id + "::" + m.model;
+      config.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${this.options.port || 25819}/clients/claude/models`;
+      for (const key of ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+        config.env[key] = name;
+      config.args = ["--model", name];
+    }
+    return { ...config, harness, dir, env: { ...isolatedEnv(harness, dir), ...config.env },
+      routed: true, accountKind: "model", hint: "使用模型所属供应商的凭据；官方订阅账户不变。" };
+  }
+  async launchModel(harness, ref, token) {
+    const launcher = this.launcher(harness);
+    if (!launcher.ready) throw Error(launcher.message);
+    return this.launchPlan(harness, this.modelPlan(harness, ref, token), "model:" + ref, "launch", launcher);
+  }
+  async launchPlan(harness, plan, account, action, launcher) {
     this.materialize(plan);
     const workspace =
       this.state.workspace || path.join(this.dataDir, "workspace");
@@ -951,9 +1047,6 @@ class HarnessManager {
         tracking = "；窗口身份登记失败，请手动关闭该窗口后再断开接入";
       }
     }
-    this.select(harness, account);
-    if (plan.accountKind === "api" && model)
-      this.selectModel(harness, account, model);
     return {
       ok: true,
       message:

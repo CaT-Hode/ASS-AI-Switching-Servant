@@ -725,3 +725,16 @@
 .account-quota.limited progress {
   accent-color: var(--danger);
 }
+.client-injection { border: 1px solid var(--border); border-radius: 16px; padding: 18px; margin: 16px 0 24px; }
+.client-injection > header, .client-injection h3, .client-model-launch { display: flex; align-items: center; gap: 10px; }
+.client-injection > header { justify-content: space-between; margin-bottom: 14px; }
+.client-injection h3 { margin: 0; }
+.client-model-launch select { flex: 1; min-width: 0; }
+.client-injection details { margin-top: 14px; }
+.client-injection summary { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.client-injection details[open] summary { margin-bottom: 16px; }
+.client-injection-groups { max-height: 320px; overflow-y: auto; }
+.client-injection-groups h4 { margin: 12px 0 8px; }
+.client-injection-model { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.client-injection-model > span { flex: 1; min-width: 0; }
+.client-injection-model small { display: block; color: var(--muted); font-size: 12px; }

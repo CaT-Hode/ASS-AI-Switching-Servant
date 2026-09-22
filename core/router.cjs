@@ -172,7 +172,7 @@ class Router {
         this.requests.set(req, { client, res });
         this.onActivity();
       }
-      if (req.url.startsWith("/harness/")) {
+      if (req.url.startsWith("/harness/") || req.url.startsWith("/models/")) {
         await forwardHarness(this, req, res);
         return;
       }
@@ -205,7 +205,9 @@ class Router {
       } catch {
         throw Object.assign(new Error("请求不是有效 JSON"), { status: 400 });
       }
-      route = routeFor(body, this.getState(), match[1] || "");
+      route = routeFor(body, this.getState(this.requests.get(req)?.client), match[1] || "");
+      if (route.official && req.headers.authorization.replace(/^Bearer\s+/i, "") === this.clientToken)
+        throw Object.assign(new Error("此窗口使用模型 API 凭据，不能请求 ChatGPT 订阅模型；请从官方账户卡片启动"), { status: 403 });
       const headers = route.official
         ? pickHeaders(req.headers)
         : { ...route.provider.extraHeaders };

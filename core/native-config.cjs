@@ -4,6 +4,7 @@ const { createHash } = require("node:crypto");
 const { NativeFields, document, read, hash } = require("./native-fields.cjs");
 const { nativeLocations } = require("./credential-status.cjs");
 const { endpoint } = require("./models.cjs");
+const { injectionCatalog, modelRef } = require("./client-policy.cjs");
 const DIRECT = ["opencode", "pi", "dsh"];
 const APIS = {
   "openai-responses": "openai-responses",
@@ -68,6 +69,14 @@ function locations(harness, manager) {
     };
   throw Error("此客户端不使用原生 API 配置接入");
 }
+function profileLocations(harness, dir) {
+  if (harness === "opencode") return { dir: path.join(dir, "data/opencode"),
+    config: path.join(dir, "config/opencode/opencode.jsonc"), auth: path.join(dir, "data/opencode/auth.json") };
+  if (harness === "pi") return { dir, config: path.join(dir, "models.json"),
+    auth: path.join(dir, "auth.json"), settings: path.join(dir, "settings.json") };
+  if (harness === "dsh") return { dir, config: path.join(dir, "settings.yaml"), auth: path.join(dir, ".credentials.yaml") };
+  throw Error("不支持的原生配置目录");
+}
 function baseUrl(harness, p, wire) {
   const url = endpoint(p.baseUrl, wire).replace(
     /\/(?:responses|chat\/completions|messages)$/,
@@ -86,21 +95,22 @@ function reasoning(model) {
     ]),
   );
 }
-function compose(harness, manager, selection) {
-  const target = locations(harness, manager),
+function compose(harness, manager, selection, targetOverride) {
+  const target = targetOverride || locations(harness, manager),
     fields = [];
   const field = (file, format, keys, value, extra = {}) =>
     fields.push({ harness, file, format, path: keys, value, ...extra });
-  const client = manager.snapshot().clients.find((c) => c.id === harness);
-  const available = client.accounts.filter((a) => a.kind === "api" && a.ready);
-  const selectedId = selection?.account || client.selected;
+  const providers = manager.getState().providers;
+  const settings = manager.state.injections?.[harness] || {};
+  const catalog = injectionCatalog(harness, providers, settings);
+  const included = new Set(catalog.filter((m) => m.included).map((m) => m.ref));
+  const selectedRef = selection?.model && selection?.account
+    ? modelRef(selection.account.replace(/^api:/, ""), selection.model)
+    : settings.defaultModel;
   let selected;
-  for (const account of available) {
-    const p = manager
-      .getState()
-      .providers.find((p) => p.id === account.providerId);
+  for (const p of providers) {
     const grouped = Map.groupBy(
-      p.models.filter((m) => m.enabled),
+      p.models.filter((m) => included.has(modelRef(p.id, m.model))),
       (m) => m.wireApi,
     );
     for (const [wire, models] of grouped) {
@@ -149,6 +159,10 @@ function compose(harness, manager, selection) {
         field(target.config, "json", ["providers", id], {
           baseUrl: base,
           api: APIS[wire],
+          // pi requires a nonempty apiKey declaration for custom providers,
+          // then prefers auth.json at request time. An unset variable fails
+          // closed if that credential is removed; no duplicate plaintext key.
+          apiKey: "$ASS_PI_AUTH_REQUIRED",
           headers: Object.fromEntries(
             Object.entries(headers).map(([k, v]) => [k, piLiteral(v)]),
           ),
@@ -194,14 +208,8 @@ function compose(harness, manager, selection) {
           { credentialProvider: id },
         );
       }
-      if (account.id === selectedId) {
-        const name =
-          selection?.model ||
-          client.modelSelections[account.id] ||
-          account.models[0]?.model;
-        const m = models.find((m) => m.model === name);
-        if (m) selected = { id, model: m };
-      }
+      const m = models.find((m) => modelRef(p.id, m.model) === selectedRef);
+      if (m) selected = { id, model: m };
     }
   }
   if (harness === "dsh" && fields.length) {
@@ -255,7 +263,8 @@ function compose(harness, manager, selection) {
         });
     }
   }
-  return { target, fields, selected };
+  if (selectedRef && !selected) throw Error("默认接入模型不可用，请重新选择或保留客户端默认模型");
+  return { target, fields, selected, modelCount: included.size };
 }
 
 class NativeConfig {
@@ -282,12 +291,17 @@ class NativeConfig {
   }
   desired(id, selection) {
     const plan = compose(id, this.manager, selection);
+    for (const dir of this.manager.state.nativeProfileTargets?.[id] || []) {
+      this.validateProfile(id, dir);
+      const profile = compose(id, this.manager, undefined, profileLocations(id, dir));
+      plan.fields.push(...profile.fields);
+    }
     // Keep a structural marker owned across subsequent syncs.
     for (const e of this.fields.entries.filter(
       (e) => e.harness === id && e.retain,
     )) {
       if (
-        Object.values(plan.target).includes(e.file) &&
+        (Object.values(plan.target).includes(e.file) || plan.fields.some((d) => d.file === e.file)) &&
         !plan.fields.some(
           (d) =>
             d.file === e.file &&
@@ -298,16 +312,46 @@ class NativeConfig {
     }
     return plan;
   }
+  validateProfile(id, dir) {
+    const base = path.resolve(this.manager.dataDir, "clients", id);
+    if (typeof dir !== "string" || path.dirname(path.resolve(dir)).toLowerCase() !== base.toLowerCase() || !/^[a-f0-9]{24}$/.test(path.basename(dir)))
+      throw Error("独立账户配置目录无效");
+  }
+  syncProfile(id, dir) {
+    this.validateProfile(id, dir);
+    const existing = this.fields.entries.filter((e) => e.harness === id)
+      .map((e) => ({ ...e, value: e.after.value }));
+    // Launching an account is not permission to apply pending model edits.
+    // New homes inherit the last explicitly applied native fields, and existing
+    // homes keep them unchanged even while a newer draft awaits confirmation.
+    this.fields.plan(id, existing);
+    const targets = this.manager.state.nativeProfileTargets ||= {};
+    targets[id] ||= [];
+    if (targets[id].includes(dir)) return;
+    const source = locations(id, this.manager), target = profileLocations(id, dir);
+    const fields = existing.flatMap((e) => {
+      const key = ["config", "auth", "settings"].find((k) => source[k] === e.file);
+      if (!key) return [];
+      if (id === "dsh" && key === "auth" && e.path.join("/") === "version" && document(read(target.auth), "yaml").data.version === 1) return [];
+      return [{ ...e, file: target[key] }];
+    });
+    if (!fields.length) return;
+    const desired = [...existing, ...fields];
+    const old = [...targets[id]];
+    targets[id].push(dir);
+    try { this.manager.save(); this.fields.apply(id, desired); }
+    catch (error) { targets[id] = old; this.manager.save(); throw error; }
+    this.activated.add(id);
+  }
   preflight(ids, enabled) {
     for (const id of ids.filter((id) => this.isDirect(id))) {
       if (this.fields.state.pending) {
         this.fields.recoveryCheck();
         continue;
       }
-      this.fields.plan(
-        id,
-        enabled ? this.desired(id).fields : this.retained(id),
-      );
+      const plan = enabled ? this.desired(id) : null;
+      if (plan && !plan.modelCount) throw Error("没有可接入的模型，请先配置兼容模型及供应商凭据");
+      this.fields.plan(id, plan ? plan.fields : this.retained(id));
     }
   }
   retained(id) {
@@ -320,6 +364,7 @@ class NativeConfig {
     try {
       this.fields.recover();
       const plan = this.desired(id, selection);
+      if (!plan.modelCount) throw Error("没有可接入的模型，请先配置兼容模型及供应商凭据");
       this.fields.apply(id, plan.fields);
       this.activated.add(id);
       delete this.errors[id];
@@ -339,6 +384,10 @@ class NativeConfig {
       });
       delete this.errors[id];
       this.activated.delete(id);
+      if (this.manager.state.nativeProfileTargets) {
+        delete this.manager.state.nativeProfileTargets[id];
+        this.manager.save();
+      }
     }
   }
   fingerprint(ids, enabled) {
@@ -358,17 +407,24 @@ class NativeConfig {
   status(id, enabled = false) {
     const files = this.list([id]);
     if (!this.isDirect(id)) return {};
+    let modelCount = 0;
     let error = this.fields.error || this.errors[id] || "",
       pending = !!this.fields.state.pending;
-    if (enabled && !pending && !error) {
+    if (!pending && !error) {
       try {
-        pending =
-          this.fields.plan(id, this.desired(id).fields).files.length > 0;
+        const plan = this.desired(id);
+        modelCount = plan.modelCount;
+        if (enabled) {
+          if (!modelCount) error = "没有可接入的模型";
+          pending = this.fields.plan(id, plan.fields).files.length > 0;
+        }
       } catch (e) {
         error = e.message;
       }
     }
-    return { mode: "native", files, error, pending };
+    return { mode: "native", files, error, pending, modelCount,
+      applied: enabled && !pending && !error && modelCount > 0,
+      runtimeStatus: enabled ? "reload-required" : "inactive" };
   }
 }
 module.exports = {
@@ -379,4 +435,5 @@ module.exports = {
   DIRECT,
   piLiteral,
   baseUrl,
+  profileLocations,
 };

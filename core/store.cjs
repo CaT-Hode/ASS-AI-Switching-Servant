@@ -60,7 +60,7 @@ class Store {
           .toString("base64"),
       }),
     );
-    const catalog = path.join(this.dataDir, "catalog.json");
+    const catalog = path.join(this.dataDir, "catalog-draft.json");
     const previous = fs.existsSync(catalog) ? fs.readFileSync(catalog) : null;
     try {
       this.writeCatalog();
@@ -73,7 +73,7 @@ class Store {
   }
   writeCatalog() {
     atomic(
-      path.join(this.dataDir, "catalog.json"),
+      path.join(this.dataDir, "catalog-draft.json"),
       JSON.stringify(
         makeCatalog(
           this.officialModels,

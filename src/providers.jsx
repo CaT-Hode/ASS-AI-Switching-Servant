@@ -533,12 +533,6 @@ export function Providers({
     if (p && (p.readOnly || p.hasKey || p.id === "official"))
       api.call("models-discover", p.id).catch(() => {});
   }, [p?.id, p?.hasKey, p?.readOnly, revision]);
-  const boundClients =
-    p && !p.readOnly
-      ? state.harnesses.clients.filter((c) =>
-          c.accounts.some((a) => a.providerId === p.id),
-        )
-      : [];
   const directoryProvider = all.find((p) => p.id === directory);
   function select(p) {
     onOpenProvider(p.id);
@@ -733,46 +727,6 @@ export function Providers({
                 )}
               </div>
             </div>
-            {!!boundClients.length && (
-              <div className="client-model-selections">
-                {boundClients.map((c) => {
-                  const a = c.accounts.find((a) => a.providerId === p.id),
-                    saved = c.modelSelections[a.id],
-                    chosen = a.models.some((m) => m.model === saved)
-                      ? saved
-                      : a.models[0]?.model || "";
-                  return (
-                    <label key={c.id}>
-                      {c.name} 启动模型
-                      <select
-                        aria-label={c.name + " 启动模型"}
-                        value={chosen}
-                        disabled={!!busy || !a.models.length}
-                        onChange={(e) =>
-                          act("client-model", () =>
-                            api.call(
-                              "client-model",
-                              c.id,
-                              a.id,
-                              e.target.value,
-                            ),
-                          )
-                        }
-                      >
-                        {!a.models.length && (
-                          <option value="">没有兼容模型</option>
-                        )}
-                        {a.models.map((m) => (
-                          <option key={m.model} value={m.model}>
-                            {m.name || m.model}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
             {!p.readOnly && (
               <p className="catalog-caption catalog-state" role="status">
                 {state.modelDirectoryJobs[p.id]

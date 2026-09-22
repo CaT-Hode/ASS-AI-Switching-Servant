@@ -5,6 +5,7 @@ const fs = require("node:fs"),
   os = require("node:os");
 const { Store } = require("../core/store.cjs");
 const { HarnessManager } = require("../core/harnesses.cjs");
+const { modelRef } = require("../core/client-policy.cjs");
 const { Preferences } = require("../core/preferences.cjs");
 const { modelSources } = require("../core/model-inventory.cjs");
 const tx = require("../core/account-transactions.cjs");
@@ -75,8 +76,8 @@ test("bindings scope accounts to each client; only exact DeepSeek / Go endpoints
   assert.deepEqual(accounts(h, "opencode"), ["api:go"]);
   for (const id of ["pi", "codex", "claude"])
     assert.deepEqual(accounts(h, id), []);
-  h.bindApi("pi", "work");
-  assert.deepEqual(accounts(h, "pi"), ["api:work"]);
+  assert.throws(() => h.bindApi("pi", "work"), /官方 API/);
+  assert.deepEqual(accounts(h, "pi"), []);
   assert.deepEqual(accounts(h, "codex"), []);
   store.updateProvider({
     id: "pretend",
@@ -90,30 +91,31 @@ test("bindings scope accounts to each client; only exact DeepSeek / Go endpoints
 });
 test("manual binding, selection, auto-binding exclusion and rebind survive restart", (t) => {
   const { harnesses: h, reload } = setup(t);
-  h.bindApi("pi", "work");
-  h.select("pi", "api:work");
+  h.select("dsh", "api:deep");
   h.selectModel("pi", "api:work", "beta");
   h.bindApi("dsh", "deep", false);
   const next = reload();
   assert.deepEqual(accounts(next, "dsh"), []);
-  assert.deepEqual(accounts(next, "pi"), ["api:work"]);
-  assert.equal(next.state.selected.pi, "api:work");
-  assert.equal(next.state.modelSelections.pi["api:work"], "beta");
+  assert.deepEqual(accounts(next, "pi"), []);
+  assert.equal(next.state.selected.dsh, undefined);
+  assert.equal(next.state.injections.pi.defaultModel, modelRef("work", "beta"));
   next.bindApi("dsh", "deep");
   assert.deepEqual(accounts(reload(), "dsh"), ["api:deep"]);
 });
-test("incompatible API cannot bind Claude; previously bound accounts survive unavailable models", (t) => {
+test("protocol-compatible relays cannot bind Claude; official credentials survive disabled models", (t) => {
   const { harnesses: h, store } = setup(t);
-  assert.throws(() => h.bindApi("claude", "deep"), /不兼容/);
+  assert.throws(() => h.bindApi("claude", "deep"), /官方 API/);
+  assert.throws(() => h.bindApi("claude", "work"), /官方 API/);
+  store.updateProvider({ id: "work", baseUrl: "https://api.anthropic.com", apiKey: "new-official-synthetic" });
   h.bindApi("claude", "work");
   store.removeModel("work", "alpha");
   const c = h.snapshot().clients.find((c) => c.id === "claude");
   assert.equal(c.accounts.length, 1);
-  assert.equal(c.accounts[0].ready, false);
+  assert.equal(c.accounts[0].ready, true);
   assert.equal(c.accounts[0].models.length, 0);
-  assert.throws(() => h.plan("claude", "api:work", "launch", "beta"), /兼容/);
+  assert.equal(h.plan("claude", "api:work").routed, false);
 });
-test("legacy selected and used accounts retain bindings when the old model is removed", (t) => {
+test("legacy foreign accounts are removed from cards without removing model providers", (t) => {
   const { dir, reload, store } = setup(t);
   fs.writeFileSync(
     path.join(dir, "clients.json"),
@@ -123,14 +125,14 @@ test("legacy selected and used accounts retain bindings when the old model is re
     }),
   );
   const h = reload();
-  assert.deepEqual(accounts(h, "codex"), ["api:deep"]);
-  assert.deepEqual(accounts(h, "pi"), ["api:work"]);
+  assert.deepEqual(accounts(h, "codex"), []);
+  assert.deepEqual(accounts(h, "pi"), []);
   tx.deleteModel(store, h, "work", "alpha");
-  assert.deepEqual(accounts(reload(), "pi"), ["api:work"]);
+  assert.deepEqual(accounts(reload(), "pi"), []);
+  assert.ok(store.state.providers.some((p) => p.id === "work"));
 });
 test("five inline model fields persist; rename updates launch selection and namespaced catalog", (t) => {
   const { dir, codex, store, harnesses: h, reload } = setup(t);
-  h.bindApi("pi", "work");
   h.selectModel("pi", "api:work", "alpha");
   const old = store.public().providers.find((p) => p.id === "work").models[0];
   tx.saveModel(
@@ -154,16 +156,15 @@ test("five inline model fields persist; rename updates launch selection and name
     [m.model, m.displayName, m.wireApi, m.contextWindow, m.defaultEffort],
     ["renamed", "Changed", "openai-chat", 96000, "max"],
   );
-  assert.equal(reload().state.modelSelections.pi["api:work"], "renamed");
+  assert.equal(reload().state.injections.pi.defaultModel, modelRef("work", "renamed"));
   const entry = JSON.parse(
-    fs.readFileSync(path.join(dir, "catalog.json")),
+    fs.readFileSync(path.join(dir, "catalog-draft.json")),
   ).models.find((m) => m.slug === "work::renamed");
   assert.equal(entry.display_name, "Work / Changed");
   assert.equal(entry.context_window, 96000);
 });
 test("deleting a model persists, clears stale selections and keeps other models and credentials", (t) => {
   const { dir, codex, store, harnesses: h, reload } = setup(t);
-  h.bindApi("pi", "work");
   h.selectModel("pi", "api:work", "alpha");
   tx.deleteModel(store, h, "work", "alpha");
   const p = new Store(dir, codex, crypto).state.providers.find(
@@ -174,8 +175,8 @@ test("deleting a model persists, clears stale selections and keeps other models 
     ["beta"],
   );
   assert.equal(p.apiKey, "synthetic-key");
-  assert.equal(reload().state.modelSelections.pi["api:work"], undefined);
-  assert.deepEqual(accounts(reload(), "pi"), ["api:work"]);
+  assert.equal(reload().state.injections.pi.defaultModel, null);
+  assert.deepEqual(accounts(reload(), "pi"), []);
 });
 test("equivalent model snapshots with reordered keys can be edited and deleted after restart", (t) => {
   const { dir, codex, store, harnesses: h } = setup(t);
@@ -251,7 +252,7 @@ test("official inline overrides rename display / ID; removal and restore leave n
   );
   assert.equal(store.public().officialModels[0].sourceModel, "gpt-test");
   const cat = JSON.parse(
-    fs.readFileSync(path.join(dir, "catalog.json")),
+    fs.readFileSync(path.join(dir, "catalog-draft.json")),
   ).models;
   assert.equal(cat.find((m) => m.slug === "gpt-alias").display_name, "Alias");
   assert.throws(
@@ -270,7 +271,6 @@ test("official inline overrides rename display / ID; removal and restore leave n
 });
 test("model and account settings roll back together on a client journal write failure", (t) => {
   const { store, harnesses: h, dir, codex } = setup(t);
-  h.bindApi("pi", "work");
   h.selectModel("pi", "api:work", "alpha");
   const old = structuredClone(
       store.state.providers.find((p) => p.id === "work").models[0],
@@ -301,7 +301,7 @@ test("model and account settings roll back together on a client journal write fa
       .models[0].model,
     "alpha",
   );
-  assert.equal(h.state.modelSelections.pi["api:work"], "alpha");
+  assert.equal(h.state.injections.pi.defaultModel, modelRef("work", "alpha"));
 });
 test("new API account creation and client binding commit together", (t) => {
   const { store, harnesses: h } = setup(t);
@@ -312,10 +312,10 @@ test("new API account creation and client binding commit together", (t) => {
     wireApi: "openai-chat",
     models: [],
   };
-  assert.throws(() => tx.saveBoundApi(store, h, "claude", input), /不兼容/);
+  assert.throws(() => tx.saveBoundApi(store, h, "claude", input), /官方 API/);
   assert.equal(store.state.providers.length, 3);
-  const id = tx.saveBoundApi(store, h, "pi", input);
-  assert.deepEqual(accounts(h, "pi"), ["api:" + id]);
+  const id = tx.saveBoundApi(store, h, "codex", { ...input, baseUrl: "https://api.openai.com/v1" });
+  assert.deepEqual(accounts(h, "codex"), ["api:" + id]);
 });
 test("legacy accounts navigation migrates to clients and existing native key client is persistent", (t) => {
   const { dir } = setup(t);

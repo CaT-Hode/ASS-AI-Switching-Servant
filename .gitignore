@@ -13,6 +13,7 @@ auth.json
 .credentials.yaml
 preferences.json
 clients.json
+clients.before-account-separation.json
 native-accounts.json
 account-info.enc.json
 diagnostics.enc.json
@@ -20,6 +21,10 @@ native-injections.enc.json
 usage-history.enc.json
 updates.json
 connections.json
+proxy-applied.json
+catalog-draft.json
+launch-settings.yaml
+launch.patch.yml
 route-injections.json
 client-processes.json
 codex-attachment.json

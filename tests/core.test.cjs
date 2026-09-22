@@ -262,6 +262,14 @@ test("router preserves streaming, separates credentials and cancels unsafe brows
   assert.equal(calls[1].headers.authorization, "Bearer test-key-not-real");
   assert.equal(calls[1].headers["chatgpt-account-id"], undefined);
   assert.equal(calls[1].body.model, "gpt-6-astra");
+  const apiWindow = await fetch(base + "/v1/responses", {
+    method: "POST",
+    headers: { authorization: "Bearer " + router.clientToken, "content-type": "application/json" },
+    body: JSON.stringify({ model: "gpt-6-astra", stream: true, input: "hi" }),
+  });
+  assert.equal(apiWindow.status, 403);
+  assert.match(await apiWindow.text(), /不能请求 ChatGPT/);
+  assert.equal(calls.length, 2, "local route credentials never leave ASS for subscription APIs");
   const blocked = await fetch(base + "/health", {
     headers: { origin: "https://external.example" },
   });

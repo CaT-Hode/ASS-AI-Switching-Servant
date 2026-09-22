@@ -199,7 +199,7 @@ test("native account selection and launch plans never overwrite auth/config; all
       { home, env: {}, isConnected: () => true },
     );
   const manager = create();
-  for (const h of ["codex", "claude", "opencode", "pi", "dsh"]) {
+  for (const h of ["codex", "claude", "pi"]) {
     const account = manager
       .snapshot()
       .clients.find((c) => c.id === h)
@@ -225,9 +225,9 @@ test("native account selection and launch plans never overwrite auth/config; all
   );
   manager.options.isConnected = () => false;
   manager.setCredentialHome("pi", path.join(home, ".pi/agent"));
-  assert.equal(create().state.modelSelections.pi["api:fixture"], "b");
+  assert.equal(create().state.injections.pi.defaultModel, JSON.stringify(["fixture", "b"]));
   assert.equal(create().state.credentialHomes.pi, path.join(home, ".pi/agent"));
-  assert.deepEqual(create().plan("pi", "api:fixture").args, [
+  assert.deepEqual(create().modelPlan("pi", JSON.stringify(["fixture", "b"])).args, [
     "--provider",
     require("../core/native-config.cjs").providerId(
       providers[0],
@@ -251,7 +251,8 @@ test("managed OpenCode/Pi/DSH profiles enumerate individual provider cards and s
       path.join(home, ".codex"),
       { home, env: {} },
     );
-  const id = manager.add("pi", "Work");
+  manager.piProviders = [{ id: "a", name: "A" }, { id: "b", name: "B" }];
+  const id = manager.add("pi", "Work", "a");
   const file = path.join(manager.root("pi", id), "auth.json");
   write(file, { a: grant, b: grant });
   const cards = manager.snapshot().clients.find((c) => c.id === "pi").accounts;

@@ -8,6 +8,15 @@ function authorized(value, token) {
   return b.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 function harnessRoute(url, body, state) {
+  // Claude's base URL is process-wide. Namespaced model IDs allow /model to
+  // select any injected Messages model without changing the logged-in account.
+  if (/^\/models\/v1\/messages(?:\/count_tokens)?(?:\?[^#]*)?$/.test(url)) {
+    const split = typeof body.model === "string" ? body.model.indexOf("::") : -1;
+    if (split < 1) throw Object.assign(new Error("请选择完整的供应商::模型 ID"), { status: 400 });
+    const provider = body.model.slice(0, split);
+    body.model = body.model.slice(split + 2);
+    url = url.replace("/models/", "/harness/" + provider + "/");
+  }
   const match =
     /^\/harness\/([\w-]+)\/v1\/(responses(?:\/compact)?|messages(?:\/count_tokens)?|chat\/completions)(?:\?[^#]*)?$/.exec(
       url,
@@ -80,7 +89,7 @@ async function forwardHarness(router, req, res) {
     } catch {
       throw Object.assign(new Error("请求 JSON 无效"), { status: 400 });
     }
-    route = harnessRoute(req.url, body, router.getState());
+    route = harnessRoute(req.url, body, router.getState(router.requests.get(req)?.client));
     const { p, m, protocol } = route;
     const headers = {
       ...p.extraHeaders,

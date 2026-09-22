@@ -18,7 +18,7 @@ ASS（AI Switch Servant）是你的 Windows 桌面 AI 路由与账户助手。�
 - Codex、Claude Code、OpenCode、pi、DeepSeek Harness 的启动注入与账户选择。
 - 每个客户端独立的接入开关；简短警告后确定或取消，确认后恢复注入、按需结束 ASS 窗口与停止服务。
 - 在本机 pi 支持时，将 Codex / Claude Code / OpenCode 的兼容 OAuth 导入新的 pi 账户。
-- “客户端与账户”按客户端绑定显示已有 API / OAuth 账户；添加入口保留官方 API 预设、OpenRouter PKCE 和 Cursor Key 保管。
+- “客户端与账户”只添加该客户端对应的官方账户；模型接入单独从全局供应商配置选择，不要求把第三方 API 绑定为登录账户。
 - “供应商与模型”分为三级：供应商卡片 → 模型列表弹窗 → 右侧详细设置弹窗。三级打开时二级左移让位，关闭后复原；列表可直接修改 ID、显示名称、接口、上下文和默认思维强度，支持添加 / 删除及逐模型检测。
 - 自动检测五类客户端的本机 OAuth / API 凭据，按账户与供应商在右侧显示卡片。支持默认目录、环境变量目录与手动指定目录。
 - 账户卡片显示凭据中已有的邮箱、套餐、账户 / 组织、权限与到期时间；DeepSeek 可查询余额明细，OpenCode Go 可查询三档用量和重置时间，OpenRouter 可查询 Key 额度。原生 API 账户同样支持，不必重复保存 Key。字段来源与未支持范围见 [账户资料对照](docs/ACCOUNT-INFO.md)。
@@ -78,19 +78,21 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 
 | 客户端 | API 账户 | 授权账户 / 切换方式 |
 | --- | --- | --- |
-| Codex CLI | 已保存供应商，经 Responses 入口或协议适配 | 多个 ChatGPT 原生登录目录；不替换正在运行的 Codex App 登录 |
-| Claude Code | 仅 Anthropic Messages 协议模型 | 多个独立 `CLAUDE_CONFIG_DIR`，原生 `auth login / logout` |
-| OpenCode | 自动识别 OpenCode Go；三种协议直写原生配置 | 原生 / 独立 XDG 目录，`auth login / logout` |
-| pi | 三种协议直写 `models.json` / `auth.json` | 原生 / 独立 `PI_CODING_AGENT_DIR`，`/login /logout` |
-| DeepSeek Harness | DeepSeek 与其他兼容 API 直写 `settings.yaml` / `.credentials.yaml` | 原生 / 独立 `DSH_HOME`，分别检测 API refs 与 OAuth records |
+| Codex CLI | 仅 OpenAI 官方 API Key | ChatGPT OAuth，独立目录启动；不替换正在运行的 Codex App 登录 |
+| Claude Code | 仅 Anthropic 官方 API Key | Claude OAuth，独立 `CLAUDE_CONFIG_DIR`、原生登录 / 退出 |
+| OpenCode | 仅 OpenCode Go / Zen API Key | 原生 / 独立 XDG 目录启动；第三方模型由接入区管理 |
+| pi | 自定义 API 不作为登录账户 | 本机 pi 支持的 OAuth；兼容授权可导入独立账户 |
+| DeepSeek Harness | 仅 DeepSeek 官方 API Key | 原生 / 独立 `DSH_HOME`，不添加其他供应商账户 |
 
-在客户端页右侧选择已有账户，点击“启动”。DeepSeek 官方 API 自动归入 DSH，OpenCode Go 自动归入 OpenCode；其他 API 通过“添加账户”选择已有供应商。旧版本已选择或使用过的 API 保留绑定。解除绑定不会删除 ASS 中的供应商；已开启原生接入时会撤回其原生条目，请先结束客户端任务。
+在客户端页右侧选择已有账户，点击“启动”。“下次启动使用”只记录后续启动选择，不表示已有窗口已切换。DeepSeek 官方 API 自动归入 DSH，OpenCode Go / Zen 自动归入 OpenCode。API 账户即使没有模型也可以独立启动，不必开启 ASS 模型接入。移除账户卡片不会删除供应商，也不会撤回模型注入。
 
-模型在“供应商与模型”统一管理。DSH / OpenCode / pi 接入后，已绑定的模型和真实 API Key 写入原生配置；更改会同步对应字段，冲突在客户端页提示并可重试。旧代理接入需先点同步图标确认迁移。Codex / Claude Code 的 API 仍使用专用目录与本地令牌；不替换当前 Codex App 的 OAuth 登录。已有原生 OAuth 由其客户端独立管理。
+模型在“供应商与模型”统一管理。每个客户端的“模型接入”默认纳入所有已启用、有凭据且协议兼容的 API 模型，可以排除单个模型、指定默认模型，也可直接启动选中的模型，不依赖账户卡片。DSH / OpenCode / pi 直写原生配置；Codex 通过 Responses 路由保留官方订阅目录并合并第三方模型；Claude 仅纳入 Messages 协议，API 窗口内 `/model` 使用完整 `供应商::模型` ID。Claude 官方账户窗口不混入 API 路由。
+
+**保存不等于应用。** 保存账户 / 模型 / 接入范围后，已开启的接入显示“待同步”；点击同步图标并确认才应用，不因重启自动覆盖原生配置或路由。新官方账户窗口继承上次已应用的模型字段，不顺带应用草稿。旧账户绑定一次性迁移并备份：不符合客户端归属的卡片移除，但供应商、密钥和模型保留。详见[账户与模型分离规则](docs/account-injection-refactor.md)。
 
 本机 Codex 读取 `CODEX_HOME/auth.json`；Claude Code 读取 `CLAUDE_CONFIG_DIR/.credentials.json` 或环境中的 `CLAUDE_CODE_OAUTH_TOKEN`；OpenCode 读取 `XDG_DATA_HOME/opencode/auth.json`；Pi 读取 `PI_CODING_AGENT_DIR/auth.json`；DSH 读取 `DSH_HOME/.credentials.yaml`。未设置环境目录时使用各客户端默认位置，也可在“客户端路径与凭据目录”指定。多供应商凭据分别显示，不把一个文件当作一个账户。
 
-“已检测 OAuth”仅证明本地存在凭据，不表示服务端验证通过。显示已到期、待原生刷新、损坏或不可识别状态，不执行密钥命令或静默刷新令牌。Codex 系统密钥库 / 临时存储显示“由原生客户端确认”，不误报未登录。OpenCode 与 DSH 的本机多供应商记录共享原生配置目录，启动后仍需在原生客户端选择供应商；Pi 可用 `--provider` 指定供应商。
+本地存在 OAuth 凭据不表示服务端验证通过。ASS 显示已到期、待原生刷新、损坏或不可识别状态，不执行密钥命令或静默刷新令牌。Codex 系统密钥库 / 临时存储由原生客户端确认。隐藏的第三方原生登录记录保留在原文件，其模型声明仍可聚合为只读目录，不伪装为当前客户端的官方账户。
 
 账户、模型、上下文与强度、余额配置、客户端入口、指定凭据目录、工作目录、接入开关和更新偏好持久保存；页面 / 客户端 / 供应商选择也跨重启保留。界面选择保存在 `preferences.json`，账户与模型选择保存在 `clients.json`，都位于原数据目录。登录状态不缓存为配置，而在启动、返回窗口及客户端页前台每 15 秒重新读取，避免退出后继续显示旧状态。
 
@@ -98,7 +100,7 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 
 ### 添加官方账户
 
-原独立账户页面已合并至“客户端与账户”。“添加账户 → 新建 API 账户”保留官方服务与地区预设，按当前客户端协议筛选；列表不再铺开未添加的服务。原生授权通过“添加账户 → 原生授权账户”创建，pi 的 OAuth 能力仍由本机安装的客户端确认。
+原独立账户页面已合并至“客户端与账户”。“添加账户 → 新建 API 账户”按官方服务归属筛选，不以接口兼容性冒充账户兼容性，也不允许自定义转发地址绕过。原生授权通过“添加账户 → 原生授权账户”创建，pi 的 OAuth 能力由本机安装版本确认。其他服务的 API 在供应商页管理；OpenRouter PKCE 保存为模型供应商，不绑定为 Codex / DSH 官方账户。
 
 | 账户方式 | 管理范围 |
 | --- | --- |

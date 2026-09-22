@@ -374,7 +374,7 @@ async function run() {
       await page.locator(".client-list").getByRole("switch").count(),
       0,
     );
-    const nativeCounts = { codex: 1, claude: 1, opencode: 2, pi: 3, dsh: 2 };
+    const nativeCounts = { codex: 1, claude: 1, opencode: 0, pi: 3, dsh: 1 };
     for (const [id, name] of Object.entries({
       codex: "Codex",
       claude: "Claude Code",
@@ -405,16 +405,20 @@ async function run() {
     await chooseClient("pi");
     await page.getByRole("button", { name: "添加账户", exact: true }).click();
     const add = page.getByRole("dialog");
-    await add.getByRole("button", { name: /工作 API/ }).click();
+    assert.equal(await add.getByRole("button", { name: /工作 API/ }).count(), 0);
+    await add.getByRole("button", { name: "关闭", exact: true }).click();
     await add.waitFor({ state: "hidden" });
+    const piAccount = (await snapshot()).harnesses.clients.find((c) => c.id === "pi").accounts.find((a) => a.provider === "openai-codex");
     const work = page.getByRole("article", {
-      name: "工作 API 账户",
+      name: piAccount.label + " 账户",
       exact: true,
     });
     await work
-      .getByRole("button", { name: "切换到此账户", exact: true })
+      .getByRole("button", { name: "设为启动账户", exact: true })
       .click();
-    await work.getByRole("button", { name: "已选择", exact: true }).waitFor();
+    await work.getByRole("button", { name: "下次启动使用", exact: true }).waitFor();
+    await page.locator(".client-injection summary").click();
+    await page.getByLabel("pi 默认接入模型", { exact: true }).selectOption(JSON.stringify(["work", "alpha"]));
     assert.equal(
       (await snapshot()).harnesses.clients
         .find((c) => c.id === "codex")
@@ -425,7 +429,8 @@ async function run() {
       path: path.join(out, "v017-clients-1380.png"),
       animations: "disabled",
     });
-    await work.getByRole("button", { name: "管理模型", exact: true }).click();
+    await page.getByRole("button", { name: "供应商与模型", exact: true }).click();
+    await openWork.click();
     let section = page.getByRole("region", {
       name: "工作 API 模型配置",
       exact: true,
@@ -437,7 +442,6 @@ async function run() {
       "Client deep links open level 2 directly",
     );
     await section.getByText(/已读取 3 个可用模型/).waitFor();
-    await page.getByLabel("pi 启动模型", { exact: true }).selectOption("alpha");
     let row = page.getByRole("form", { name: "alpha 行内配置", exact: true });
     await row.getByLabel("alpha 模型 ID", { exact: true }).fill("alpha-new");
     await row
@@ -460,10 +464,8 @@ async function run() {
       ["alpha-new", "Alpha 新名称", "openai-chat", 196608, "high"],
     );
     assert.equal(
-      s.harnesses.clients.find((c) => c.id === "pi").modelSelections[
-        "api:work"
-      ],
-      "alpha-new",
+      s.harnesses.clients.find((c) => c.id === "pi").injection.defaultModel,
+      JSON.stringify(["work", "alpha-new"]),
     );
     await row
       .getByLabel("alpha-new 显示名称", { exact: true })
@@ -804,24 +806,27 @@ async function run() {
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
       .click();
-    await work.getByRole("button", { name: "已选择", exact: true }).waitFor();
-    await work
-      .getByRole("button", { name: "工作 API 账户操作", exact: true })
+    await work.getByRole("button", { name: "下次启动使用", exact: true }).waitFor();
+    await chooseClient("DeepSeek Harness");
+    const deepAccount = page.getByRole("article", { name: "DeepSeek 账户", exact: true });
+    await deepAccount
+      .getByRole("button", { name: "DeepSeek 账户操作", exact: true })
       .click();
     await page
-      .getByRole("menuitem", { name: "解除此客户端绑定", exact: true })
+      .getByRole("menuitem", { name: "移除此账户卡片", exact: true })
       .click();
-    await work.waitFor({ state: "hidden" });
-    assert.ok((await snapshot()).providers.some((p) => p.id === "work"));
+    await deepAccount.waitFor({ state: "hidden" });
+    assert.ok((await snapshot()).providers.some((p) => p.id === "deep"));
     await page.getByRole("button", { name: "添加账户", exact: true }).click();
     await page
       .getByRole("dialog")
-      .getByRole("button", { name: /工作 API/ })
+      .getByRole("button", { name: /DeepSeek/ })
       .click();
-    await work.waitFor();
-    await work
-      .getByRole("button", { name: "切换到此账户", exact: true })
+    await deepAccount.waitFor();
+    await deepAccount
+      .getByRole("button", { name: "设为启动账户", exact: true })
       .click();
+    await chooseClient("pi");
     // The per-client injection switch still uses the short, cancel-first confirmation.
     const toggle = page.getByRole("switch", {
       name: "pi ASS 接入",
@@ -841,8 +846,8 @@ async function run() {
       .waitFor();
     assert.equal(
       await page
-        .getByRole("article", { name: "工作 API 账户", exact: true })
-        .getByRole("button", { name: "已选择", exact: true })
+        .getByRole("article", { name: piAccount.label + " 账户", exact: true })
+        .getByRole("button", { name: "下次启动使用", exact: true })
         .count(),
       1,
     );

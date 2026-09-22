@@ -22,6 +22,7 @@ const { BALANCE_PRESETS, queryBalance } = require("../core/balance.cjs");
 const { PROVIDER_PRESETS } = require("../core/presets.cjs");
 const { HarnessManager } = require("../core/harnesses.cjs");
 const { NativeConfig } = require("../core/native-config.cjs");
+const { ProxyConfig } = require("../core/proxy-config.cjs");
 const {
   modelKey,
   declaredCapabilities,
@@ -74,6 +75,7 @@ let window,
   router,
   harnesses,
   nativeConfig,
+  proxyConfig,
   nativeKeys,
   accountInfo,
   diagnosticHistory,
@@ -346,39 +348,10 @@ function register(name, handler) {
       !url.startsWith("file://")
     )
       throw new Error("Invalid caller");
-    const syncSettings = [
-      "account-select",
-      "account-bind-api",
-      "account-save-api",
-      "client-model",
-      "save-provider",
-      "delete-provider",
-      "save-model",
-      "delete-model",
-      "model-add-discovered",
-      "import",
-      "account-add",
-    ].includes(name);
-    const beforeSettings = syncSettings
-      ? JSON.stringify([store.state, harnesses.state])
-      : null;
     try {
       const result = await handler(...args);
-      // Never migrate legacy injection on a cancelled or unrelated action.
-      // Conflicts leave the saved ASS edit intact and are visible in Clients.
-      if (
-        syncSettings &&
-        beforeSettings !== JSON.stringify([store.state, harnesses.state])
-      ) {
-        for (const id of ["opencode", "pi", "dsh"])
-          if (connections.enabled[id] && nativeConfig.activated.has(id)) {
-            try {
-              nativeConfig.sync(id);
-            } catch {
-              /* status contains the exact conflict */
-            }
-          }
-      }
+      // Saving an account/catalog preference never rewrites a running client's
+      // configuration. Connection preview/apply is the explicit commit point.
       return result;
     } finally {
       push();
@@ -747,8 +720,10 @@ else {
       });
       nativeConfig = new NativeConfig(dataDir, safeStorage, harnesses);
       harnesses.options.nativeConfig = nativeConfig;
+      proxyConfig = new ProxyConfig(dataDir, safeStorage, harnesses, store, config);
+      harnesses.options.proxyConfig = proxyConfig;
       router = new Router({
-        getState: () => store.state,
+        getState: (id) => proxyConfig.routingState(id),
         fetchUpstream: upstream,
         log,
         allowClient: (id) => connections.allow(id),
@@ -760,9 +735,9 @@ else {
         config,
         injections,
         nativeConfig,
+        proxyConfig,
         processes,
         port: servicePort,
-        writeCatalog: () => store.writeCatalog(),
         onChange: push,
         extraActive: () => probeControllers.size,
       });
@@ -879,9 +854,7 @@ else {
         };
       });
       register("openrouter-auth-start", (label, client) => {
-        if (client) harnesses.spec(client);
-        if (client === "claude")
-          throw Error("请先配置兼容 Anthropic 协议的供应商");
+        if (client) throw Error("OpenRouter 属于模型供应商，请在供应商页面授权");
         return openRouterAuth.start(label, client);
       });
       register("openrouter-auth-cancel", () => openRouterAuth.cancel());
@@ -927,6 +900,12 @@ else {
       register("client-model", (id, account, model) =>
         harnesses.selectModel(id, account, model),
       );
+      register("client-injection", (id, changes) => harnesses.setInjection(id, changes));
+      register("client-model-launch", (id, ref) => connections.launch(async () => {
+        if (connections.enabled[id] && connections.needsRouter(id) && !router.server)
+          await router.start(servicePort);
+        return harnesses.launchModel(id, ref, router.clientToken);
+      }));
       register("client-credentials", async (id, reset = false) => {
         if (reset) return harnesses.setCredentialHome(id, "");
         const result = await dialog.showOpenDialog(window, {

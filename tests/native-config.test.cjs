@@ -5,6 +5,7 @@ const path = require("node:path");
 const os = require("node:os");
 const { parseImport } = require("../core/models.cjs");
 const { HarnessManager } = require("../core/harnesses.cjs");
+const { modelRef } = require("../core/client-policy.cjs");
 const { NativeFields, document } = require("../core/native-fields.cjs");
 const {
   NativeConfig,
@@ -57,7 +58,6 @@ function fixture(t) {
   );
   const native = new NativeConfig(data, crypt, manager);
   manager.options.nativeConfig = native;
-  for (const id of ["opencode", "pi", "dsh"]) manager.bindApi(id, "fixture");
   return { root, home, data, providers, manager, native };
 }
 const grant = {
@@ -119,13 +119,13 @@ test("three native formats separate wire protocols, use real origins and preserv
       f.manager
         .snapshot()
         .clients.find((c) => c.id === id)
-        .accounts.some((a) => a.authType === "oauth"),
+        .modelAccounts.some((a) => a.authType === "oauth"),
     );
     assert.equal(
       f.manager
         .snapshot()
         .clients.find((c) => c.id === id)
-        .accounts.filter((a) => a.kind === "native").length,
+        .modelAccounts.filter((a) => a.kind === "native").length,
       1,
     );
     f.native.restore([id]);
@@ -172,7 +172,7 @@ test("sync/disable preserves OAuth refresh, unrelated fields and JSONC/YAML comm
         defaultModel: "original",
         theme: "light",
       });
-    f.manager.select(id, "api:fixture");
+    f.manager.setInjection(id, { defaultModel: modelRef("fixture", "chat") });
     f.native.sync(id);
     let auth = document(fs.readFileSync(target.auth, "utf8"), format).data;
     const entry =
@@ -229,7 +229,7 @@ test("owned-field edits conflict without overwriting, and exact ownership does n
   );
 });
 
-test("model edits, unbinding and selection update only managed keys; re-enable keeps original defaults", (t) => {
+test("model edits and default selection update only managed keys; disconnect keeps original defaults", (t) => {
   const f = fixture(t),
     target = locations("pi", f.manager);
   write(target.settings, {
@@ -237,7 +237,7 @@ test("model edits, unbinding and selection update only managed keys; re-enable k
     defaultModel: "original",
     plugins: ["keep"],
   });
-  f.manager.select("pi", "api:fixture");
+  f.manager.setInjection("pi", { defaultModel: modelRef("fixture", "chat") });
   f.native.sync("pi");
   f.manager.selectModel("pi", "api:fixture", "responses");
   f.native.sync("pi");
@@ -254,8 +254,9 @@ test("model edits, unbinding and selection update only managed keys; re-enable k
     "original",
   );
   restarted.sync("pi");
-  f.manager.bindApi("pi", "fixture", false);
-  restarted.sync("pi");
+  f.manager.setInjection("pi", { defaultModel: null, excluded: f.manager.injection("pi").models.map((m) => m.ref) });
+  assert.throws(() => restarted.sync("pi"), /没有可接入/);
+  restarted.restore(["pi"]);
   assert.deepEqual(JSON.parse(fs.readFileSync(target.auth)), {});
   assert.equal(
     JSON.parse(fs.readFileSync(target.settings)).defaultProvider,
@@ -273,13 +274,8 @@ test("native plans use native homes with no proxy token, while Codex and Claude 
     NODE_TLS_REJECT_UNAUTHORIZED: "0",
   };
   for (const id of ["opencode", "pi", "dsh"]) {
-    const plan = f.manager.plan(
-      id,
-      "api:fixture",
-      "launch",
-      "chat",
-      "local-secret",
-    );
+    f.native.sync(id);
+    const plan = f.manager.modelPlan(id, modelRef("fixture", "chat"), "local-secret");
     assert.equal(plan.dir, locations(id, f.manager).dir);
     assert.equal(plan.routed, false);
     assert.deepEqual(plan.files, []);
@@ -292,14 +288,7 @@ test("native plans use native homes with no proxy token, while Codex and Claude 
     f.manager.materialize(plan);
   }
   for (const id of ["codex", "claude"]) {
-    f.manager.bindApi(id, "fixture");
-    const plan = f.manager.plan(
-      id,
-      "api:fixture",
-      "launch",
-      id === "claude" ? "messages" : "chat",
-      "local-secret",
-    );
+    const plan = f.manager.modelPlan(id, modelRef("fixture", id === "claude" ? "messages" : "chat"), "local-secret");
     assert.equal(plan.routed, true);
     assert.equal(plan.env.ASS_LOCAL_TOKEN, "local-secret");
     assert.ok(plan.dir.startsWith(path.join(f.data, "clients")));
@@ -339,7 +328,7 @@ test("native limitations are explicit and imported config values cannot become c
       (e) => e.credentialProvider && e.value.key === "$!echo $$TOKEN",
     ),
   );
-  f.manager.select("pi", "api:fixture");
+  f.manager.setInjection("pi", { defaultModel: modelRef("fixture", "chat") });
   p.models[0].defaultEffort = "ultra";
   assert.throws(() => f.native.sync("pi"), /最高为 max/);
   p.models[0].defaultEffort = "medium";

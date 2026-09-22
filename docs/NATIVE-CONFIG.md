@@ -1,6 +1,6 @@
 # 原生 API 接入
 
-DSH、OpenCode、pi 的第三方 API 直接连接供应商。ASS 管理下面的配置字段，不转发它们的模型请求。Codex / Claude Code 保持原有接入方式；本次不会切换 Codex App 的 OAuth 账户或默认入口。
+DSH、OpenCode、pi 的第三方 API 直接连接供应商。ASS 管理下面的配置字段，不转发它们的模型请求。官方账户卡片与模型接入独立；账户切换不改变默认模型，接入不替换官方登录。
 
 | 客户端 | 模型与默认项 | API 凭据 |
 | --- | --- | --- |
@@ -12,15 +12,17 @@ DSH、OpenCode、pi 的第三方 API 直接连接供应商。ASS 管理下面的
 
 ## 使用与撤回
 
-- 接入开关先预览警告，确认后写入已绑定、已启用且有 Key 的供应商。每个供应商按协议生成稳定的 `ass-<hash>-<protocol>` 标识，不覆盖 `openai`、`anthropic`、`deepseek` 等内置账户。
-- 只有明确选择 API 账户时才接管原生默认模型；未选择时保留默认项。切回原生 OAuth 卡片会撤回 ASS 的默认项覆盖；OAuth 本身仍由客户端管理，不复制或刷新令牌。独立授权账户继续使用其独立目录。
-- 启用原生接入后，保存供应商 / 模型、绑定账户、选择 API 模型会同步管理字段。冲突时 ASS 内部编辑仍保存，客户端页显示“未同步”，修复冲突后用同步图标重试。首次从旧版代理迁移需主动确认同步，启动和只读状态检查不自动改文件。
+- 接入开关先预览警告，确认后写入全局已启用、有 Key 且兼容的模型，扣除本客户端排除项；无需绑定 API 账户。每个供应商按协议生成稳定的 `ass-<hash>-<protocol>` 标识，不覆盖 `openai`、`anthropic`、`deepseek` 等内置账户。
+- 只有在接入区明确选择默认模型时才接管默认项；选择“保留客户端默认模型”会恢复原值。选择 / 移除账户卡片不改变接入范围与默认模型。
+- 保存供应商 / 模型 / 接入范围只保存草稿；已有接入显示“待同步”，经同步按钮确认才写入。新开的独立账户目录继承上次已应用的字段，已有目录不改写；不会以启动账户为由应用草稿。首次从旧版代理迁移同样需主动确认。
+- “启动模型”通过 OpenCode / pi 的原生模型参数选择本次模型，不改全局默认。DSH 使用当前源码实际支持的 `web` profile，并以 `--patch` 指向 ASS 单次启动设置快照，保留原生凭据目录；不是不存在的 `tui` profile。快照保存在本机 ASS 数据目录，可能包含原有敏感设置，不应分享。
 - 退出 ASS 保留原生直连配置及窗口。主动关闭对应接入开关、或“停止全部接入”，才撤回字段。旧代理窗口仍按原保护流程退出；未由 ASS 启动的任务无法判断是否空闲，请先结束任务。
 - 断开只还原 ASS 字段：原生 OAuth 刷新记录、其他供应商、MCP / 插件等无关数据保留。自己改过 ASS 字段时拒绝覆盖。新增文件可留下空对象，DSH `version: 1` 保留，避免破坏后来加入的原生凭据。
 
 ## 安全与限制
 
 - **原生客户端需要真实 Key**：ASS 自身凭据及恢复记录仍由 Windows DPAPI 加密；写入原生 `auth.json` / `.credentials.yaml` 的 Key 则采用客户端原生格式，不是 DPAPI 密文。不要分享这些文件。额外请求头写入原生配置，若包含秘密也须同样保护。
+- pi 自定义供应商必须声明 `apiKey` 字段才能通过原生目录校验；ASS 写入未设置的 `$ASS_PI_AUTH_REQUIRED` 引用作为声明，实际请求优先读取 `auth.json` 的 Key。不会复制一份明文 Key 到模型目录；删除原生凭据后不会回退到伪造密钥。
 - 配置按字段合并，JSONC / YAML 注释保留。写入前核对文件与管理字段，跨文件失败用加密事务记录恢复；恢复遇到外部改动会停止。不要让两个程序同时改同一受管字段。
 - 代理与 TLS 由原生运行时负责。ASS 启动时保留代理及 `NODE_EXTRA_CA_CERTS` 环境，启用 `NODE_USE_SYSTEM_CA=1`，不禁用 TLS 验证。ASS 的“系统 / 直连”选项仍用于自身诊断与查询，不等于原生客户端的逐供应商网络设置；普通启动需自行确保客户端的代理 / CA 环境正确。
 - pi / DSH 当前原生思维档位最高为 `max`：模型目录不写 `ultra`，若所选默认档位为 `ultra` 则明确拒绝同步，不静默降级。OpenCode 的 Anthropic 思维预算交由原生 SDK 处理，不把 OpenAI 的 `reasoningEffort` 强塞给它。
@@ -30,4 +32,4 @@ DSH、OpenCode、pi 的第三方 API 直接连接供应商。ASS 管理下面的
 
 配置格式以 [OpenCode Config](https://opencode.ai/docs/config/)、[OpenCode Providers](https://opencode.ai/docs/providers/)、[pi 自定义模型](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md)、[pi Settings](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/settings.md)、[DSH llm-pi-ai](https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/llm/llm-pi-ai) 和 [DSH credentials-local](https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/credentials/credentials-local) 为依据。
 
-2026-09-22：本机 DSH 源码的实际配置解析器接受生成结果；其原生凭据适配器和 pi-ai 0.85.1 对本机合成服务完成 Chat Completions / Responses / Anthropic 三种流式请求，未启动 ASS 路由、未产生付费用量。OpenCode / pi 的完整独立应用任务未在本次实测；格式与文件维护另有单元测试及隔离 Electron UI 验证。详见 [验证记录](VALIDATION.md)。
+2026-09-22，v0.1.17：pi 0.73.1 的实际 ModelRegistry、AuthStorage 与 CLI 模型列表，OpenCode 1.18.31 的 `debug config/paths`，本机 DSH 0.1.5-rc.1 的 Settings / Credentials 服务与 `--dump-config` 均接受生成结果。没有发送模型请求；这些结果证明配置可读及凭据归属，不代表完整客户端任务或所有上游权限已实测。历史三协议合成流验证及本版隔离 Electron 回归见 [验证记录](VALIDATION.md)。

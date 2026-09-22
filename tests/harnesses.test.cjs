@@ -94,7 +94,7 @@ test("auto-discovery prefers CLI when Desktop is also present and respects expli
 });
 test("DeepSeek and Go are API accounts; Claude filters incompatible models", () => {
   assert.equal(apiAccounts("dsh", providers)[0].badge, "DeepSeek API");
-  assert.equal(apiAccounts("opencode", providers)[1].badge, "OpenCode Go API");
+  assert.equal(apiAccounts("opencode", providers)[0].badge, "OpenCode Go API");
   assert.equal(apiAccounts("claude", providers).length, 1);
   assert.equal(apiAccounts("claude", providers)[0].ready, true);
   assert.equal(apiAccounts("claude", providers)[0].models.length, 1);
@@ -158,7 +158,8 @@ test("account switches do not rewrite other profile files; API launch does not u
   assert.equal(authSummary("claude", manager.root("claude", one)).ready, true);
   const route = manager.plan("claude", "api:ant", "launch", null, "token");
   assert.notEqual(route.dir, manager.root("claude", two));
-  assert.equal(route.env.ANTHROPIC_AUTH_TOKEN, "token");
+  assert.equal(route.env.ANTHROPIC_AUTH_TOKEN, undefined);
+  assert.equal(route.env.ANTHROPIC_API_KEY, "synthetic-ant-key");
   assert.throws(() => manager.root("claude", "../escape"));
 });
 test("OAuth import converts exact formats and rejects API keys / incomplete credentials", () => {

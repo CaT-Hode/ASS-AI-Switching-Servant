@@ -1,7 +1,34 @@
 import React, { useState } from "react";
-import { Search, KeyRound, Plus, ChevronRight, Globe } from "lucide-react";
-import { Modal, ProviderEditor } from "./editors.jsx";
+import { Search, KeyRound, Plus, ChevronRight } from "lucide-react";
+import { Modal } from "./editors.jsx";
 const api = window.ass;
+export function OfficialApiForm({ client, profiles, provider, preset, onClose }) {
+  const [profileId, setProfileId] = useState(preset?.id || profiles[0]?.id || ""),
+    [name, setName] = useState(provider?.name || ""), [key, setKey] = useState(""),
+    [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const profile = profiles.find((p) => p.id === profileId);
+  return <Modal title={provider ? "编辑官方 API 账户" : "添加官方 API 账户"} onClose={onClose}>
+    <form onSubmit={async (e) => {
+      e.preventDefault(); setBusy(true); setError("");
+      try {
+        await api.call("account-save-api", client.id, provider
+          ? { id: provider.id, name: name.trim() || provider.name, apiKey: key }
+          : { ...profile, id: undefined, name: name.trim() || profile.name, apiKey: key, models: [] });
+        onClose();
+      } catch (e) { setError(e.message); } finally { setBusy(false); }
+    }}>
+      {!provider && <label className="field">服务<select value={profileId} onChange={(e) => setProfileId(e.target.value)}>
+        {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select></label>}
+      <label className="field">账户名称<input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} /></label>
+      <label className="field">API Key<input type="password" autoComplete="off" value={key} required={!provider}
+        placeholder={provider ? "留空保留已保存的 Key" : ""} onChange={(e) => setKey(e.target.value)} /></label>
+      {error && <p className="error-box" role="alert">{error}</p>}
+      <footer><button type="button" className="button" onClick={onClose}>取消</button>
+        <button className="button primary" disabled={busy || (!provider && !profile)}>保存账户</button></footer>
+    </form>
+  </Modal>;
+}
 export function NativeKeyForm({ service, account, onClose }) {
   const [label, setLabel] = useState(account?.label || service.name),
     [key, setKey] = useState(""),
@@ -84,8 +111,10 @@ export function AddAccount({ client, state, onClose, onOAuth }) {
     a.label.toLowerCase().includes(search.toLowerCase()),
   );
   const services = state.officialServices.filter((s) =>
-    s.profiles.some((p) => client.id !== "claude" || p.wireApi === "anthropic"),
+    s.profiles.some((p) => (client.accountServices || []).includes(p.id === "opencode-zen" ? "opencode" : p.id)),
   );
+  const profiles = services.flatMap((s) => s.profiles).filter((p) =>
+    (client.accountServices || []).includes(p.id === "opencode-zen" ? "opencode" : p.id));
   async function bind(providerId) {
     setBusy(true);
     setError("");
@@ -98,20 +127,14 @@ export function AddAccount({ client, state, onClose, onOAuth }) {
       setBusy(false);
     }
   }
-  const auth = state.openRouterAuth,
-    authorizing = ["waiting", "exchanging"].includes(auth.status);
   if (editor)
     return (
-      <ProviderEditor
+      <OfficialApiForm
+        client={client}
+        profiles={profiles}
         provider={editor.provider}
-        initialPreset={editor.preset}
-        presets={state.providerPresets}
-        balancePresets={state.balancePresets}
+        preset={editor.preset}
         onClose={() => setEditor(null)}
-        onSave={async (p) => {
-          await api.call("account-save-api", client.id, p);
-          onClose();
-        }}
       />
     );
   return (
@@ -123,13 +146,13 @@ export function AddAccount({ client, state, onClose, onOAuth }) {
             原生授权账户
           </button>
         )}
-        <button
+        {profiles.length > 0 && <button
           className={"button" + (creating ? " primary" : "")}
           onClick={() => setCreating(!creating)}
         >
           <KeyRound size={15} />
           新建 API 账户
-        </button>
+        </button>}
       </div>
       {!creating ? (
         <>
@@ -137,7 +160,7 @@ export function AddAccount({ client, state, onClose, onOAuth }) {
             <Search size={15} />
             <input
               aria-label="搜索已有 API 账户"
-              placeholder="搜索已有供应商"
+              placeholder="搜索已有官方 API 账户"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -154,7 +177,7 @@ export function AddAccount({ client, state, onClose, onOAuth }) {
                 <span className="account-content">
                   <strong>{a.label}</strong>
                   <small>
-                    {a.models.length} 个兼容模型 · {a.message}
+                    {a.badge}
                   </small>
                 </span>
                 <span>添加</span>
@@ -170,10 +193,6 @@ export function AddAccount({ client, state, onClose, onOAuth }) {
         </>
       ) : (
         <>
-          <button className="button" onClick={() => setEditor({})}>
-            <Plus size={15} />
-            自定义 API
-          </button>
           <div className="account-preset-list">
             {services.map((s) => (
               <section key={s.id}>
@@ -182,7 +201,7 @@ export function AddAccount({ client, state, onClose, onOAuth }) {
                   {s.profiles
                     .filter(
                       (p) =>
-                        client.id !== "claude" || p.wireApi === "anthropic",
+                        profiles.some((profile) => profile.id === p.id),
                     )
                     .map((p) => (
                       <button
@@ -198,36 +217,6 @@ export function AddAccount({ client, state, onClose, onOAuth }) {
               </section>
             ))}
           </div>
-          {client.id !== "claude" && (
-            <div className="account-pkce">
-              <Globe size={18} />
-              <span>OpenRouter 浏览器授权</span>
-              <button
-                className="button"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  setError("");
-                  try {
-                    await api.call(
-                      authorizing
-                        ? "openrouter-auth-cancel"
-                        : "openrouter-auth-start",
-                      undefined,
-                      client.id,
-                    );
-                  } catch (e) {
-                    setError(e.message);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                {authorizing ? "取消授权" : "开始授权"}
-              </button>
-              {auth.status !== "idle" && <p role="status">{auth.message}</p>}
-            </div>
-          )}
         </>
       )}
       {error && (

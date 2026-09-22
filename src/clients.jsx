@@ -16,15 +16,17 @@ import {
   Unlink,
   ExternalLink,
 } from "lucide-react";
-import { Modal, ProviderEditor } from "./editors.jsx";
+import { Modal } from "./editors.jsx";
 import {
   AddAccount,
   NativeKeyAccounts,
   NativeKeyForm,
+  OfficialApiForm,
 } from "./account-dialogs.jsx";
 import { ActionMenu } from "./menus.jsx";
 import { AccountProfile } from "./account-profile.jsx";
 import { ConnectionStatus, ConnectionService } from "./connections.jsx";
+import { ClientInjection } from "./client-injection.jsx";
 const api = window.ass;
 
 export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
@@ -64,12 +66,13 @@ export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
         </label>
         {client.id === "pi" && (
           <label className="field">
-            OAuth provider ID（可选）
-            <input
+            授权服务
+            <select required
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
-              placeholder="留空，在 pi 的 /login 中选择"
-            />
+            ><option value="">选择本机 pi 支持的 OAuth</option>
+              {(client.oauthProviders || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
           </label>
         )}
         <p className="hint">创建后点击“登录授权”，在原生客户端完成登录。</p>
@@ -101,12 +104,7 @@ function AccountCard({
   openProvider,
   editProvider,
 }) {
-  const selected = a.id === client.selected,
-    models = a.models || [];
-  const saved = client.modelSelections[a.id],
-    chosen = models.some((m) => m.model === saved)
-      ? saved
-      : models[0]?.model || "";
+  const selected = a.id === client.selected;
   const warning = [
     "expired",
     "refresh-required",
@@ -169,7 +167,7 @@ function AccountCard({
                   ),
               },
               {
-                label: "解除此客户端绑定",
+                label: "移除此账户卡片",
                 icon: Unlink,
                 danger: true,
                 action: () =>
@@ -202,19 +200,6 @@ function AccountCard({
           令牌到期：{new Date(a.expiresAt).toLocaleString()}
         </small>
       )}
-      {a.kind === "api" && (
-        <div className="account-model-summary">
-          <span>启动模型</span>
-          <strong>{chosen || "没有兼容模型"}</strong>
-          <button
-            className="text-button"
-            onClick={() => openProvider(a.providerId)}
-          >
-            管理模型
-            <ChevronRight size={13} />
-          </button>
-        </div>
-      )}
       {balance && (
         <p className="account-balance-summary">
           {balance.ok
@@ -244,7 +229,7 @@ function AccountCard({
           }
         >
           {selected && <Check size={13} />}
-          {selected ? "已选择" : "切换到此账户"}
+          {selected ? "下次启动使用" : "设为启动账户"}
         </button>
         <div className="actions">
           {a.kind !== "api" && a.authType !== "api" && (
@@ -279,12 +264,9 @@ function AccountCard({
             disabled={
               !client.executable ||
               !!busy ||
-              (a.kind === "api" &&
-                (!a.ready ||
-                  !models.length ||
-                  !state.connections.clients[client.id].enabled))
+              (a.kind === "api" && !a.ready)
             }
-            onClick={() => run(a, "launch", chosen)}
+            onClick={() => run(a, "launch")}
           >
             <Terminal size={14} />
             启动
@@ -507,6 +489,7 @@ export function Clients({
               </div>
             </header>
             <ConnectionStatus {...{ client, state, busy, onManage }} />
+            <ClientInjection key={"injection:" + client.id} {...{ client, state, act, busy }} />
             <div className="client-account-grid">
               {client.accounts.map((a) => (
                 <AccountCard
@@ -520,12 +503,12 @@ export function Clients({
                 <div className="empty">
                   <KeyRound size={23} />
                   <p>
-                    没有已有账户。点击“添加账户”绑定 API 或创建原生授权账户。
+                    尚未添加官方账户。模型接入不要求先添加账户。
                   </p>
                 </div>
               )}
             </div>
-            <details className="client-settings" key={client.id}>
+            <details className="client-settings" key={"paths:" + client.id}>
               <summary>客户端路径与凭据目录</summary>
               <div className="client-location-actions" aria-label="客户端位置">
                 <button className="button" disabled={!!busy} onClick={detect}>
@@ -696,12 +679,11 @@ export function Clients({
         />
       )}
       {editor && (
-        <ProviderEditor
+        <OfficialApiForm
+          client={client}
+          profiles={[]}
           provider={editor}
-          presets={state.providerPresets}
-          balancePresets={state.balancePresets}
           onClose={() => setEditor(null)}
-          onSave={(p) => api.call("save-provider", p)}
         />
       )}
       {nativeKey && (

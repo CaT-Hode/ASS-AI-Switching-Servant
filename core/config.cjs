@@ -19,7 +19,7 @@ function withoutOwn(text) {
     "",
   );
 }
-function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/codex/v1") {
+function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/codex/v1", defaultModel = null) {
   if (text.includes("aimami-relay codex-router top start"))
     throw new Error(
       "检测到其他路由工具仍接管 Codex。请先关闭旧路由，再点击接入。",
@@ -39,11 +39,12 @@ function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/
   if (first < 0) first = clean.length;
   let top = clean.slice(0, first),
     rest = clean.slice(first);
-  for (const key of ["model_provider", "model_catalog_json"]) {
+  for (const key of ["model_provider", "model_catalog_json", ...(defaultModel ? ["model", "model_reasoning_effort"] : [])]) {
     replaced[key] = parsed[key] ?? null;
     top = top.replace(new RegExp("^" + key + "\\s*=.*(?:\\r?\\n|$)", "m"), "");
   }
-  const block = `${START}\nmodel_provider = "ass_router"\nmodel_catalog_json = ${JSON.stringify(catalog)}\n${END}\n`;
+  const model = defaultModel ? `model = ${JSON.stringify(defaultModel.model)}\nmodel_reasoning_effort = ${JSON.stringify(defaultModel.effort)}\n` : "";
+  const block = `${START}\nmodel_provider = "ass_router"\nmodel_catalog_json = ${JSON.stringify(catalog)}\n${model}${END}\n`;
   const providers = `\n${START}\n[model_providers.ass_router]\nname = "ASS"\nbase_url = ${JSON.stringify(baseUrl)}\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n\n[model_providers.aimai1]\nname = "ASS (历史任务兼容)"\nbase_url = ${JSON.stringify(baseUrl)}\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n${END}\n`;
   const result = block + top + rest + providers;
   TOML.parse(result);
@@ -73,20 +74,33 @@ class ConfigManager {
       return { attached: false, provider: "unknown" };
     }
   }
-  attach() {
-    if (this.status().attached) return;
+  prepareAttach(defaultModel = null) {
     const old = fs.existsSync(this.file) ? fs.readFileSync(this.file, "utf8") : "";
-    const { text, replaced } = prepareConfig(old, this.catalog, this.baseUrl);
+    // Validate ownership, restore the baseline in memory, then apply the new
+    // desired default. Never strip an externally edited managed block.
+    const baseline = old.includes(START) ? this.preflightDetach().next : old;
+    return { old, ...prepareConfig(baseline, this.catalog, this.baseUrl, defaultModel) };
+  }
+  attach(defaultModel = null) {
+    const { old, text, replaced } = this.prepareAttach(defaultModel);
+    if (old === text) return;
     const backup = path.join(
       this.dataDir,
       "backups",
       "config-" + Date.now() + ".toml",
     );
     atomic(backup, old);
-    atomic(this.record, JSON.stringify({ backup, replaced, blocks: text.match(/# >>> ass managed start[\s\S]*?# <<< ass managed end/g) }));
     if ((fs.existsSync(this.file) ? fs.readFileSync(this.file, "utf8") : "") !== old)
       throw new Error("配置同时被修改，请重试");
-    atomic(this.file, text);
+    const previousRecord = fs.existsSync(this.record) ? fs.readFileSync(this.record) : null;
+    try {
+      atomic(this.record, JSON.stringify({ backup, replaced, blocks: text.match(/# >>> ass managed start[\s\S]*?# <<< ass managed end/g) }));
+      atomic(this.file, text);
+    } catch (error) {
+      if (previousRecord) atomic(this.record, previousRecord);
+      else if (fs.existsSync(this.record)) fs.unlinkSync(this.record);
+      throw error;
+    }
     return backup;
   }
   preflightDetach() {
