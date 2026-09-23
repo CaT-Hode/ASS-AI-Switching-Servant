@@ -6,11 +6,14 @@ const crypto = require("node:crypto");
 const TOML = require("@iarna/toml");
 const { read, document, edit, atomic, hash } = require("./native-fields.cjs");
 const { credentialFile, parseRecords } = require("./credential-status.cjs");
-const SUPPORTED = new Set(["codex", "claude", "pi"]);
+const additional = require("./additional-oauth.cjs");
+const SUPPORTED = new Set(["codex", "claude", "pi", ...additional.SUPPORTED]);
 const object = (v) => v && typeof v === "object" && !Array.isArray(v);
 const has = (v) => typeof v === "string" && v.length > 0;
 const key = (file) => process.platform === "win32" ? path.resolve(file).toLowerCase() : path.resolve(file);
 const stamp = (v) => hash(JSON.stringify(v));
+const sourceFile = (source) => additional.SUPPORTED.has(source.harness)
+  ? additional.sourceFile(source) : credentialFile(source.harness, source.dir, true);
 function json(file) {
   const text = read(file);
   if (text?.length > 2 * 1024 * 1024) throw Error("OAuth 文件过大，未读取");
@@ -45,6 +48,7 @@ function identity(harness, provider, grant) {
 function readSource(source) {
   const { harness, dir } = source;
   if (!SUPPORTED.has(harness)) throw Error("此客户端不支持 OAuth 账户切换");
+  if (additional.SUPPORTED.has(harness)) return additional.readSource(source);
   let config = {}, configText = null;
   if (harness === "codex") {
     configText = read(path.join(dir, "config.toml"));
@@ -120,6 +124,13 @@ class OAuthHistory {
   recover(transaction) {
     if (!Array.isArray(transaction) || transaction.length > 2 || !transaction.length ||
       transaction.some((w) => !path.isAbsolute(w.file) || typeof w.after !== "string" || (w.before !== null && typeof w.before !== "string"))) throw Error();
+    const releases = [];
+    try {
+      for (const w of transaction) if (w.lock === "zcode") releases.push(additional.lock(w.file));
+      this.recoverLocked(transaction);
+    } finally { for (const release of releases.reverse()) release(); }
+  }
+  recoverLocked(transaction) {
     // A crashed multi-file switch is reversible only while every file still
     // equals our before/after image. Never roll back a subsequent native login.
     for (const w of transaction) if (![w.before, w.after].includes(read(w.file))) throw Error();
@@ -132,7 +143,7 @@ class OAuthHistory {
   capture(state) {
     let entries = this.entries.slice(), changed = false;
     const ids = {};
-      for (const g of state.grants) {
+    for (const g of state.grants) {
       if (!this.allows(state.source.harness, g.row.provider)) continue;
       const previous = entries.find((e) => e.harness === state.source.harness && e.provider === g.row.provider &&
         (g.identity ? e.identity === g.identity : e.grantKey === g.grantKey));
@@ -161,7 +172,7 @@ class OAuthHistory {
     const live = new Set();
     for (const source of this.sources()) {
       if (!SUPPORTED.has(source.harness)) continue;
-      const fileKey = key(credentialFile(source.harness, source.dir, true));
+      const fileKey = key(sourceFile(source));
       live.add(fileKey);
       try {
         if (this.error) throw Error(this.error);
@@ -201,7 +212,7 @@ class OAuthHistory {
   }
   inspect(harness, entry) {
     if (this.error) throw Error(this.error);
-    const source = this.target(harness);
+    const source = this.target(harness, entry.provider);
     if (!source || source.harness !== harness) throw Error("无法确定客户端凭据目录");
     if (source.blocked) throw Error(source.blocked);
     const state = readSource(source), data = state.auth.data;
@@ -218,32 +229,33 @@ class OAuthHistory {
   }
   publicEntry(e) {
     const data = e.harness === "codex" ? { tokens: e.grant } : e.harness === "claude" ? { claudeAiOauth: e.grant } : { [e.provider]: e.grant };
-    const row = parseRecords(e.harness, data)[0];
+    const row = additional.SUPPORTED.has(e.harness) ? additional.publicGrant(e.harness, e.provider, e.grant) : parseRecords(e.harness, data)[0];
     return { id: "oauth-history:" + e.id, oauthRecordId: e.id, kind: "oauth-history",
       provider: e.provider, authType: "oauth", badge: "OAuth", source: "已保存账户",
-      label: e.harness === "codex" ? "ChatGPT" : e.provider,
+      label: row.label || (e.harness === "codex" ? "ChatGPT" : e.provider),
       profile: e.profile, ready: row.ready, status: row.status, message: row.message, expiresAt: row.expiresAt,
       firstSeenAt: e.firstSeenAt, updatedAt: e.updatedAt, identityKnown: !!e.identity };
   }
   decorate(client) {
     if (!SUPPORTED.has(client.id)) return;
     const records = this.entries.filter((e) => e.harness === client.id && this.allows(client.id, e.provider));
-    let target;
-    try { target = this.target(client.id); } catch {}
+    const sources = this.sources();
     const current = new Map();
     for (const a of client.accounts) {
       if (a.authType !== "oauth" || !a.sourcePath || !path.isAbsolute(a.sourcePath)) continue;
       try {
-        const source = this.sources().find((s) => s.harness === client.id && key(credentialFile(s.harness, s.dir, true)) === key(a.sourcePath));
+        const source = sources.find((s) => s.harness === client.id && key(sourceFile(s)) === key(a.sourcePath));
         if (!source) continue;
         const observed = this.observed.get(key(a.sourcePath));
         if (!observed || observed.fingerprint !== readSource(source).fingerprint) continue;
-        const id = observed.ids[a.provider || a.oauthProvider];
+        const id = observed.ids[a.oauthHistoryProvider || a.provider || a.oauthProvider];
         if (!id || !records.some((e) => e.id === id)) continue;
         a.oauthRecordId = id;
         const saved = records.find((e) => e.id === id);
         a.updatedAt = saved?.updatedAt;
-        a.oauthCurrent = !!target && key(source.dir) === key(target.dir) && !target.blocked;
+        let target;
+        try { target = this.target(client.id, saved.provider); } catch {}
+        a.oauthCurrent = !!target && key(sourceFile(source)) === key(sourceFile(target)) && !target.blocked;
         current.set(id, true);
       } catch {}
     }
@@ -260,7 +272,7 @@ class OAuthHistory {
     this.tickets.set(ticket, { harness, id, fingerprint: state.fingerprint, revision: entry.fingerprint,
       target: key(state.auth.file), expires: this.now() + 120000 });
     const f = entry.profile?.fields || [];
-    return { ticket, harness, label: f.find((v) => v.id === "email")?.value || f.find((v) => v.id === "name")?.value || entry.provider,
+    return { ticket, harness, label: f.find((v) => v.id === "email")?.value || f.find((v) => v.id === "name")?.value || this.publicEntry(entry).label,
       target: state.auth.file };
   }
   apply(ticket, confirmed) {
@@ -268,6 +280,10 @@ class OAuthHistory {
     this.tickets.delete(ticket);
     if (confirmed !== true || !t || t.expires < this.now()) throw Error("切换确认已失效，请重新选择账户");
     const entry = this.lookup(t.harness, t.id), state = this.inspect(t.harness, entry);
+    const release = t.harness === "zcode" ? additional.lock(state.auth.file) : () => {};
+    try { return this.applyLocked(t, entry, state); } finally { release(); }
+  }
+  applyLocked(t, entry, state) {
     if (!this.publicEntry(entry).ready) throw Error("已保存授权已到期，需要重新登录");
     const check = () => {
       const latest = this.inspect(t.harness, entry);
@@ -283,15 +299,15 @@ class OAuthHistory {
     if (t.harness === "codex") {
       set("auth_mode", "chatgpt"); set("tokens", entry.grant); set("last_refresh", entry.lastRefresh);
     } else if (t.harness === "claude") set("claudeAiOauth", entry.grant);
-    else set(entry.provider, entry.grant);
-    const writes = [{ ...state.auth, after: text }];
+    else if (t.harness === "pi") set(entry.provider, entry.grant);
+    const writes = additional.SUPPORTED.has(t.harness) ? additional.writes(state, entry) : [{ ...state.auth, after: text }];
     if (t.harness === "claude") {
       const meta = state.parts[1];
       writes.push({ ...meta, after: edit(meta.text, "json", ["oauthAccount"], entry.metadata ? { exists: true, value: entry.metadata } : { exists: false }) });
     }
     // Synchronous, compare-before-write. Never restart a client or remove locks.
     check();
-    this.persist(this.entries, writes.map((w) => ({ file: w.file, before: w.text, after: w.after })));
+    this.persist(this.entries, writes.map((w) => ({ file: w.file, before: w.text, after: w.after, lock: w.lock })));
     const done = [];
     try {
       for (const w of writes) {

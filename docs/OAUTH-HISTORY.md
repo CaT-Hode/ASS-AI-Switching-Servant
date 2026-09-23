@@ -1,6 +1,6 @@
 # OAuth 账户历史与切换
 
-适用当前支持的 Codex、Claude Code、pi。DSH、OpenCode Go / Zen 的 API 账户不进入这套记录；不因为其他 harness 能读取某种文件就开放跨供应商登录。
+适用当前支持的 Codex、Claude Code、pi、Kimi Code、ZCode 的文件型 OAuth。DSH、OpenCode Go / Zen 的 API 账户不进入这套记录；不因为其他 harness 能读取某种文件就开放跨供应商登录。
 
 ## 记录
 
@@ -21,11 +21,18 @@
 
 ASS 不结束客户端进程，不撤销旧授权，也不代替原生客户端刷新。文件写入成功不等于运行中的所有窗口已换号；请在任务结束后切换，必要时重启客户端。独立账户目录仍能从 ASS 启动，模型注入范围不随 OAuth 身份切换改变。
 
+Kimi 写回配置引用的同区域、同 slot 文件，保留配置与未知字段；CN / Global 不互换授权。新旧版本并存时先选择版本。Kimi 的标准 token 文件没有用户身份字段，界面以保存时间区分记录，opaque refresh grant 轮换会保留新条目。
+
+ZCode 保存的是当前完整会话：对应供应商的 access / refresh / user_info、共享会话 JWT 与登录归因。换号同步 `oauth:active_provider`，清除另一互斥 OAuth 身份域的残留字段，保留独立 API / MCP 凭据。使用原生 AES-GCM 格式和 `credentials.json.lock/owner-*.json` 协作锁；锁占用时拒绝切换，不清理别人的锁。事务恢复也须取得同一把锁。过期的会话 JWT 不用 provider 的 refresh token 冒充可恢复。
+
 ## 边界
 
 - Codex 仅文件存储支持此切换。`keyring / auto / ephemeral` 不通过读写 auth.json 冒充支持；不改动其存储设置，不探测系统密钥库。
 - pi 服务按本机实际安装版本确认的 OAuth 能力开放。
+- Kimi / ZCode 的原生登录发起、真实账户在线有效性与跨客户端移植不在这次适配中。只有完整文件会话开放切换，不能从残缺缓存推断登录身份。运行中的客户端仍可能缓存授权，需结束任务后切换。
 - 无法找回监测启动前已被覆盖的令牌；退出原生登录后历史仍在，但服务端撤销或刷新链变化可能使旧授权失效。
 - 测试只用隔离的合成凭据，不用用户真实账户换号，不发送计费请求。测试不构成真实授权在线有效性的证明。
 
 依据：[OpenAI 官方认证与凭据存储文档](https://learn.chatgpt.com/docs/auth)、各原生适配器和已安装 pi OAuth provider registry。OpenAI 文档明确区分文件、系统密钥库、自动和内存存储，以及原生令牌刷新。
+
+新增适配依据：Kimi Code `6451f1e` 的 `packages/oauth/src/types.ts`、`storage.ts`、`managed-kimi-code.ts`、`region.ts`；ZCode `872ad960` 的 `oauthCredentialRepo.ts`、`shared-credentials.ts`、`credential-cipher.ts` 与 `atomicFileLock.ts`。链接见[新增客户端支持边界](ADDITIONAL-HARNESSES.md)。

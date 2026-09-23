@@ -21,7 +21,7 @@ ASS（Agent-Switching-Servant）是你的 Windows 桌面 AI 路由与账户助�
 - “客户端与账户”只添加该客户端对应的官方账户；模型接入单独从全局供应商配置选择，不要求把第三方 API 绑定为登录账户。
 - “供应商与模型”分为三级：供应商卡片 → 模型列表弹窗 → 右侧详细设置弹窗。三级打开时二级左移让位，关闭后复原；列表可直接修改 ID、显示名称、接口、上下文和默认思维强度，支持添加 / 删除及逐模型检测。
 - 自动检测五类客户端的本机 OAuth / API 凭据，按账户与供应商在右侧显示卡片。支持默认目录、环境变量目录与手动指定目录。
-- 额外识别 Kimi Code 新 / 旧版、ZCode CLI / Desktop 与 Antigravity CLI。Kimi / ZCode 支持按供应商直写原生配置、同步及撤回，保留原有 OAuth；本机账户和声明模型可查看。Antigravity 仅识别 CLI 配置与明确启用的 Gemini API。新增客户端的 OAuth 换号与用量采集仍待适配，详见 [新增客户端支持边界](docs/ADDITIONAL-HARNESSES.md)。
+- 额外识别 Kimi Code 新 / 旧版、ZCode CLI / Desktop 与 Antigravity CLI。Kimi / ZCode 支持按供应商直写原生配置、同步及撤回；文件型 OAuth 可自动加密记录并在账户卡片切换，不改变模型接入范围。Antigravity 仅识别 CLI 配置与明确启用的 Gemini API。原生登录发起与新增客户端用量采集仍待适配，详见 [新增客户端支持边界](docs/ADDITIONAL-HARNESSES.md)。
 - 账户卡片显示凭据中已有的邮箱、套餐、账户 / 组织、权限与到期时间；DeepSeek 可查询余额明细，OpenCode Go 可查询三档用量和重置时间，OpenRouter 可查询 Key 额度。原生 API 账户同样支持，不必重复保存 Key。字段来源与未支持范围见 [账户资料对照](docs/ACCOUNT-INFO.md)。
 - 路由状态固定在左栏底部；侧栏鼠标悬停、按下与选中反馈支持键盘即时操作和减少动态效果。
 - 模型列表中每行右侧的闪电单独检查连接；进入供应商详情后自动获取模型目录，可搜索并一键添加，再用小请求检测协议、工具调用与思维参数。卡片页不自动请求目录。
@@ -84,6 +84,8 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 | Claude Code | 仅 Anthropic 官方 API Key | 文件型 Claude OAuth 自动记录、确认切换；独立 `CLAUDE_CONFIG_DIR` 登录 / 退出 |
 | OpenCode | 仅 OpenCode Go / Zen API Key | 原生 / 独立 XDG 目录启动；第三方模型由接入区管理 |
 | pi | 自定义 API 不作为登录账户 | 本机 pi 已确认支持的 OAuth 自动记录、逐服务切换；兼容授权可导入 |
+| Kimi Code | 在原生客户端配置 Moonshot / Kimi 官方 API | 配置所引用的文件型 OAuth 自动记录，按区域与存储 slot 切换；不代替原生登录 |
+| ZCode | 在原生客户端配置 Z.ai / 智谱官方 API | 自动记录完整的当前 OAuth 会话，切换用户资料、供应商与会话令牌；不代替原生登录 |
 | DeepSeek Harness | 仅 DeepSeek 官方 API Key | 原生 / 独立 `DSH_HOME`，不添加其他供应商账户 |
 
 OAuth 卡片区分“当前账户”和“已保存账户”：点击“切换账户”并确认，将授权写入当前客户端的原生凭据目录，不重启客户端。已运行的进程可能缓存旧授权，请先结束任务，必要时自行重启。API 卡片的“下次启动使用”仍只记录后续启动选择。DeepSeek 官方 API 自动归入 DSH，OpenCode Go / Zen 自动归入 OpenCode；API 账户不参与 OAuth 自动历史，不必开启模型接入即可独立启动。移除 API 卡片不会删除供应商或撤回模型注入。
@@ -117,7 +119,8 @@ v0.1.18 将旧模型排除项迁移为供应商排除项：只要旧版排除了
 | GitHub Copilot OAuth | 本机 pi 注册表确认支持后，创建 pi 授权账户并原生登录 |
 | OpenRouter PKCE | 浏览器确认权限和额度，本机随机回调 + S256，换取独立 API Key 后加密保存；不是订阅令牌 |
 | Cursor API Key | 多套加密保管、更新、移除和主动复制到原生客户端；不转换为通用模型 API |
-| Cursor / Kimi 原生 OAuth | **由原生客户端管理**；本版本不提供其 OAuth 多账户快照、切换或跨客户端移植 |
+| Kimi Code / ZCode 原生 OAuth | 原生登录后自动保存文件型账户，支持确认切换；不做跨客户端移植 |
+| Cursor 原生 OAuth | **由原生客户端管理**；本版本不提供其 OAuth 多账户快照、切换或跨客户端移植 |
 
 同一服务的不同产品与地区分开列出，例如 Kimi Code / Moonshot、Z.ai 通用 API / Coding Plan、OpenCode Go / Zen。它们的 Key 和额度不应混用。支持的服务名不等于所有账户与模型均已实网验证。
 

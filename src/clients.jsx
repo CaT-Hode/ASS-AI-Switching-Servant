@@ -233,7 +233,7 @@ function AccountCard({
       {a.kind === "native" && ["opencode", "dsh"].includes(client.id) && (
         <small className="account-expiry">供应商在原生客户端内选择</small>
       )}
-      {!client.nativeLoginOnly && <footer>
+      {(!client.nativeLoginOnly || a.oauthRecordId) && <footer>
         {a.oauthRecordId ? <button
           className={"text-button account-choice" + (a.oauthCurrent ? " chosen" : "")}
           disabled={!!busy || a.oauthCurrent || !a.ready}
@@ -254,7 +254,7 @@ function AccountCard({
           {selected && <Check size={13} />}
           {selected ? "下次启动使用" : "设为启动账户"}
         </button>}
-        {a.kind !== "oauth-history" && <div className="actions">
+        {!client.nativeLoginOnly && a.kind !== "oauth-history" && <div className="actions">
           {a.kind !== "api" && a.authType !== "api" && (
             <>
               <button

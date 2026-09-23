@@ -1,20 +1,20 @@
 // Read-only native adapters. Credentials never leave this module; neither
 // discovery nor snapshot collection runs clients, key helpers, or token refresh.
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
-const { createHash, createDecipheriv } = require("node:crypto");
+const { createHash } = require("node:crypto");
 const TOML = require("@iarna/toml");
 const { safePath } = require("./native-fields.cjs");
 const { text, claims } = require("./account-info.cjs");
 const { EFFORTS } = require("./models.cjs");
 const zcode = require("./zcode-config.cjs");
+const { decryptZCode, kimiReference, publicGrant, status: authorization } = require("./additional-oauth.cjs");
 
 const SPECS = [
   { id: "kimi", name: "Kimi Code", command: "kimi" },
   { id: "zcode", name: "ZCode", command: "zcode" },
   { id: "antigravity", name: "Antigravity", command: "agy" },
-].map((s) => ({ ...s, oauth: false, nativeLoginOnly: true,
+].map((s) => ({ ...s, oauth: ["kimi", "zcode"].includes(s.id), nativeLoginOnly: true,
   injectionUnsupported: ["kimi", "zcode"].includes(s.id) ? undefined : s.id === "antigravity"
     ? "此版本识别 agy CLI 配置。OAuth 由系统密钥库管理；IDE 账户与配置接入尚未适配。"
     : "此版本仅识别原生账户与模型；账户切换与配置接入尚未适配。" }));
@@ -60,19 +60,12 @@ function official(base, service) {
   try {
     const u = new URL(base), p = u.pathname.replace(/\/+$/, "");
     if (u.protocol !== "https:" || u.port || u.username || u.password || u.search || u.hash) return false;
-    if (service === "kimi") return (u.hostname === "api.kimi.com" && p === "/coding/v1") ||
+    if (service === "kimi") return (["api.kimi.com", "api.kimi.ai"].includes(u.hostname) && p === "/coding/v1") ||
       (["api.moonshot.cn", "api.moonshot.ai"].includes(u.hostname) && p === "/v1");
     if (service === "zcode") return ["open.bigmodel.cn", "api.z.ai"].includes(u.hostname) &&
       ["/api/paas/v4", "/api/coding/paas/v4"].includes(p);
     return u.hostname === "generativelanguage.googleapis.com";
   } catch { return false; }
-}
-function authorization(access, refresh, seconds, now) {
-  const n = Number(seconds), expiresAt = Number.isFinite(n) && n > 0 && n < 8.64e12 ? n * 1000 : null;
-  const expired = expiresAt !== null && expiresAt <= now;
-  return { authType: "oauth", ready: has(access) && (!expired || has(refresh)), expiresAt,
-    status: !has(access) ? "incomplete" : expired ? has(refresh) ? "refresh-required" : "expired" : "detected",
-    message: !has(access) ? "OAuth 凭据不完整" : expired ? has(refresh) ? "访问令牌已到期 · 由客户端刷新" : "授权已到期 · 需要重新登录" : "OAuth" };
 }
 function account(harness, dir, file, provider, label, auth, fields = [], secrets = []) {
   if (!text(provider, secrets)) return null;
@@ -118,7 +111,7 @@ function inspectKimi(location, { env, now }) {
     let auth, source = file;
     if (p.oauth) {
       const ref = p.oauth;
-      if (ref.storage !== "file") {
+      if ((ref.storage || "file") !== "file") {
         sources.push({ file, status: "external", message: "Kimi OAuth 使用系统密钥库；未读取文件凭据" });
         continue;
       }
@@ -137,6 +130,7 @@ function inspectKimi(location, { env, now }) {
       // Revoked tombstones deliberately retain a file with empty token fields.
       if (!has(t.access_token) && !has(t.refresh_token)) continue;
       auth = authorization(t.access_token, t.refresh_token, t.expires_at, now);
+      auth.oauthHistoryProvider = kimiReference(dir, p)?.provider;
     } else if (has(key)) auth = apiAuth;
     if (auth && official(p.base_url, "kimi")) loaded.push({ id, auth, source, envName });
   }
@@ -157,20 +151,6 @@ function inspectKimi(location, { env, now }) {
   return { sources, accounts, modelAccounts: models.length ? [catalog("kimi", dir, file, models)] : [] };
 }
 
-function decryptZCode(value, env) {
-  if (typeof value !== "string") return "";
-  if (!value.startsWith("enc:v1:")) return value;
-  let username = "unknown";
-  try { username = os.userInfo().username; } catch {}
-  const secret = env.ZCODE_CREDENTIAL_SECRET?.trim() || `zcode-credential-fallback:${os.platform()}:${os.homedir()}:${username}`;
-  const parts = value.slice(7).split(".");
-  if (parts.length !== 3 || parts.some((p) => !/^[\w-]+$/.test(p))) throw Error();
-  const [iv, tag, encrypted] = parts.map((p) => Buffer.from(p, "base64url"));
-  if (iv.length !== 12 || tag.length !== 16) throw Error();
-  const decipher = createDecipheriv("aes-256-gcm", createHash("sha256").update(secret).digest(), iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
-}
 function inspectZCode({ dir, bootstrap, issue }, { env, now, override }) {
   const credentials = read(path.join(dir, "credentials.json")), accounts = [], models = [], sources = [credentials];
   if (bootstrap) sources.push({ file: bootstrap, status: issue ? "unreadable" : "detected", message: issue || "" });
@@ -179,6 +159,12 @@ function inspectZCode({ dir, bootstrap, issue }, { env, now, override }) {
     delete credentials.data;
   }
   const secrets = [], tokens = [];
+  let active = "", session = "";
+  try {
+    active = decryptZCode(credentials.data?.["oauth:active_provider"], env);
+    session = decryptZCode(credentials.data?.zcodejwttoken, env);
+    secrets.push(session);
+  } catch { sources.push({ file: credentials.file, status: "unreadable", message: "ZCode 会话凭据无法解密" }); }
   for (const provider of ["zai", "bigmodel"]) {
     try {
       const value = (key) => decryptZCode(credentials.data?.[`oauth:${provider}:${key}`], env);
@@ -187,7 +173,11 @@ function inspectZCode({ dir, bootstrap, issue }, { env, now, override }) {
       if (!has(access) && !has(refresh)) continue;
       let user = {};
       try { user = JSON.parse(value("user_info") || "{}"); } catch {}
-      tokens.push({ provider, user: object(user) ? user : {}, auth: authorization(access, refresh, claims(access).exp, now) });
+      if (active && active !== provider) continue;
+      const auth = active === provider ? publicGrant("zcode", provider,
+        { access_token: access, refresh_token: refresh, user_info: value("user_info"), session_token: session }, now)
+        : authorization(access, refresh, claims(access).exp, now);
+      tokens.push({ provider, user: object(user) ? user : {}, auth });
     } catch {
       sources.push({ file: credentials.file, status: "unreadable", message: "ZCode 凭据无法解密；请确认当前系统账户与凭据密钥" });
     }

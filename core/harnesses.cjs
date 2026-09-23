@@ -9,6 +9,8 @@ const { DIRECT, locations, providerId } = require("./native-config.cjs");
 const { makeCatalog } = require("./models.cjs");
 const { apiProfile } = require("./account-info.cjs");
 const additional = require("./additional-harnesses.cjs");
+const additionalOAuth = require("./additional-oauth.cjs");
+const kimiConfig = require("./kimi-config.cjs");
 const { officialAccountPlan } = require("./official-account-plan.cjs");
 const { assertClaudeAccount } = require("./claude-launch-policy.cjs");
 const { safePath, read: readNative, document: nativeDocument } = require("./native-fields.cjs");
@@ -401,19 +403,44 @@ class HarnessManager {
     this.piProviders = await piOAuthProviders(pi.ready ? pi.entryPoint : "");
   }
   oauthHistorySources() {
-    return SPECS.filter((s) => s.oauth).flatMap(({ id }) => [
+    const native = ["kimi", "zcode"].flatMap((id) => additional.locations(id, {
+      home: this.nativeHome, env: this.nativeEnv, override: this.state.credentialHomes[id],
+    }).flatMap((location) => {
+      if (id === "zcode") return [{ ...location, harness: id, env: this.nativeEnv, native: true }];
+      try { return additionalOAuth.kimiSources(location, this.nativeEnv); }
+      catch { return [{ ...location, harness: id, authFile: path.join(location.dir, "config.toml"),
+        issue: "Kimi OAuth 配置无法读取" }]; }
+    }));
+    return [...native, ...SPECS.filter((s) => s.oauth && !s.nativeLoginOnly).flatMap(({ id }) => [
       ...nativeLocations(id, this.nativeHome, this.nativeEnv, this.state.credentialHomes[id], this.codexDir)
         .map((dir) => ({ harness: id, dir, native: true })),
       ...this.state.profiles.filter((p) => p.harness === id)
         .map((p) => ({ harness: id, dir: this.root(id, p.id), native: false })),
-    ]);
+    ])];
   }
   oauthHistoryAllows(id, provider) {
+    if (id === "kimi") return /^kimi:[a-f0-9]{20}$/.test(provider);
+    if (id === "zcode") return ["zai", "bigmodel"].includes(provider);
     return this.spec(id).oauth && (id === "pi" ? this.piProviders.some((p) => p.id === provider)
       : ACCOUNT_SERVICES[id].includes(provider));
   }
-  oauthHistoryTarget(id) {
+  oauthHistoryTarget(id, provider) {
     if (!this.spec(id).oauth) throw Error("此客户端不支持 OAuth 账户切换");
+    if (id === "kimi") {
+      const { dir } = kimiConfig.target(this);
+      const source = this.oauthHistorySources().find((s) => s.harness === id && s.provider === provider && s.dir === dir);
+      if (!source) throw Error("当前 Kimi 配置没有对应区域与授权位置，请先在原生客户端登录");
+      const overrides = ["KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_CODE_BASE_URL", "KIMI_CODE_OAUTH_HOST", "KIMI_OAUTH_HOST"];
+      return { ...source, blocked: overrides.some((k) => this.nativeEnv[k])
+        ? "当前环境变量覆盖 Kimi 授权，请先清除覆盖后再切换" : "" };
+    }
+    if (id === "zcode") {
+      const candidates = additional.locations(id, { home: this.nativeHome, env: this.nativeEnv, override: this.state.credentialHomes[id] });
+      const active = candidates.filter((s) => s.configured || fs.existsSync(path.join(s.dir, "credentials.json")));
+      if (active.length > 1) throw Error("检测到多个 ZCode 登录目录，请在客户端设置中指定凭据目录");
+      if (this.nativeEnv.ZCODE_DATA_BASE_DIR && !path.isAbsolute(this.nativeEnv.ZCODE_DATA_BASE_DIR)) throw Error("ZCode 自定义配置路径须为绝对路径");
+      return { ...(active[0] || candidates[0]), harness: id, env: this.nativeEnv, native: true };
+    }
     const source = this.oauthHistorySources().find((s) => s.harness === id);
     const envKeys = id === "codex" ? ["CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_CLIENT_ID"]
       : id === "claude" ? ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"] : [];

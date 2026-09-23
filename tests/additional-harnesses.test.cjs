@@ -223,7 +223,8 @@ test("native-login clients reject account mutations while Kimi and ZCode support
   assert.doesNotThrow(() => manager.setInjection("zcode", { excludedProviders: [] }));
   for (const id of ["antigravity"])
     assert.throws(() => manager.setInjection(id, { excludedProviders: [] }), /尚未支持供应商接入/);
-  assert.deepEqual(new Set(manager.oauthHistorySources().map((s) => s.harness)), new Set(["codex", "claude", "pi"]));
+  assert.deepEqual(new Set(manager.oauthHistorySources().map((s) => s.harness)), new Set(["codex", "claude", "pi", "zcode"]));
+  assert.equal(manager.oauthHistoryAllows("zcode", "zai"), true);
   assert.deepEqual(fs.readdirSync(f.home), ["clients.json"]);
 });
 test("model catalogs aggregate without inflating official account counts and client preference persists", (t) => {

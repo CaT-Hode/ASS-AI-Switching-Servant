@@ -759,7 +759,7 @@ else {
       oauthHistory = new OAuthHistory({
         dataDir, crypto: safeStorage,
         sources: () => harnesses.oauthHistorySources(),
-        target: (id) => harnesses.oauthHistoryTarget(id),
+        target: (id, provider) => harnesses.oauthHistoryTarget(id, provider),
         allows: (id, provider) => harnesses.oauthHistoryAllows(id, provider),
         onChange: push,
       });
