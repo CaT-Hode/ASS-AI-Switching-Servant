@@ -47,7 +47,7 @@ ASS（Agent-Switching-Servant）是你的 Windows 桌面 AI 路由与账户助�
 
 ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_router` provider 和模型目录路径，不覆盖保留的 `openai` provider。旧任务可能保留原 provider，不会自动迁移。在“客户端与账户 → Codex”关闭接入，二次确认后恢复 ASS 接入前的配置字段；接入后修改的无关字段会保留。
 
-关闭 ASS 主窗口只会隐藏到托盘。退出托盘或停止路由后，经 ASS 的请求无法继续；DSH / OpenCode / pi 的原生直连不受路由端口影响。ASS 重启会轮换本地令牌，仍使用代理的客户端需重新启动。更改模型目录后，Codex 也需要重启刷新。
+关闭 ASS 主窗口只会隐藏到托盘。退出托盘或停止路由后，经 ASS 的请求无法继续；DSH / OpenCode / pi 的原生直连不受路由端口影响。ASS 重启会轮换本地令牌，仍使用代理的客户端需重新启动。更改模型目录后，Codex 需要重启刷新；DSH 后端会热加载 `settings.yaml`，但已打开页面的模型目录有连接级缓存，同步后需要刷新 DSH 页面。
 
 ### 接入开关与安全关闭
 

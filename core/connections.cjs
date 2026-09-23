@@ -338,6 +338,8 @@ class Connections {
         message: plan.enabled
           ? plan.ids.includes("codex")
             ? "已开启接入。Codex App 请在任务结束后手动重启。"
+            : plan.ids.includes("dsh") && this.nativeConfig?.isDirect("dsh")
+              ? "已同步 DSH 原生配置；后端会热加载，已打开页面需刷新后才能看到新模型。"
             : plan.ids.some((id) => this.nativeConfig?.isDirect(id))
               ? "已同步原生配置；客户端直连供应商，不依赖 ASS 路由。"
               : "已开启接入，从 ASS 新启动客户端时生效。"

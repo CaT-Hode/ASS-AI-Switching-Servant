@@ -37,7 +37,11 @@ export function ConnectionStatus({ client, state, busy, onManage }) {
     ? ` · ${connection.modelCount} 个模型`
     : "";
   const note = connection.syncError ? `未同步：${connection.syncError}` : connection.pending ? "供应商接入有变更，点击同步后生效。" :
-    connection.enabled ? (connection.mode === "native" ? `已写入原生配置${modelCount} · 新会话生效` : client.id === "codex" ? "已接入 · 任务结束后重启客户端" : "已接入 · 新窗口生效") : "";
+    connection.enabled ? (connection.mode === "native"
+      ? connection.runtimeStatus === "client-refresh-required"
+        ? `已写入原生配置${modelCount} · 已打开页面需刷新`
+        : `已写入原生配置${modelCount} · 客户端重新加载后生效`
+      : client.id === "codex" ? "已接入 · 任务结束后重启客户端" : "已接入 · 新窗口生效") : "";
   if (!note && !sessions.length && !connection.active) return null;
   return (
     <section
@@ -101,7 +105,9 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
       warning = plan.codexConfig
         ? restart ? "将更新 Codex 的接入配置。请先结束任务。" : "将更新 Codex 的接入配置，请在任务结束后手动重启客户端。"
         : plan.native
-          ? "将同步模型及其凭据。请先结束客户端任务；原有登录保留。"
+          ? request.scope === "dsh"
+            ? "将同步模型及凭据。DSH 后端会热加载，已打开页面仍需刷新。"
+            : "将同步模型及其凭据。请先结束客户端任务；原有登录保留。"
           : `后续从 ASS 启动的 ${target} 将使用路由配置，不影响已有窗口。`;
     } else {
       const windows = plan.sessions.length

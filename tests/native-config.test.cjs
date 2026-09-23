@@ -87,6 +87,11 @@ test("three native formats separate wire protocols, use real origins and preserv
       );
     else write(target.auth, { "openai-codex": grant });
     f.native.sync(id);
+    if (id === "dsh")
+      assert.equal(
+        f.native.status(id, true).runtimeStatus,
+        "client-refresh-required",
+      );
     const config = document(
       fs.readFileSync(target.config, "utf8"),
       id === "dsh" ? "yaml" : "jsonc",

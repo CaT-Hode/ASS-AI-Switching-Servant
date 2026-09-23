@@ -469,7 +469,12 @@ class NativeConfig {
     }
     return { mode: "native", files, error, pending, modelCount,
       applied: enabled && !pending && !error,
-      runtimeStatus: enabled ? "reload-required" : "inactive" };
+      // DSH watches settings.yaml and updates the Host registry live, but its
+      // browser model catalog is cached for the current Host generation. The
+      // backend therefore needs no restart; an already-open page must reload.
+      runtimeStatus: enabled
+        ? id === "dsh" ? "client-refresh-required" : "reload-required"
+        : "inactive" };
   }
 }
 module.exports = {

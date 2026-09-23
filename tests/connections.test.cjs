@@ -48,7 +48,9 @@ function connectionFixture(t, overrides = {}) {
   };
   Object.assign(router, overrides.router); Object.assign(config, overrides.config);
   Object.assign(injections, overrides.injections); Object.assign(processes, overrides.processes);
-  const connections = new Connections({ dataDir, router, config, injections, processes, extraActive: overrides.extraActive || (() => 0), restarter: overrides.restarter });
+  const connections = new Connections({ dataDir, router, config, injections, processes,
+    nativeConfig: overrides.nativeConfig,
+    extraActive: overrides.extraActive || (() => 0), restarter: overrides.restarter });
   return { dataDir, router, config, injections, processes, connections };
 }
 
@@ -85,6 +87,27 @@ test("connection enable and disable restart only with explicit per-operation opt
   await f.connections.apply({ ticket: off.ticket, mode: "safe", acknowledged: true, restart: true }); assert.deepEqual(r.calls, ["validate", "restart"]);
   r.calls = []; const on = await f.connections.preview("codex", true);
   await f.connections.apply({ ticket: on.ticket, mode: "safe", acknowledged: true, restart: true }); assert.deepEqual(r.calls, ["validate", "restart"]);
+});
+test("DSH native sync reports the browser catalog refresh boundary", async (t) => {
+  const nativeConfig = {
+    isDirect: (id) => id === "dsh",
+    list: () => [],
+    preflight() {},
+    fingerprint: () => "native-dsh",
+    sync() {},
+    status: (id, enabled) => id === "dsh" ? {
+      mode: "native",
+      modelCount: 15,
+      applied: enabled,
+      runtimeStatus: enabled ? "client-refresh-required" : "inactive",
+    } : {},
+  };
+  const f = connectionFixture(t, { nativeConfig });
+  const plan = await f.connections.preview("dsh", true);
+  const result = await f.connections.apply({ ticket: plan.ticket, mode: "safe", acknowledged: true });
+  assert.match(result.message, /已打开页面需刷新/);
+  assert.equal(f.connections.snapshot().clients.dsh.runtimeStatus, "client-refresh-required");
+  assert.equal(f.connections.snapshot().clients.dsh.modelCount, 15);
 });
 test("restart rejects unsupported selection and changed processes before configuration writes", async (t) => {
   const f = connectionFixture(t); const p = await f.connections.preview("codex", true);
