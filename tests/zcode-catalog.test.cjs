@@ -91,6 +91,25 @@ test("built-in OAuth catalogs match locally detected account family without inve
   assert.equal(models(result)[0].wireApi, "anthropic");
   assert.equal(models(result)[0].entitled, undefined);
   assert.equal(models(result)[0].tested, undefined);
+  const client = { id: "zcode", name: "ZCode", accounts: result.accounts,
+    modelAccounts: [...result.accounts, ...result.modelAccounts] };
+  client.accounts[0].oauthCurrent = true;
+  client.accounts[0].profile.modelEntitlement = { status: "available",
+    models: ["glm-fixture", "missing-runtime"], updatedAt: "2026-09-23T00:00:00.000Z" };
+  let source = modelSources({ providers: [], officialModels: [] }, { clients: [client] },
+    { home: f.home, env: {} }).find((p) => p.id === "native-zcode");
+  assert.deepEqual(source.models.map((m) => m.model), ["glm-fixture"]);
+  assert.equal(source.models[0].entitled, true);
+  assert.match(source.catalogSource, /1\/2 个模型已匹配/);
+  assert.match(source.entitlementNotice, /1 个模型缺少/);
+  client.accounts[0].profile.modelEntitlement = { status: "unavailable", models: [] };
+  source = modelSources({ providers: [], officialModels: [] }, { clients: [client] },
+    { home: f.home, env: {} }).find((p) => p.id === "native-zcode");
+  assert.deepEqual(source.models, []);
+  client.accounts[0].profile.modelEntitlement = { status: "available" };
+  source = modelSources({ providers: [], officialModels: [] }, { clients: [client] },
+    { home: f.home, env: {} }).find((p) => p.id === "native-zcode");
+  assert.deepEqual(source.models.map((m) => m.model), ["glm-fixture"]);
 });
 
 test("template-based official Anthropic API keys are recognized; third-party keys are not official accounts", (t) => {

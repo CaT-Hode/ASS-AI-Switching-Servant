@@ -10,10 +10,70 @@ const number = (v) => (typeof v === "number" || typeof v === "string" && v.trim(
 const positive = (v) => { const n = number(v); return n !== null && n >= 0 ? n : null; };
 const object = (v) => v && typeof v === "object" && !Array.isArray(v);
 const list = (v) => Array.isArray(v) ? v.slice(0, 100) : [];
+const startPlanSuccess = (payload) => object(payload) && payload.success !== false &&
+  (payload.code === undefined || payload.code === 0 || payload.code === 200);
 const time = (v) => {
   const ms = typeof v === "number" || typeof v === "string" && /^\d+(\.\d+)?$/.test(v) ? Number(v) * 1000 : Date.parse(v);
   return Number.isFinite(ms) && ms > 0 && ms < 8.64e15 ? new Date(ms).toISOString() : undefined;
 };
+const OFFICIAL_GLM_IDS = ["GLM-5.3", "GLM-5.3-Flash", "GLM-5V-Turbo", "GLM-5.2", "GLM-5.1",
+  "GLM-5.1-Highspeed", "GLM-5", "GLM-5-Turbo", "GLM-4.7", "GLM-4.7-FlashX", "GLM-4.7-Flash",
+  "GLM-4.6", "GLM-4.5-Air", "GLM-4.5", "GLM-4.6V", "GLM-4.6V-Flash", "GLM-4.6V-FlashX",
+  "GLM-4.1V-Thinking-FlashX", "GLM-4.1V-Thinking-Flash", "GLM-4-FlashX-250414",
+  "GLM-4-Flash-250414", "GLM-4V-Flash"];
+const OFFICIAL_GLM_BY_LOWER = new Map(OFFICIAL_GLM_IDS.map((id) => [id.toLowerCase(), id]));
+const cleanModelId = (value) => {
+  if (typeof value !== "string") return "";
+  const id = value.trim();
+  if (!id || id.length > 250 || /[\x00-\x1f\x7f]/.test(id)) return "";
+  return OFFICIAL_GLM_BY_LOWER.get(id.toLowerCase()) || id;
+};
+function startPlanEntitlement(payload, { now = Date.now(), responseTime } = {}) {
+  if (!startPlanSuccess(payload) || !object(payload.data) || !Array.isArray(payload.data.plans) ||
+      !Array.isArray(payload.data.balances)) throw Error("Start Plan 接口未返回完整套餐资料");
+  const d = payload.data;
+  const timestamp = Number.isFinite(responseTime) ? responseTime : number(d.server_time) !== null
+    ? Number(d.server_time) * 1000 : now;
+  const plans = list(d.plans).map((plan) => {
+    if (!object(plan)) return plan;
+    const end = time(plan.ends_at);
+    return plan.status?.trim().toLowerCase() === "active" && end && Date.parse(end) <= timestamp
+      ? { ...plan, status: "expired" } : plan;
+  });
+  const active = plans.filter((plan) => {
+    if (plan?.status?.trim().toLowerCase() !== "active") return false;
+    const planId = typeof plan.plan_id === "string" ? plan.plan_id.trim().toLowerCase() : "";
+    const name = typeof plan.name === "string" ? plan.name.trim().toLowerCase() : "";
+    return !planId && !name || [planId, name].some((value) => value.includes("start-plan") || value.includes("start plan"));
+  });
+  if (!active.length) return { status: "unavailable", models: [] };
+  const balances = list(d.balances).filter((balance) => {
+    if (!object(balance)) return false;
+    const owners = plans.filter((plan) => balance.user_plan_id && plan?.user_plan_id
+      ? plan.user_plan_id === balance.user_plan_id : plan?.plan_id === balance.plan_id);
+    return !owners.length || owners.some((plan) => plan?.status?.trim().toLowerCase() !== "expired");
+  });
+  const seen = new Set(), models = [];
+  for (const balance of balances) {
+    const fromCapabilities = (Array.isArray(balance.capabilities) ? balance.capabilities : [])
+      .map((capability) => typeof capability === "string" && capability.trim().toLowerCase().startsWith("model:")
+        ? capability.trim().slice("model:".length).trim() : "").filter(Boolean);
+    const candidates = fromCapabilities.length ? fromCapabilities : [balance.show_name || ""];
+    for (const candidate of candidates) {
+      const id = cleanModelId(candidate), key = id.toLowerCase();
+      if (!id || seen.has(key)) continue;
+      seen.add(key); models.push(id);
+    }
+  }
+  const effectiveTimes = active.flatMap((plan) => Array.isArray(plan.entitlements) && plan.entitlements.length
+    ? plan.entitlements.map((entry) => entry?.effective_at) : [plan.starts_at])
+    .map((value) => value === null || value === undefined || value === "" ? undefined : Number(value));
+  if (!models.length && effectiveTimes.length && effectiveTimes.every((value) =>
+    value !== undefined && Number.isFinite(value) && value * 1000 > timestamp)) {
+    return { status: "pending", models: [], effectiveAt: new Date(Math.min(...effectiveTimes) * 1000).toISOString() };
+  }
+  return models.length ? { status: "available", models } : { status: "available" };
+}
 function zcodeVersion(manager) {
   // Electron transparently reads ASAR paths. Do not run an executable to obtain
   // its version or invent an app_version to change the server's entitlement path.
@@ -87,6 +147,10 @@ function parseResponse(kind, request, response, options) {
   return request.run ? zcodeInfo.parse(request, response, options)
     : parse(kind === "zcode-account" ? "zcode-start" : kind, request.section, response.data, { ...options, responseTime: response.responseTime });
 }
+function modelEntitlement(kind, request, response, options) {
+  if (!["zcode-start", "zcode-account"].includes(kind) || request.run || request.section !== "usage") return null;
+  return startPlanEntitlement(response.data, { ...options, responseTime: response.responseTime });
+}
 function parse(kind, section, payload, { safeText, now = Date.now(), responseTime } = {}) {
   if (!object(payload)) throw Error("账户资料格式无效");
   const fields = [], add = (id, label, value, extra = {}) => {
@@ -126,7 +190,7 @@ function parse(kind, section, payload, { safeText, now = Date.now(), responseTim
       }
     }
   } else if (kind === "zcode-start") {
-    if (payload.code !== 0 || !object(payload.data) || !Array.isArray(payload.data.plans) || !Array.isArray(payload.data.balances))
+    if (!startPlanSuccess(payload) || !object(payload.data) || !Array.isArray(payload.data.plans) || !Array.isArray(payload.data.balances))
       throw Error("Start Plan 接口未返回完整套餐资料");
     const d = payload.data, timestamp = Number.isFinite(responseTime) ? responseTime : number(d.server_time) !== null ? Number(d.server_time) * 1000 : now;
     const plans = list(d.plans).filter((p) => p?.status?.trim().toLowerCase() === "active" &&
@@ -150,8 +214,19 @@ function parse(kind, section, payload, { safeText, now = Date.now(), responseTim
       // available_units deducts in-flight reservations and is NOT remaining.
       if (total > 0 && remaining !== null) quota("bucket-" + i, label, Math.max(0, (1 - remaining / total) * 100), b.expires_at);
     }
+    const entitlement = startPlanEntitlement(payload, { now, responseTime });
+    if (entitlement.status === "pending") {
+      add("start-model-status", "模型权益", "待生效");
+      date("start-model-effective", "权益生效", entitlement.effectiveAt);
+    } else if (entitlement.status === "available" && Array.isArray(entitlement.models)) {
+      add("start-model-count", "可用模型", entitlement.models.length + " 个");
+      add("start-models", "模型范围", entitlement.models.join(" · "));
+    } else if (entitlement.status === "available") {
+      add("start-model-status", "模型权益", "有效（接口未限定模型白名单）");
+    }
   }
   if (!fields.length) throw Error("接口未返回可识别的账户资料");
   return fields;
 }
-module.exports = { historyProvider, zcodeVersion, adapter, profile, requests, parse, parseResponse };
+module.exports = { historyProvider, zcodeVersion, adapter, profile, requests, parse, parseResponse,
+  modelEntitlement, startPlanEntitlement };

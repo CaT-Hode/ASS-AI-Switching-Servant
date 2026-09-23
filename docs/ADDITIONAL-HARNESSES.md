@@ -5,7 +5,7 @@
 | 客户端 | 当前能力 | 尚未完成 |
 | --- | --- | --- |
 | Kimi Code | 新旧版目录与原生账户识别；原生登录发起；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML、同步及撤回；本地 Wire Token 记录与首页统计；原生 API / 文件型 OAuth 逐模型直连检测 | 不落盘 Wire 的实验性会话存储；真实账户与完整 Agent 请求尚未验证 |
-| ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；Start Plan、个人 / Team Coding Plan、MCP 额度；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计；API / Start / 已缓存 Coding Plan Key 的逐模型直连检测 | 账户运行时权益模型；真实账户与完整 Agent 请求尚未验证 |
+| ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；Start Plan、个人 / Team Coding Plan、MCP 额度；当前账户 Start Plan 运行时模型权益；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计；API / Start / 已缓存 Coding Plan Key 的逐模型直连检测 | 真实账户与完整 Agent 请求尚未验证 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
 
@@ -40,6 +40,7 @@
 - 加量包按原接口固定精度换算，`amountLeft` 不存在时不假定余额为零；保留原币种，不与 Moonshot 通用 API 余额混淆。
 - ZCode Start Plan 使用会话 JWT 读取 `/api/v1/zcode-plan/billing/balance`。`app_version` 来自已识别 Desktop 的构建元数据或包信息；没有可信版本则不发这个请求，不借用 ASS 版本或写死一个新版本。Coding Plan / Team / MCP 不依赖此版本，CLI 也可单独查询。
 - Start Plan 按可明确归属的有效套餐、额度桶显示剩余 / 总额 / 已用与重置时间，不跨单位求和。剩余使用 `remaining_units`；`available_units` 会扣除进行中请求的预留量，不作为剩余的替代字段。过期与归属不明确的桶不混入当前额度。
+- Start Plan 成功查询后读取运行时模型白名单：优先采用额度桶 `capabilities` 中的 `model:` 项，没有时才回退 `show_name`。白名单只约束当前 OAuth 身份、同一数据目录及对应 `account:<family>-start-plan` 供应商；个人 / Team、其他目录和历史账户不受影响。有效套餐未返回白名单时继续使用本机目录，不误判为零模型；查询失败保留同一凭据上次成功白名单与原时间，登录令牌、客户端版本或账户变化后旧结果立即失效。
 - 个人 Coding Plan 读取订阅列表、5h / 周 Token 或 Credit 额度及月度工具额度；Team 读取具体组织 / 项目的套餐、有效期、成员分配状态和额度。两者分别展示，不以 `level` 字段猜测套餐有效性。接口 `percentage` 是已用比例，`nextResetTime` 是毫秒；缺少百分比或剩余量时不补零、不反算另一项。
 - Coding Plan 用量接口发送原生专用 API Key，不给它额外加 Bearer。Key 优先来自按 OAuth 身份、套餐和项目隔离的原生缓存；缺失时只 GET 当前用户的已有项目 Key 与明文副本，绝不 POST 创建、修改或持久化远端 Key。Team 需核对组织 / 项目成员关系，查询带 `type=2` 和对应 scope 头；Z.ai 与 BigModel 业务令牌分别使用各自原生前缀与官方域名。
 - 官方 MCP 单独读取 `/api/v1/mcp/usage` 的 `total_usage`，显示总额、已用、剩余和重置时间，不从旧版 buckets 或模型额度推算。采用 ZCode 会话 JWT + 同一身份的 MaaS 令牌，不混用 API Key 鉴权通道。个人、BigModel Team、Z.ai Team 各遵循原生 scope 头差异；套餐被明确判定失效时移除旧额度，查询失败则保留旧结果与原时间。
@@ -74,7 +75,7 @@
 - 合并模型通用规则、协议规则、端点规则、模板精确规则、供应商精确规则与个人覆盖。保留原生模型顺序、去重和停用 / 隐藏过滤；上下文、输出上限、思维档位、视觉 / 工具能力来自目录声明。未声明字段保持未知；不执行参数映射表达式，不把声明当成连接实测或套餐权益。ASS 自己写入的供应商继续按配置所有权过滤，避免重复展示。
 - 桌面版读取所选安装中的目录；活动缓存按当前平台、真实应用版本及服务地址隔离，并按原生 revision 选择。相同 revision 冲突优先内置目录，无效活动文件回退内置目录，不跨版本 / 服务地址扫描取最大版本。独立程序读取已落盘 bundled 副本，Node CLI 读取入口旁 `provider/zcode-builtin.json`；显式环境路径也可识别。CLI 无可信应用版本时不猜测活动缓存路径；尚未运行而没有落盘目录的单文件程序不会凭空生成模型。
 - 只读，不下载或改写原生缓存，不为读取目录刷新 OAuth。官方 `api.z.ai` / `open.bigmodel.cn` 的 Anthropic API 端点也可识别为原生 API 账户。目录解析失败保留可读取的个人模型；正则匹配有时间预算，损坏目录不阻塞主进程。
-- ZCode 原生运行时可再根据账户权益调整模型集合；本机目录不证明当前账号有权调用，也不显示未经读取的运行时模型。权益模型聚合仍待适配；可以对已列出的具体模型手动直连检测。
+- ZCode 当前账户成功读取 Start Plan 权益后，ASS 用运行时白名单过滤同一目录中的 Start Plan 模型，并在卡片与模型列表显示匹配数量。白名单中缺少本机目录元数据的模型会提示更新 / 刷新 ZCode，不伪造上下文、思维档位或可检测配置。个人 / Team 模型仍以原生静态目录和逐模型直连检测为准。
 
 ### 原生模型连接检测
 
@@ -92,6 +93,7 @@
 - [Kimi Code 数据位置](https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html)、[配置文件](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html)。源码 `MoonshotAI/kimi-code` 提交 `6451f1e056e90037bbf832f3578955cf8e55db64`：`packages/oauth/src/storage.ts`、`toolkit.ts`（逻辑 key 到存储 slot 的映射）、`types.ts`、`token-state.ts`、`packages/agent-core-v2/src/app/kosongConfig/configSection.ts`。旧 CLI 提交 `9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82`，`src/kimi_cli/config.py`、`auth/oauth.py`。
 - [ZCode 原生凭据](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts)、同目录 `credential-cipher.ts`；[供应商 / 模型规则](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/config/rule-data-schema.ts)。同提交的 `provider-config-file-codec.ts`、`provider-data-schema.ts`、`shared/src/model-config.ts` 定义写入格式；`model-execution.ts` 使用 Vercel AI SDK，Anthropic Base URL 保留 `/v1`。桌面目录与安装身份参照 `desktopDataBaseDirBootstrap.ts` 和 `desktop-product-identity.mjs`。
 - 模型目录覆盖顺序依据同提交 [Provider Resolver](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/resolver.ts)、`config/model-config.ts`、`owned-order.ts`；缓存选择依据 [Built-in Source](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider-node/src/zcode-builtin-provider-config-source.ts)、`zcode-builtin-cache-paths.ts`、`desktopProviderConfig.ts`、`provider-runtime-env.ts`。
+- Start Plan 动态模型范围依据同提交的 [Start Plan Billing](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/model-provider/zaiStartPlanBilling.ts) 与 [Provider Availability](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/model-provider/codingPlanProviderAvailability.ts)。ASS 只缓存经过清洗的状态、模型 ID 与查询时间，不保存响应体，也不写 ZCode 的账户供应商覆盖层。
 - Coding Plan / Team 依据同提交的 [Quota Provider](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/usage-stats/providers/bigmodelUsageQuotaProvider.ts)、`codingPlanEntitlement.ts`、`accountProviderCredentialKey.ts`、`accountProviderApiKeyResolver.ts`、`accountProviderTeamPlanRequestKey.ts`；MCP 依据 [MCP Quota Provider](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/usage-stats/providers/zcodeMcpQuotaProvider.ts)、`officialMcpCredentials.ts`。ASS 仅复用其中只读流程，不执行原生 Key 自动创建或额度重置动作。
 - 登录命令以同一提交的 [Kimi `login.ts`](https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/apps/kimi-code/src/cli/sub/login.ts)、[旧版 Kimi CLI](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/cli/__init__.py)、[ZCode `login-command.ts`](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/cli/src/login-command.ts) 为依据；ZCode `auth-login.ts` 会保存默认模型，`zcodeAgentProcessManager.ts` 定义桌面内置 CLI 的 Electron Node 启动方式。
 

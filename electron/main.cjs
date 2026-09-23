@@ -317,11 +317,6 @@ function snapshot() {
         };
       }
     }
-  // History cards are account UI only: never turn inactive grants into a native
-  // model source or read credentials from their former file location.
-  const sources = modelSources(publicState, clientState, {
-    home: harnesses.nativeHome, env: harnesses.nativeEnv, directories: providerModels,
-  });
   for (const client of clientState.clients) {
     oauthHistory?.decorate(client);
     for (const account of client.accounts) {
@@ -337,6 +332,13 @@ function snapshot() {
       } else account.quota = remote;
     }
   }
+  // History cards are account UI only: never turn inactive grants into a native
+  // model source or read credentials from their former file location. Build the
+  // source list after decorating the current account so a successful ZCode
+  // entitlement query can constrain only that account's Start Plan catalog.
+  const sources = modelSources(publicState, clientState, {
+    home: harnesses.nativeHome, env: harnesses.nativeEnv, directories: providerModels,
+  });
   return {
     ...publicState,
     sequence: ++snapshotSequence,

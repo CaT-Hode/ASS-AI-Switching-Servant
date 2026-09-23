@@ -748,6 +748,9 @@ export function Providers({
                     : p.catalogError}
                 </p>
               )}
+            {p.readOnly && p.entitlementNotice && (
+              <p className="catalog-caption" role="status">{p.entitlementNotice}</p>
+            )}
             {!p.models.length && (
               <p className="supplier-empty">
                 {p.readOnly

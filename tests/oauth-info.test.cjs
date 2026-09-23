@@ -13,9 +13,10 @@ const usage = { usages: { limit_5h: { used_ratio: .25, reset_time: "2026-09-24T2
   limit_month_code: { used_ratio: 0 } }, boosterWallet: { balance: { type: "BOOSTER", amount: 500000000, amountLeft: 125000000 },
   monthlyUsed: { currency: "CNY", priceInCents: 375 }, monthlyChargeLimitEnabled: false } };
 const balance = { code: 0, data: { server_time: now / 1000, plans: [
-  { plan_id: "start", user_plan_id: "start-1", name: "Start", status: "active", ends_at: now / 1000 + 86400 },
+  { plan_id: "zcode-v3-start-plan", user_plan_id: "start-1", name: "ZCode V3 Start Plan", status: "active", ends_at: now / 1000 + 86400 },
   { plan_id: "old", name: "Old", status: "active", ends_at: now / 1000 - 100 }], balances: [
-  { plan_id: "start", user_plan_id: "start-1", show_name: "GLM", total_units: 100, used_units: 20, reserved_units: 30,
+  { plan_id: "zcode-v3-start-plan", user_plan_id: "start-1", show_name: "GLM", total_units: 100, used_units: 20, reserved_units: 30,
+    capabilities: ["tool:web", "model:glm-5.3-flash", "model:GLM-5.2"],
     remaining_units: 80, available_units: 50, unit_type: "credits", expires_at: now / 1000 + 3600 },
   { plan_id: "old", remaining_units: 999, total_units: 1000 },
   { plan_id: "orphan", remaining_units: 444, total_units: 1000 } ] } };
@@ -59,7 +60,28 @@ test("ZCode uses remaining, not available, and never sums unmatched, expired or 
   const missing = structuredClone(balance); delete missing.data.balances[0].remaining_units;
   const result = fields(parse("zcode-start", "usage", missing));
   assert.equal(result["balance-bucket-0"], undefined); assert.equal(result["quota-bucket-0"], undefined);
+  assert.equal(f["start-model-count"].value, "2 个");
+  assert.equal(f["start-models"].value, "GLM-5.3-Flash · GLM-5.2");
   assert.throws(() => parse("zcode-start", "usage", { ...balance, code: 500 }));
+});
+test("ZCode Start Plan model entitlement follows runtime whitelist and preserves no-whitelist semantics", () => {
+  assert.deepEqual(extra.startPlanEntitlement(balance, { now }), {
+    status: "available", models: ["GLM-5.3-Flash", "GLM-5.2"],
+  });
+  const fallback = structuredClone(balance);
+  fallback.data.balances[0].capabilities = ["tool:web"];
+  fallback.data.balances[0].show_name = "glm-4.7-flashx";
+  assert.deepEqual(extra.startPlanEntitlement(fallback, { now }).models, ["GLM-4.7-FlashX"]);
+  const open = structuredClone(balance); open.data.balances = [];
+  assert.deepEqual(extra.startPlanEntitlement(open, { now }), { status: "available" });
+  open.data.plans[0].entitlements = [{ effective_at: now / 1000 + 3600 }];
+  assert.equal(extra.startPlanEntitlement(open, { now }).status, "pending");
+  open.data.plans[0].status = "expired";
+  assert.deepEqual(extra.startPlanEntitlement(open, { now }), { status: "unavailable", models: [] });
+  const success200 = structuredClone(balance); success200.code = 200;
+  assert.equal(extra.startPlanEntitlement(success200, { now }).status, "available");
+  success200.success = false;
+  assert.throws(() => extra.startPlanEntitlement(success200, { now }));
 });
 test("only exact official HTTPS URLs qualify and ZCode requires a real detected version", () => {
   for (const baseUrl of ["https://api.kimi.com.evil.test/coding/v1", "http://api.kimi.com/coding/v1", "https://api.kimi.com/coding/v1?token=x"])
@@ -88,6 +110,28 @@ test("identity and usage query concurrently, retain partial failures separately,
   assert.doesNotMatch(partial.error, /synthetic/);
   assert.doesNotMatch(fs.readFileSync(f.info.file, "utf8"), /Alice|example|synthetic/);
   const restored = new AccountInfo(f.options); assert.equal(fields(restored.public(kimi).fields).email.value, "alice@example.test");
+});
+test("ZCode runtime model entitlement persists per credential and failed refresh retains the last successful result", async (t) => {
+  let failure = false;
+  const f = fixture(t, async () => failure
+    ? new Response("private", { status: 503 })
+    : Response.json(balance, { headers: { date: new Date(now).toUTCString() } }));
+  const provider = { id: "zcode-a", subscriptionKind: "zcode-start", baseUrl: "https://zcode.z.ai",
+    apiKey: "synthetic-zcode-session", network: "system", models: [], appVersion: "3.14.0" };
+  f.providers.push(provider);
+  assert.equal((await f.info.refresh(provider.id)).ok, true);
+  let profile = f.info.public(provider);
+  assert.deepEqual(profile.modelEntitlement.models, ["GLM-5.3-Flash", "GLM-5.2"]);
+  assert.equal(profile.modelEntitlement.status, "available");
+  const restored = new AccountInfo(f.options);
+  assert.deepEqual(restored.public(provider).modelEntitlement.models, profile.modelEntitlement.models);
+  f.tick(); failure = true;
+  assert.equal((await f.info.refresh(provider.id)).ok, false);
+  profile = f.info.public(provider);
+  assert.deepEqual(profile.modelEntitlement.models, ["GLM-5.3-Flash", "GLM-5.2"]);
+  assert.match(profile.error, /503/);
+  provider.apiKey = "synthetic-zcode-session-changed";
+  assert.equal(f.info.public(provider).modelEntitlement, undefined);
 });
 test("query result cannot overwrite a changed account, and switching tokens never borrows cached identity", async (t) => {
   let release; const waiting = new Promise((r) => { release = r; });

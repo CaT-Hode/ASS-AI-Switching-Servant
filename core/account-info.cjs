@@ -420,6 +420,18 @@ const fingerprint = (p) =>
         ...(p.subscriptionKind === "zcode-account" ? [p.family, p.oauthAccess, p.coding] : [])]),
     )
     .digest("hex");
+function cachedModelEntitlement(entry) {
+  const section = entry?.sections?.usage, value = section?.modelEntitlement;
+  if (!value || !["available", "pending", "unavailable"].includes(value.status)) return null;
+  const result = { status: value.status, updatedAt: section.updatedAt };
+  if (Array.isArray(value.models)) {
+    const models = [...new Set(value.models.filter((id) => typeof id === "string" && id.trim() &&
+      id.length <= 250 && !/[\x00-\x1f\x7f]/.test(id)).map((id) => id.trim()))].slice(0, 100);
+    result.models = models;
+  }
+  if (value.status === "pending" && iso(value.effectiveAt)) result.effectiveAt = iso(value.effectiveAt);
+  return result;
+}
 class AccountInfo {
   constructor({
     dataDir,
@@ -471,6 +483,7 @@ class AccountInfo {
       entry = this.cache[provider.id],
       key = fingerprint(provider);
     const valid = entry?.fingerprint === key && Array.isArray(entry.fields);
+    const modelEntitlement = valid ? cachedModelEntitlement(entry) : null;
     return {
       ...base,
       ...(valid
@@ -480,6 +493,7 @@ class AccountInfo {
             remote: true,
             updatedAt: entry.updatedAt,
             stale: this.now() - Date.parse(entry.updatedAt) > 15 * 60000,
+            ...(modelEntitlement ? { modelEntitlement } : {}),
           }
         : {}),
       error: this.errors.get(key),
@@ -597,10 +611,11 @@ class AccountInfo {
       const { section, url } = request;
       try {
         const response = request.run ? await request.run(get, protect) : await get(url);
-        const fields = oauthInfo.parseResponse(kind, request, response, {
-          safeText: (v) => text(v, [...secrets]), now: this.now(),
-        });
-        return { section, fields, updatedAt: new Date(this.now()).toISOString() };
+        const options = { safeText: (v) => text(v, [...secrets]), now: this.now() };
+        const fields = oauthInfo.parseResponse(kind, request, response, options);
+        const modelEntitlement = oauthInfo.modelEntitlement(kind, request, response, options);
+        return { section, fields, ...(modelEntitlement ? { modelEntitlement } : {}),
+          updatedAt: new Date(this.now()).toISOString() };
       } catch (e) {
         const label = request.label || (section === "identity" ? "账户资料" : "额度");
         const message = ["HTTP 401", "HTTP 403"].includes(e.message)
@@ -613,7 +628,8 @@ class AccountInfo {
     if (!current || fingerprint(current) !== key) return { ok: false, message: "账户配置已变化，请重新查询" };
     const previous = this.cache[p.id]?.fingerprint === key ? this.cache[p.id] : null;
     const sections = { ...previous?.sections };
-    for (const r of results) if (!r.error) sections[r.section] = { fields: r.fields, updatedAt: r.updatedAt };
+    for (const r of results) if (!r.error) sections[r.section] = { fields: r.fields, updatedAt: r.updatedAt,
+      ...(r.modelEntitlement ? { modelEntitlement: r.modelEntitlement } : {}) };
     const errors = results.filter((r) => r.error).map((r) => r.error);
     if (errors.length) this.errors.set(key, errors.join("；")); else this.errors.delete(key);
     if (results.some((r) => !r.error)) {

@@ -247,6 +247,43 @@ function nativeTargetId(client, account, model) {
     .update(JSON.stringify([account.id, account.sourcePath, model.nativeProvider || ""]))
     .digest("hex").slice(0, 32);
 }
+const nativeScope = (account) => createHash("sha256")
+  .update(String(account.nativeDir || path.dirname(account.sourcePath || "")))
+  .digest("hex").slice(0, 20);
+function applyZCodeEntitlement(client, rows) {
+  if (client.id !== "zcode") return { rows };
+  const current = client.accounts.find((account) => account.oauthCurrent === true &&
+    ["zai", "bigmodel"].includes(account.provider) && account.profile?.modelEntitlement);
+  const entitlement = current?.profile?.modelEntitlement;
+  if (!current || !entitlement || !["available", "pending", "unavailable"].includes(entitlement.status)) return { rows };
+  const target = `account:${current.provider}-start-plan`, scope = nativeScope(current);
+  const applies = (row) => row.nativeProvider === target && row.nativeScope === scope;
+  if (entitlement.status !== "available") return {
+    rows: rows.filter((row) => !applies(row)),
+    entitlement,
+    caption: entitlement.status === "pending" ? "当前账户 Start Plan 模型权益待生效" : "当前账户没有有效 Start Plan",
+  };
+  if (!Array.isArray(entitlement.models)) return {
+    rows,
+    entitlement,
+    caption: "当前账户 Start Plan 有效；接口未限定模型白名单",
+  };
+  const wanted = new Map(entitlement.models.map((id, index) => [id.toLowerCase(), index]));
+  const matched = new Set();
+  const selected = rows.filter((row) => {
+    if (!applies(row)) return true;
+    const key = row.model.toLowerCase(), keep = wanted.has(key);
+    if (keep) matched.add(key);
+    return keep;
+  }).map((row) => applies(row) ? { ...row, entitled: true,
+    nativeAccountLabel: current.label || row.nativeAccountLabel,
+    catalogSource: "ZCode 当前账户 Start Plan 权益 · 上次成功查询" } : row);
+  selected.sort((a, b) => applies(a) && applies(b)
+    ? wanted.get(a.model.toLowerCase()) - wanted.get(b.model.toLowerCase()) : 0);
+  const unresolved = entitlement.models.filter((id) => !matched.has(id.toLowerCase()));
+  return { rows: selected, entitlement, unresolved,
+    caption: `当前账户 Start Plan 权益 · ${matched.size}/${entitlement.models.length} 个模型已匹配本机目录` };
+}
 function modelSources(
   store,
   harnesses,
@@ -278,9 +315,14 @@ function modelSources(
         nativeModels(client, a, home || "", env)) {
         const diagnosticProviderId = nativeTargetId(client, a, m);
         models.set(diagnosticProviderId + "::" + m.model, {
-          ...m, diagnosticProviderId, nativeAccountLabel: a.label || "",
+          ...m, diagnosticProviderId, nativeAccountLabel: a.label || "", nativeScope: nativeScope(a),
         });
       }
+    const runtime = applyZCodeEntitlement(client, [...models.values()]);
+    const rows = runtime.rows.map(({ nativeScope: _nativeScope, ...model }) => model);
+    const directoryError = directory?.error;
+    const entitlementNotice = runtime.unresolved?.length
+      ? `当前权益中的 ${runtime.unresolved.length} 个模型缺少本机目录元数据；请更新或刷新 ZCode 模型目录。` : undefined;
     sources.push({
       id: "native-" + client.id,
       name: client.name + " · 原生账户",
@@ -288,14 +330,16 @@ function modelSources(
       readOnly: true,
       enabled: true,
       accountCount: accounts.filter((a) => !a.catalogOnly).length,
-      catalogError: directory?.error,
+      catalogError: directoryError,
+      entitlementNotice,
+      modelEntitlement: runtime.entitlement,
       catalogSource:
-        [
+        [runtime.caption,
           ...new Set(
-            [...models.values()].map((m) => m.catalogSource || "本机配置声明"),
+            rows.map((m) => m.catalogSource || "本机配置声明"),
           ),
-        ].join(" · ") || "本机目录未找到，可在原生客户端刷新模型后重试",
-      models: [...models.values()],
+        ].filter(Boolean).join(" · ") || "本机目录未找到，可在原生客户端刷新模型后重试",
+      models: rows,
     });
   }
   return sources;
