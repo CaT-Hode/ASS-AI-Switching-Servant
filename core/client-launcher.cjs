@@ -24,7 +24,10 @@ function stat(file) {
 }
 function json(file) {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    const info = stat(file);
+    if (!info?.isFile() || info.size > 512 * 1024) return {};
+    const value = JSON.parse(fs.readFileSync(file, "utf8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   } catch {
     return {};
   }
@@ -88,6 +91,26 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
   // Electron Desktop is not the CLI: it ignores auth/model arguments and uses
   // a shared application profile. Detect it without launching it or injecting
   // account-specific settings into the user's existing desktop instance.
+  if (harness === "antigravity") {
+    const files = info.isDirectory() ? ["Antigravity.exe", "Antigravity IDE.exe"].map((name) => path.join(location, name)) : [location];
+    for (const desktop of files) {
+      if (!stat(desktop)?.isFile() || !/^antigravity(?: ide)?\.exe$/i.test(path.basename(desktop))) continue;
+      const root = path.dirname(desktop);
+      // A renamed EXE or an arbitrary Electron app is not evidence of an
+      // Antigravity install. Electron reads ASAR paths without extracting them.
+      const manifest = ["resources/app.asar/package.json", "resources/app/package.json"].map((f) => json(path.join(root, f)))
+        .find((p) => p.name === "antigravity" && p.productName === "Antigravity");
+      const product = json(path.join(root, "resources/app/product.json"));
+      const ide = [product.nameShort, product.nameLong].some((name) => ["Antigravity", "Antigravity IDE"].includes(name)) &&
+        ["antigravity", "antigravity-ide"].includes(product.applicationName);
+      if (!manifest && !ide) return fail("未找到 Antigravity 产品元数据，请选择实际安装目录");
+      const variant = manifest ? "desktop" : "ide";
+      const version = manifest?.version || json(path.join(root, "resources/app/package.json")).version;
+      return { ...fail(variant === "ide" ? "Antigravity IDE · 原生账户" : "Antigravity 2.0 · 原生账户"),
+        installed: true, kind: "desktop", desktopExecutable: desktop, nativeVariant: variant,
+        ...(typeof version === "string" && /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version) ? { version } : {}) };
+    }
+  }
   if (harness === "zcode") {
     const desktop = info.isDirectory() ? ["ZCode.exe", "ZCode Preview.exe"].map((name) => path.join(location, name))
       .find((file) => stat(file)?.isFile()) : location;
@@ -189,8 +212,13 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
 function searchLocations(harness, env = process.env) {
   const home = env.USERPROFILE || os.homedir();
   const locations = [findExecutable(COMMANDS[harness] || harness, env)];
-  if (harness === "antigravity" && env.LOCALAPPDATA)
-    locations.push(path.join(env.LOCALAPPDATA, "agy", "bin", "agy.exe"));
+  if (harness === "antigravity") {
+    if (env.LOCALAPPDATA) locations.push(path.join(env.LOCALAPPDATA, "agy", "bin", "agy.exe"));
+    for (const root of [env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "Programs"), env.ProgramFiles, env["ProgramFiles(x86)"]].filter(Boolean))
+      for (const name of ["Antigravity", "Antigravity IDE"])
+        locations.push(path.join(root, name, name + ".exe"));
+    if (env.ProgramFiles) locations.push(path.join(env.ProgramFiles, "Google/antigravity-cli/agy.exe"));
+  }
   if (harness === "zcode") {
     for (const base of [env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "Programs"), env.ProgramFiles, env["ProgramFiles(x86)"]].filter(Boolean))
       for (const name of ["ZCode", "ZCode Preview"])

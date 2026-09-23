@@ -9,6 +9,7 @@ const { text, claims } = require("./account-info.cjs");
 const { EFFORTS } = require("./models.cjs");
 const zcode = require("./zcode-config.cjs");
 const zcodeCatalog = require("./zcode-catalog.cjs");
+const antigravity = require("./antigravity-status.cjs");
 const { decryptZCode, kimiReference, publicGrant, status: authorization } = require("./additional-oauth.cjs");
 
 const SPECS = [
@@ -17,7 +18,7 @@ const SPECS = [
   { id: "antigravity", name: "Antigravity", command: "agy" },
 ].map((s) => ({ ...s, oauth: ["kimi", "zcode"].includes(s.id), nativeLoginOnly: true,
   injectionUnsupported: ["kimi", "zcode"].includes(s.id) ? undefined : s.id === "antigravity"
-    ? "此版本识别 agy CLI 配置。OAuth 由系统密钥库管理；IDE 账户与配置接入尚未适配。"
+    ? "支持原生账户识别；Antigravity 的第三方供应商接入与账户切换暂未适配。"
     : "此版本仅识别原生账户与模型；账户切换与配置接入尚未适配。" }));
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const has = (v) => typeof v === "string" && !!v.trim();
@@ -43,6 +44,7 @@ function read(file, format = "json") {
 }
 const resolved = (dir, home) => path.resolve(dir.replace(/^~(?=[/\\]|$)/, home));
 function locations(id, { home, env = {}, override }) {
+  if (id === "antigravity") return antigravity.locations({ home, override });
   if (override) {
     const dir = resolved(override, home), same = (p) => p && resolved(p, home).toLowerCase() === dir.toLowerCase();
     const legacy = path.basename(dir) === ".kimi" || same(env.KIMI_SHARE_DIR) ? true :
@@ -54,7 +56,6 @@ function locations(id, { home, env = {}, override }) {
     { dir: resolved(env.KIMI_SHARE_DIR || path.join(home, ".kimi"), home), legacy: true },
   ].filter((v, i, a) => a.findIndex((w) => w.dir.toLowerCase() === v.dir.toLowerCase()) === i);
   if (id === "zcode") return zcode.locations({ home, env }, (file) => read(file).data);
-  if (id === "antigravity") return [{ dir: path.join(home, ".gemini", "antigravity-cli") }];
   throw Error("未知原生客户端");
 }
 function official(base, service) {
@@ -220,22 +221,11 @@ function inspectZCode({ dir, bootstrap, issue }, { env, now, override, launcher 
       [["name", "名称", t.user.displayName || t.user.username], ["accountId", "用户 ID", t.user.id]], secrets));
   return { sources, accounts, modelAccounts: models.length ? [catalog("zcode", dir, file, models)] : [] };
 }
-function inspectAntigravity({ dir }, { env }) {
-  const config = read(path.join(dir, "settings.json")), sources = [config], accounts = [];
-  if (config.data?.modelProvider === "gemini") {
-    if (has(env.GEMINI_API_KEY) && (!env.GOOGLE_GEMINI_BASE_URL || official(env.GOOGLE_GEMINI_BASE_URL, "gemini")))
-      accounts.push(account("antigravity", dir, "环境变量 GEMINI_API_KEY", "gemini", "Gemini API", apiAuth,
-        [["keyEnvironment", "密钥变量", "GEMINI_API_KEY"]]));
-  } else if (config.data) {
-    sources.push({ file: "Windows 凭据管理器 / 系统密钥库", status: "external",
-      message: "Antigravity OAuth 使用系统密钥库；未读取或推断登录身份" });
-  }
-  return { sources, accounts, modelAccounts: [] };
-}
 function inspect(id, options) {
   const input = { env: {}, now: Date.now(), ...options };
-  const inspectOne = { kimi: inspectKimi, zcode: inspectZCode, antigravity: inspectAntigravity }[id];
-  const results = locations(id, input).map((location) => inspectOne(location, input));
+  const inspectOne = { kimi: inspectKimi, zcode: inspectZCode }[id];
+  const results = id === "antigravity" ? [antigravity.inspect(input, read, account)] :
+    locations(id, input).map((location) => inspectOne(location, input));
   // Do not return parsed files: they contain raw credentials and arbitrary fields.
   return { sources: results.flatMap((r) => r.sources).map(({ file, status, message = "" }) => ({ file, status, message })),
     accounts: results.flatMap((r) => r.accounts).filter(Boolean), modelAccounts: results.flatMap((r) => r.modelAccounts) };

@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Kimi Code | 新旧版目录与原生账户识别；原生登录发起；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML、同步及撤回；本地 Wire Token 记录与首页统计；原生 API / 文件型 OAuth 逐模型直连检测 | 不落盘 Wire 的实验性会话存储；真实账户与完整 Agent 请求尚未验证 |
 | ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；Start Plan、个人 / Team Coding Plan、MCP 额度；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计；API / Start / 已缓存 Coding Plan Key 的逐模型直连检测 | CLI 的 Start Plan 版本适配、账户运行时权益模型；真实账户与完整 Agent 请求尚未验证 |
-| Antigravity | `agy` 命令、Windows LocalAppData 下的 CLI；`.gemini/antigravity-cli/settings.json`；Gemini API 模式 | IDE 适配、系统密钥库 OAuth 读取 / 切换、模型配置写入、请求测试、用量与额度 |
+| Antigravity | CLI、2.0 Desktop / IDE 安装入口识别；Gemini API 模式；Windows 指定凭据条目与原生文件回退的共享 OAuth 读取；已有用户、套餐、项目、区域与令牌到期信息 | 共享 OAuth 的保存 / 切换、旧 IDE 专有存储、模型配置写入、请求测试、用量与额度；尚未在真实安装及账户上联调 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
 
@@ -16,7 +16,7 @@
 - Kimi 新旧数据目录分开识别，不互相借用 token；自定义目录不猜测版本。只读取配置引用的同目录 OAuth 文件；拒绝路径穿越、非文件存储、冲突凭据配置。撤销 tombstone 不产生账户，过期 / 待刷新明确保留状态。
 - ZCode 解密遵循原生实现：自定义 `ZCODE_CREDENTIAL_SECRET` 或 OS 平台 / 真实 home / 用户名派生密钥，覆写数据根目录不改变密钥身份。只读取官方 OAuth 命名空间及当前身份 / 项目对应的 Coding Plan Key，忽略第三方 MCP 授权及无关凭据；解密失败不伪造账户。用户资料仅展示同一命名空间缓存中的白名单字段，不推断套餐。
 - 只有精确官方 HTTPS 端点的 API 才成为客户端账户。第三方配置模型单独聚合；模型声明不增加账户计数。未声明的上下文、协议、思维能力保持未知，不套用猜测值。
-- Antigravity 的 `GEMINI_API_KEY` 只有在 `modelProvider = "gemini"` 时生效；`GOOGLE_API_KEY` 不算登录。官方 OAuth 使用系统密钥库，不读取 Gemini CLI 的 `oauth_creds.json` 代替。
+- Antigravity 的 `GEMINI_API_KEY` 只有在 `modelProvider = "gemini"` 时生效；`GOOGLE_API_KEY` 不算登录。仅查询 Windows 的 `gemini:antigravity` 条目与原生文件回退，不枚举其他系统凭据，不读取 Gemini CLI 的 `oauth_creds.json` 代替。共享 OAuth 不因同时存在 CLI / Desktop / IDE 而重复生成账户。来源、读取优先级及支持边界见 [Antigravity 原生识别](antigravity-native.md)。
 - 前端及后端共同限制尚未实现的账户选择 / 启动操作；Antigravity 仍只读。旧版五 / 六客户端接入状态可直接读取，新增客户端默认关闭，不触发自动写入原生配置。
 
 ## OAuth 账户切换

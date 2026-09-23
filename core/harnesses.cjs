@@ -400,7 +400,15 @@ class HarnessManager {
       if (!this.state.executables[id] || id === "opencode") this.detect(id);
     }
     const pi = this.launcher("pi");
-    this.piProviders = await piOAuthProviders(pi.ready ? pi.entryPoint : "");
+    const antigravity = require("./antigravity-status.cjs");
+    const context = { home: this.nativeHome, override: this.state.credentialHomes.antigravity,
+      launcher: this.launcher("antigravity") };
+    const [piProviders, antigravityKeyring] = await Promise.all([
+      piOAuthProviders(pi.ready ? pi.entryPoint : ""),
+      antigravity.shouldReadKeyring(context) ? antigravity.readKeyring() : null,
+    ]);
+    this.piProviders = piProviders;
+    this.antigravityKeyring = antigravityKeyring;
   }
   oauthHistorySources() {
     const native = ["kimi", "zcode"].flatMap((id) => additional.locations(id, {
@@ -484,6 +492,10 @@ class HarnessManager {
       ...(this.discovery[harness] || []),
     ];
     const desktop = candidates.find((c) => c.kind === "desktop");
+    const selectedDesktop = selected && resolveLauncher(harness, selected, this.launchEnv).kind === "desktop";
+    if (harness === "antigravity" && !selectedDesktop &&
+        new Set(candidates.filter((c) => c.kind === "desktop").map((c) => c.desktopExecutable?.toLowerCase())).size > 1)
+      return null;
     // Recheck immediately before exposing/opening an executable; no stale paths.
     if (!desktop) return null;
     const current = resolveLauncher(
@@ -555,7 +567,8 @@ class HarnessManager {
         if (s.nativeLoginOnly) {
           const launcher = this.launcher(s.id);
           const native = additional.inspect(s.id, { home: this.nativeHome, env: this.nativeEnv,
-            override: this.state.credentialHomes[s.id], launcher });
+            override: this.state.credentialHomes[s.id], launcher,
+            ...(s.id === "antigravity" ? { keyring: this.antigravityKeyring } : {}) });
           const ownedCache = new Map();
           const owned = (file, provider) => {
             const key = JSON.stringify([file, provider]);
@@ -566,9 +579,10 @@ class HarnessManager {
           const modelAccounts = native.modelAccounts.map((a) => ({ ...a,
             declaredModels: a.declaredModels.filter((m) => !owned(a.sourcePath, m.nativeProvider)) }));
           return { ...s, detected: !!(launcher.ready || launcher.installed ||
-              this.discovery[s.id]?.some((c) => resolveLauncher(s.id, c.location, this.launchEnv).ready) ||
+              this.discovery[s.id]?.some((c) => { const current = resolveLauncher(s.id, c.location, this.launchEnv);
+                return current.ready || current.installed; }) ||
               native.sources.some((source) => source.status !== "missing")),
-            executable: launcher.executable, launcher, selected: "", desktop: null,
+            executable: launcher.executable, launcher, selected: "", desktop: this.desktop(s.id),
             accountServices: [], oauthProviders: [], availableApiAccounts: [],
             credentialHome: this.state.credentialHomes[s.id] || "", credentialSources: native.sources,
             nativeVariant: s.id === "kimi" ? this.state.nativeVariants.kimi || "auto" : undefined,

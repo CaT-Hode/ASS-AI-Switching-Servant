@@ -150,3 +150,32 @@ test("OpenCode ASAR virtual-directory metadata is recognized in Electron as well
   write("desktop/resources/app.asar/package.json", JSON.stringify({name:"@opencode-ai/desktop"}));
   assert.equal(resolveLauncher("opencode", path.join(root,"desktop/OpenCode.exe"),env).kind,"desktop");
 });
+
+test("Antigravity Hub, IDE and CLI are distinct install candidates outside PATH", (t) => {
+  const { root, write, env } = fixture(t);
+  const hub = "local/Programs/Antigravity", ide = "local/Programs/Antigravity IDE";
+  write(hub + "/Antigravity.exe");
+  write(hub + "/resources/app.asar/package.json", JSON.stringify({ name: "antigravity", productName: "Antigravity", version: "2.16.0" }));
+  write(ide + "/Antigravity IDE.exe");
+  write(ide + "/resources/app/product.json", JSON.stringify({ nameShort: "Antigravity IDE", applicationName: "antigravity-ide" }));
+  write("local/agy/bin/agy.exe");
+  const candidates = discoverLaunchers("antigravity", { ...env, LOCALAPPDATA: path.join(root, "local") });
+  assert.equal(candidates.length, 3);
+  assert.equal(candidates.filter((c) => c.ready).length, 1);
+  assert.deepEqual(candidates.filter((c) => c.kind === "desktop").map((c) => c.nativeVariant), ["desktop", "ide"]);
+  assert.equal(candidates.find((c) => c.nativeVariant === "desktop").version, "2.16.0");
+  for (const c of candidates.filter((c) => c.kind === "desktop")) {
+    assert.equal(c.ready, false); assert.equal(c.executable, ""); assert.equal(c.installed, true);
+    assert.equal(resolveLauncher("antigravity", path.dirname(c.desktopExecutable), env).kind, "desktop");
+  }
+});
+
+test("a renamed or metadata-less Antigravity EXE is not treated as a desktop or CLI install", (t) => {
+  const { root, write, env } = fixture(t);
+  write("other/Antigravity.exe");
+  write("other/resources/app/package.json", JSON.stringify({ name: "another-app", productName: "Other" }));
+  assert.equal(resolveLauncher("antigravity", path.join(root, "other/Antigravity.exe"), env).kind, "missing");
+  write("other/resources/app/package.json", "null");
+  write("other/resources/app/product.json", "null");
+  assert.equal(resolveLauncher("antigravity", path.join(root, "other/Antigravity.exe"), env).kind, "missing");
+});
