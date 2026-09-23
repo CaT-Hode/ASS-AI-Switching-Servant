@@ -5,6 +5,7 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { read, document, edit, hash, safePath } = require("./native-fields.cjs");
 const { text, claims } = require("./account-info.cjs");
+const zcodeInfo = require("./zcode-account-info.cjs");
 const SUPPORTED = new Set(["kimi", "zcode"]);
 const has = (v) => typeof v === "string" && !!v.trim();
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
@@ -90,7 +91,8 @@ function zcodeIdentity(provider, user) {
 function publicGrant(harness, provider, grant, now) {
   if (harness === "kimi") return { ...status(grant.access_token, grant.refresh_token, grant.expires_at, now),
     provider, label: "Kimi Code", profile: { source: "local", docs: ["kimi"], fields: [] } };
-  const user = zcodeUser(grant), secrets = [grant.access_token, grant.refresh_token, grant.session_token];
+  const user = zcodeUser(grant), secrets = [grant.access_token, grant.refresh_token, grant.session_token,
+    ...(Array.isArray(grant.coding) ? grant.coding.map((c) => c?.apiKey) : [])];
   const fields = provider === "zai" && has(user.user_id)
     ? [["email", "邮箱", user.email], ["name", "名称", user.name], ["accountId", "用户 ID", user.user_id]]
     : [["name", "名称", user.displayName || user.username], ["accountId", "用户 ID", user.id]];
@@ -132,20 +134,26 @@ function readSource(source) {
   } else {
     auth = part(sourceFile(source));
     if (Object.values(auth.data).some((v) => typeof v !== "string")) throw Error("ZCode 凭据格式无法识别");
+    // Selection is query context only. Account switching still writes OAuth
+    // fields exclusively; it never restores a different user's project config.
+    try { config = part(path.join(source.dir, "setting.json")); } catch { config = { data: {}, text: null }; }
     const value = (key) => decryptZCode(auth.data[key], source.env);
     const provider = value("oauth:active_provider");
     if (["zai", "bigmodel"].includes(provider)) {
       const grant = { access_token: value(`oauth:${provider}:access_token`),
         refresh_token: value(`oauth:${provider}:refresh_token`), user_info: value(`oauth:${provider}:user_info`),
         session_token: value("zcodejwttoken"), attribution: value("oauth:login_attribution") };
-      const row = publicGrant("zcode", provider, grant), user = zcodeUser(grant);
+      const user = zcodeUser(grant);
       if (has(grant.access_token) && has(grant.session_token) && zcodeIdentity(provider, user)) {
         const env = source.env || {};
         const official = (!env.ZCODE_ENV || env.ZCODE_ENV === "production") &&
           [env.ZCODE_BASE_URL, env.ZCODE_ENDPOINT_ORIGIN].every((v) => !v || endpoint(v) === "https://zcode.z.ai");
+        const coding = official && zcodeInfo.official(env, provider);
+        if (coding) grant.coding = zcodeInfo.capture(provider, zcodeIdentity(provider, user), config.data, value);
+        const row = publicGrant("zcode", provider, grant);
         grants.push({ row, grant, identity: stamp(["zcode", provider, zcodeIdentity(provider, user)]),
           grantKey: stamp(["zcode", provider, grant.refresh_token || grant.access_token]),
-          query: official ? { kind: "zcode-start", baseUrl: "https://zcode.z.ai" } : null });
+          query: official ? { kind: coding ? "zcode-account" : "zcode-start", baseUrl: "https://zcode.z.ai" } : null });
       }
     }
   }

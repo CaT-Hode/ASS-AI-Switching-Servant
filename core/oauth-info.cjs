@@ -3,6 +3,7 @@
 const fs = require("node:fs"), path = require("node:path");
 const { safePath } = require("./native-fields.cjs");
 const { subscriptionProvider } = require("./subscription-usage.cjs");
+const zcodeInfo = require("./zcode-account-info.cjs");
 const KIMI_BASES = new Set(["https://api.kimi.com/coding/v1", "https://api.kimi.ai/coding/v1"]);
 const version = (v) => typeof v === "string" && /^\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/.test(v) ? v : null;
 const number = (v) => (typeof v === "number" || typeof v === "string" && v.trim() !== "") && Number.isFinite(Number(v)) ? Number(v) : null;
@@ -47,30 +48,42 @@ function historyProvider(history, manager, harness, recordId) {
   if (!["kimi", "zcode"].includes(harness)) return subscriptionProvider(harness, entry.provider, grant, id);
   const q = entry.query;
   if (!q || (harness === "kimi" ? q.kind !== "kimi-code" || !KIMI_BASES.has(q.baseUrl)
-    : q.kind !== "zcode-start" || q.baseUrl !== "https://zcode.z.ai")) return null;
+    : !["zcode-start", "zcode-account"].includes(q.kind) || q.baseUrl !== "https://zcode.z.ai")) return null;
   const apiKey = harness === "kimi" ? grant.access_token : grant.session_token;
   if (typeof apiKey !== "string" || !apiKey || apiKey.length > 65536) return null;
   const appVersion = harness === "zcode" ? zcodeVersion(manager) : undefined;
-  return { id, subscriptionKind: q.kind, baseUrl: q.baseUrl, apiKey, network: "system", models: [],
-    appVersion, queryBlocked: harness === "zcode" && !appVersion ? "识别 ZCode Desktop 版本后可查询 Start Plan 额度" : "" };
+  const extra = q.kind === "zcode-account" ? { family: entry.provider, oauthAccess: grant.access_token,
+    coding: (Array.isArray(grant.coding) ? grant.coding : []).map(zcodeInfo.context).filter(Boolean).slice(0, 2) } : {};
+  const p = { id, subscriptionKind: q.kind, baseUrl: q.baseUrl, apiKey, network: "system", models: [], appVersion, ...extra };
+  p.queryBlocked = harness === "zcode" && !appVersion && !zcodeInfo.requests(p).length
+    ? "识别 ZCode Desktop 版本或 Coding Plan 连接后可查询额度" : "";
+  return p;
 }
 function adapter(p) {
   return p.subscriptionKind === "kimi-code" && KIMI_BASES.has(p.baseUrl) ? "kimi-code"
-    : p.subscriptionKind === "zcode-start" && p.baseUrl === "https://zcode.z.ai" ? "zcode-start" : null;
+    : ["zcode-start", "zcode-account"].includes(p.subscriptionKind) && p.baseUrl === "https://zcode.z.ai" ? p.subscriptionKind : null;
 }
 function profile(p) {
   const kind = adapter(p);
   if (!kind) return null;
   return { source: "官方接口 · 上次查询", fields: [], docs: [kind === "kimi-code" ? "kimi-info" : "zcode-info"],
-    canRefresh: !!p.apiKey && !p.queryBlocked && (kind !== "zcode-start" || !!version(p.appVersion)),
-    note: p.queryBlocked || (kind === "zcode-start" ? "此接口返回 Start Plan 套餐与额度；Coding Plan、团队及 MCP 额度独立计算。" : "按当前授权查询账户资料与编程额度，不发送模型请求。") };
+    canRefresh: !!p.apiKey && !p.queryBlocked && (kind === "kimi-code" || !!version(p.appVersion) || kind === "zcode-account" && zcodeInfo.requests(p).length > 0),
+    note: p.queryBlocked || (kind.startsWith("zcode-") ? "Start Plan、个人 / 团队 Coding Plan 和 MCP 额度分别读取，不合并计量单位。" : "按当前授权查询账户资料与编程额度，不发送模型请求。") };
 }
 function requests(p) {
   const kind = adapter(p);
   if (kind === "kimi-code") return [{ section: "identity", url: p.baseUrl + "/me" }, { section: "usage", url: p.baseUrl + "/usages" }];
-  if (kind === "zcode-start" && version(p.appVersion)) return [{ section: "usage", url:
-    "https://zcode.z.ai/api/v1/zcode-plan/billing/balance?app_version=" + encodeURIComponent(p.appVersion) }];
+  if (kind?.startsWith("zcode-")) {
+    const result = version(p.appVersion) ? [{ section: "usage", label: "Start Plan 额度", url:
+      "https://zcode.z.ai/api/v1/zcode-plan/billing/balance?app_version=" + encodeURIComponent(p.appVersion) }] : [];
+    if (kind === "zcode-account") result.push(...zcodeInfo.requests(p));
+    if (result.length) return result;
+  }
   throw Error("账户接口或客户端版本尚未适配");
+}
+function parseResponse(kind, request, response, options) {
+  return request.run ? zcodeInfo.parse(request, response, options)
+    : parse(kind === "zcode-account" ? "zcode-start" : kind, request.section, response.data, { ...options, responseTime: response.responseTime });
 }
 function parse(kind, section, payload, { safeText, now = Date.now(), responseTime } = {}) {
   if (!object(payload)) throw Error("账户资料格式无效");
@@ -139,4 +152,4 @@ function parse(kind, section, payload, { safeText, now = Date.now(), responseTim
   if (!fields.length) throw Error("接口未返回可识别的账户资料");
   return fields;
 }
-module.exports = { historyProvider, zcodeVersion, adapter, profile, requests, parse };
+module.exports = { historyProvider, zcodeVersion, adapter, profile, requests, parse, parseResponse };

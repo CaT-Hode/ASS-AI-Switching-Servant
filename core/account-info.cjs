@@ -8,7 +8,7 @@ const oauthInfo = require("./oauth-info.cjs");
 
 const ACCOUNT_DOCS = {
   "kimi-info": { label: "Kimi Code 账户与额度接口", url: "https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/packages/oauth/src/managed-usage.ts" },
-  "zcode-info": { label: "ZCode Start Plan 额度接口", url: "https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/model-provider/zaiStartPlanBilling.ts" },
+  "zcode-info": { label: "ZCode 套餐与额度接口", url: "https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/usage-stats/providers/bigmodelUsageQuotaProvider.ts" },
   kimi: { label: "Kimi Code 配置目录", url: "https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html" },
   zcode: { label: "ZCode 原生凭据格式", url: "https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts" },
   antigravity: { label: "Antigravity 登录与 API", url: "https://antigravity.google/docs/cli/install" },
@@ -416,7 +416,8 @@ const fingerprint = (p) =>
   crypto
     .createHash("sha256")
     .update(
-      JSON.stringify([p.id, p.baseUrl, p.apiKey, p.network, p.extraHeaders, p.subscriptionKind, p.appVersion]),
+      JSON.stringify([p.id, p.baseUrl, p.apiKey, p.network, p.extraHeaders, p.subscriptionKind, p.appVersion,
+        ...(p.subscriptionKind === "zcode-account" ? [p.family, p.oauthAccess, p.coding] : [])]),
     )
     .digest("hex");
 class AccountInfo {
@@ -568,9 +569,9 @@ class AccountInfo {
       return { ok: false, message };
     }
   }
-  async fetchJSON(p, url, extraHeaders = {}) {
+  async fetchJSON(p, url, extraHeaders = {}, authorization = "Bearer " + p.apiKey) {
     const r = await this.fetcher(url, { method: "GET", headers: { ...extraHeaders,
-      accept: "application/json", authorization: "Bearer " + p.apiKey },
+      accept: "application/json", authorization },
       signal: AbortSignal.timeout(15000), redirect: "error", cache: "no-store" }, p.network);
     if (!r.ok) { await r.body?.cancel(); throw Error("HTTP " + r.status); }
     if (Number(r.headers.get("content-length")) > 256 * 1024) { await r.body?.cancel(); throw Error("资料响应过大"); }
@@ -587,16 +588,21 @@ class AccountInfo {
     return { data: JSON.parse(Buffer.concat(chunks).toString("utf8")), responseTime: Date.parse(r.headers.get("date")) };
   }
   async queryOAuth(p, kind, key) {
+    p = structuredClone(p); // One immutable credential/scope generation per query.
     const requests = oauthInfo.requests(p);
-    const results = await Promise.all(requests.map(async ({ section, url }) => {
+    const secrets = new Set([p.apiKey, p.oauthAccess, ...(p.coding || []).map((c) => c.apiKey)].filter(Boolean));
+    const protect = (value) => { if (typeof value === "string" && value) secrets.add(value); };
+    const get = (url, headers = {}) => this.fetchJSON(p, url, headers, headers.authorization || "Bearer " + p.apiKey);
+    const results = await Promise.all(requests.map(async (request) => {
+      const { section, url } = request;
       try {
-        const response = await this.fetchJSON(p, url);
-        const fields = oauthInfo.parse(kind, section, response.data, {
-          safeText: (v) => text(v, [p.apiKey]), now: this.now(), responseTime: response.responseTime,
+        const response = request.run ? await request.run(get, protect) : await get(url);
+        const fields = oauthInfo.parseResponse(kind, request, response, {
+          safeText: (v) => text(v, [...secrets]), now: this.now(),
         });
         return { section, fields, updatedAt: new Date(this.now()).toISOString() };
       } catch (e) {
-        const label = section === "identity" ? "账户资料" : "额度";
+        const label = request.label || (section === "identity" ? "账户资料" : "额度");
         const message = ["HTTP 401", "HTTP 403"].includes(e.message)
           ? `${label}未获授权（${e.message}），请在原生客户端确认登录`
           : /^HTTP \d{3}$/.test(e.message) ? `${label}查询失败 · ${e.message}` : `${label}查询失败，请检查网络或接口权限`;

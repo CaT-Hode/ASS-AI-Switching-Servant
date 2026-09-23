@@ -5,7 +5,7 @@
 | 客户端 | 当前能力 | 尚未完成 |
 | --- | --- | --- |
 | Kimi Code | 新旧版目录与原生账户识别；原生登录发起；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML、同步及撤回；本地 Wire Token 记录与首页统计 | 原生请求测试、不落盘 Wire 的实验性会话存储 |
-| ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；可识别 Desktop 版本时查询 Start Plan 额度；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计 | CLI 额度版本适配、Coding Plan / Team / MCP 额度、账户运行时权益模型、原生请求测试 |
+| ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；Start Plan、个人 / Team Coding Plan、MCP 额度；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计 | CLI 的 Start Plan 版本适配、账户运行时权益模型、原生请求测试 |
 | Antigravity | `agy` 命令、Windows LocalAppData 下的 CLI；`.gemini/antigravity-cli/settings.json`；Gemini API 模式 | IDE 适配、系统密钥库 OAuth 读取 / 切换、模型配置写入、请求测试、用量与额度 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
@@ -14,7 +14,7 @@
 
 - 检测不启动客户端，不执行密钥辅助程序、不刷新授权、不发送模型请求。只读识别单文件最多读取 2 MiB，拒绝链接路径；解析失败保留原文件。开启或同步接入时才写模型配置；单独确认 OAuth 账户切换时才写凭据。
 - Kimi 新旧数据目录分开识别，不互相借用 token；自定义目录不猜测版本。只读取配置引用的同目录 OAuth 文件；拒绝路径穿越、非文件存储、冲突凭据配置。撤销 tombstone 不产生账户，过期 / 待刷新明确保留状态。
-- ZCode 解密遵循原生实现：自定义 `ZCODE_CREDENTIAL_SECRET` 或 OS 平台 / 真实 home / 用户名派生密钥，覆写数据根目录不改变密钥身份。只读取官方命名空间，忽略 MCP 授权及无关凭据；解密失败不伪造账户。用户资料仅展示同一命名空间缓存中的白名单字段，不推断套餐。
+- ZCode 解密遵循原生实现：自定义 `ZCODE_CREDENTIAL_SECRET` 或 OS 平台 / 真实 home / 用户名派生密钥，覆写数据根目录不改变密钥身份。只读取官方 OAuth 命名空间及当前身份 / 项目对应的 Coding Plan Key，忽略第三方 MCP 授权及无关凭据；解密失败不伪造账户。用户资料仅展示同一命名空间缓存中的白名单字段，不推断套餐。
 - 只有精确官方 HTTPS 端点的 API 才成为客户端账户。第三方配置模型单独聚合；模型声明不增加账户计数。未声明的上下文、协议、思维能力保持未知，不套用猜测值。
 - Antigravity 的 `GEMINI_API_KEY` 只有在 `modelProvider = "gemini"` 时生效；`GOOGLE_API_KEY` 不算登录。官方 OAuth 使用系统密钥库，不读取 Gemini CLI 的 `oauth_creds.json` 代替。
 - 前端及后端共同限制尚未实现的账户选择 / 启动操作；Antigravity 仍只读。旧版五 / 六客户端接入状态可直接读取，新增客户端默认关闭，不触发自动写入原生配置。
@@ -40,8 +40,12 @@
 
 - Kimi 使用对应中国区 / Global 官方 `/coding/v1/me`、`/coding/v1/usages`。显示返回的用户 ID、邮箱、昵称、会员等级与时间字段，不读取或展示任意资料字段。5h / 7d / 月度总额 / 月度编程额度只显示接口实际返回的窗口；`used_ratio` × 100 为已用百分比，缺失窗口不补零。
 - 加量包按原接口固定精度换算，`amountLeft` 不存在时不假定余额为零；保留原币种，不与 Moonshot 通用 API 余额混淆。
-- ZCode 使用会话 JWT 读取 `/api/v1/zcode-plan/billing/balance`，仅查询 Start Plan。`app_version` 来自已识别 Desktop 的构建元数据或包信息；没有可信版本则不发请求，不借用 ASS 版本或写死一个新版本。CLI 单独查询及 Coding Plan / Team / MCP 额度尚未实现。
+- ZCode Start Plan 使用会话 JWT 读取 `/api/v1/zcode-plan/billing/balance`。`app_version` 来自已识别 Desktop 的构建元数据或包信息；没有可信版本则不发这个请求，不借用 ASS 版本或写死一个新版本。Coding Plan / Team / MCP 不依赖此版本，CLI 也可单独查询。
 - Start Plan 按可明确归属的有效套餐、额度桶显示剩余 / 总额 / 已用与重置时间，不跨单位求和。剩余使用 `remaining_units`；`available_units` 会扣除进行中请求的预留量，不作为剩余的替代字段。过期与归属不明确的桶不混入当前额度。
+- 个人 Coding Plan 读取订阅列表、5h / 周 Token 或 Credit 额度及月度工具额度；Team 读取具体组织 / 项目的套餐、有效期、成员分配状态和额度。两者分别展示，不以 `level` 字段猜测套餐有效性。接口 `percentage` 是已用比例，`nextResetTime` 是毫秒；缺少百分比或剩余量时不补零、不反算另一项。
+- Coding Plan 用量接口发送原生专用 API Key，不给它额外加 Bearer。Key 优先来自按 OAuth 身份、套餐和项目隔离的原生缓存；缺失时只 GET 当前用户的已有项目 Key 与明文副本，绝不 POST 创建、修改或持久化远端 Key。Team 需核对组织 / 项目成员关系，查询带 `type=2` 和对应 scope 头；Z.ai 与 BigModel 业务令牌分别使用各自原生前缀与官方域名。
+- 官方 MCP 单独读取 `/api/v1/mcp/usage` 的 `total_usage`，显示总额、已用、剩余和重置时间，不从旧版 buckets 或模型额度推算。采用 ZCode 会话 JWT + 同一身份的 MaaS 令牌，不混用 API Key 鉴权通道。个人、BigModel Team、Z.ai Team 各遵循原生 scope 头差异；套餐被明确判定失效时移除旧额度，查询失败则保留旧结果与原时间。
+- OAuth 历史会加密保存当前身份的 Coding Plan 查询上下文和已有专用 Key；查看历史账户无需切换原生登录。切换账户仍只写 OAuth 字段，不恢复团队选择、不改原生 API Key。自定义业务域名的授权不会被拿去查询生产 Coding Plan 接口。
 - 当前和已保存的 OAuth 账户使用自己的令牌查询，包括既有 Codex / Claude / pi 订阅，不用当前原生文件代替历史账户，也不为查看额度切换登录。缓存按授权指纹隔离、加密持久化；资料与额度独立保留上次成功结果，局部失败不清空其他数据，不把旧额度的时间更新成当前时间。
 - 查询只读，复用系统 CA / 系统代理、禁止跳转、限制响应大小，不静默刷新令牌。自定义授权端点或无法确认官方作用域的记录不自动向官方服务器发送凭据。实现以官方源码字段为依据；隔离测试不等于真实用户额度已在线核验。
 
@@ -81,6 +85,7 @@
 - [Kimi Code 数据位置](https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html)、[配置文件](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html)。源码 `MoonshotAI/kimi-code` 提交 `6451f1e056e90037bbf832f3578955cf8e55db64`：`packages/oauth/src/storage.ts`、`toolkit.ts`（逻辑 key 到存储 slot 的映射）、`types.ts`、`token-state.ts`、`packages/agent-core-v2/src/app/kosongConfig/configSection.ts`。旧 CLI 提交 `9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82`，`src/kimi_cli/config.py`、`auth/oauth.py`。
 - [ZCode 原生凭据](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts)、同目录 `credential-cipher.ts`；[供应商 / 模型规则](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/config/rule-data-schema.ts)。同提交的 `provider-config-file-codec.ts`、`provider-data-schema.ts`、`shared/src/model-config.ts` 定义写入格式；`model-execution.ts` 使用 Vercel AI SDK，Anthropic Base URL 保留 `/v1`。桌面目录与安装身份参照 `desktopDataBaseDirBootstrap.ts` 和 `desktop-product-identity.mjs`。
 - 模型目录覆盖顺序依据同提交 [Provider Resolver](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/resolver.ts)、`config/model-config.ts`、`owned-order.ts`；缓存选择依据 [Built-in Source](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider-node/src/zcode-builtin-provider-config-source.ts)、`zcode-builtin-cache-paths.ts`、`desktopProviderConfig.ts`、`provider-runtime-env.ts`。
+- Coding Plan / Team 依据同提交的 [Quota Provider](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/usage-stats/providers/bigmodelUsageQuotaProvider.ts)、`codingPlanEntitlement.ts`、`accountProviderCredentialKey.ts`、`accountProviderApiKeyResolver.ts`、`accountProviderTeamPlanRequestKey.ts`；MCP 依据 [MCP Quota Provider](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/usage-stats/providers/zcodeMcpQuotaProvider.ts)、`officialMcpCredentials.ts`。ASS 仅复用其中只读流程，不执行原生 Key 自动创建或额度重置动作。
 - [Antigravity CLI 安装与授权](https://antigravity.google/docs/cli/install)。文档中的 Gemini API 模式不是通用 OpenAI / Anthropic 协议接入。
 - 登录命令以同一提交的 [Kimi `login.ts`](https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/apps/kimi-code/src/cli/sub/login.ts)、[旧版 Kimi CLI](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/cli/__init__.py)、[ZCode `login-command.ts`](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/cli/src/login-command.ts) 为依据；ZCode `auth-login.ts` 会保存默认模型，`zcodeAgentProcessManager.ts` 定义桌面内置 CLI 的 Electron Node 启动方式。
 
