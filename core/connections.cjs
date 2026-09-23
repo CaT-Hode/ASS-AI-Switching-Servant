@@ -2,13 +2,16 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { atomic, prepareConfig } = require("./config.cjs");
-const { IDS, hash } = require("./injection-files.cjs");
+const { IDS: LEGACY_IDS, hash } = require("./injection-files.cjs");
+// New native clients do not belong to the legacy proxy-file allowlist.
+const IDS = [...LEGACY_IDS, "kimi"];
 const NAMES = {
   codex: "Codex",
   claude: "Claude Code",
   opencode: "OpenCode",
   pi: "pi",
   dsh: "DeepSeek Harness",
+  kimi: "Kimi Code",
 };
 class Connections {
   constructor({
@@ -56,8 +59,9 @@ class Connections {
       if (fs.existsSync(this.file)) {
         if (fs.statSync(this.file).size > 8192) throw Error();
         const saved = JSON.parse(fs.readFileSync(this.file, "utf8"));
-        if (IDS.some((id) => typeof saved[id] !== "boolean")) throw Error();
-        this.enabled = Object.fromEntries(IDS.map((id) => [id, saved[id]]));
+        if (LEGACY_IDS.some((id) => typeof saved[id] !== "boolean") ||
+            (saved.kimi !== undefined && typeof saved.kimi !== "boolean")) throw Error();
+        this.enabled = Object.fromEntries(IDS.map((id) => [id, saved[id] ?? false]));
         // A crashed shutdown must not hide a still-injected Codex config.
         if (config.status().managed) this.enabled.codex = true;
         for (const id of IDS)

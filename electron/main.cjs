@@ -935,6 +935,7 @@ else {
         harnesses.selectModel(id, account, model),
       );
       register("client-injection", (id, changes) => harnesses.setInjection(id, changes));
+      register("client-native-variant", (id, variant) => harnesses.setNativeVariant(id, variant));
       register("client-model-launch", (id, ref) => connections.launch(async () => {
         if (connections.enabled[id] && connections.needsRouter(id) && !router.server)
           await router.start(servicePort);

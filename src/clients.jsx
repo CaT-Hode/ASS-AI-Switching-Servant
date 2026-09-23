@@ -570,6 +570,16 @@ export function Clients({
                   </details>
                 )}
               </div>
+              {client.id === "kimi" && <label className="field">
+                Kimi 配置版本
+                <select aria-label="Kimi 配置版本" value={client.nativeVariant || "auto"}
+                  disabled={!!busy || state.connections.clients.kimi?.enabled}
+                  onChange={(event) => act("client-native-variant", () => api.call("client-native-variant", client.id, event.target.value))}>
+                  <option value="auto">自动识别</option>
+                  <option value="current">Kimi Code（新版）</option>
+                  <option value="legacy">Kimi CLI（旧版）</option>
+                </select>
+              </label>}
               <div className="section-heading">
                 <h3>凭据检测位置</h3>
                 <div className="actions">

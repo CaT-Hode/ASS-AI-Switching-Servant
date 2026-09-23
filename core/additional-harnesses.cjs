@@ -14,7 +14,7 @@ const SPECS = [
   { id: "zcode", name: "ZCode", command: "zcode" },
   { id: "antigravity", name: "Antigravity", command: "agy" },
 ].map((s) => ({ ...s, oauth: false, nativeLoginOnly: true,
-  injectionUnsupported: s.id === "antigravity"
+  injectionUnsupported: s.id === "kimi" ? undefined : s.id === "antigravity"
     ? "此版本识别 agy CLI 配置。OAuth 由系统密钥库管理；IDE 账户与配置接入尚未适配。"
     : "此版本仅识别原生账户与模型；账户切换与配置接入尚未适配。" }));
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);

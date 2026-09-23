@@ -6,6 +6,7 @@ const allowed = [
   "supplier-refresh",
   "client-model",
   "client-injection",
+  "client-native-variant",
   "client-model-launch",
   "client-credentials",
   "import",

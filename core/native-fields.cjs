@@ -4,6 +4,7 @@ const { isDeepStrictEqual: equal } = require("node:util");
 const { createHash, randomUUID } = require("node:crypto");
 const JSONC = require("jsonc-parser");
 const YAML = require("yaml");
+const managedToml = require("./toml-managed.cjs");
 const hash = (s) =>
   createHash("sha256")
     .update(s || "")
@@ -60,6 +61,7 @@ function read(file) {
   }
 }
 function document(text, format) {
+  if (format === "toml") return { data: managedToml.parse(text), source: text || "" };
   const source = text === null ? "{}\n" : text.replace(/^\uFEFF/, "");
   let data, yaml;
   if (format === "yaml") {
@@ -106,6 +108,7 @@ function valueAt(data, keys) {
   return present(current);
 }
 function edit(text, format, keys, value) {
+  if (format === "toml") return managedToml.edit(text, keys, value);
   const doc = document(text, format);
   valueAt(doc.data, keys); // refuse replacing a scalar parent
   if (format === "yaml") {
@@ -127,9 +130,9 @@ function edit(text, format, keys, value) {
 function validField(e) {
   if (
     !e ||
-    !["dsh", "opencode", "pi"].includes(e.harness) ||
+    !["dsh", "opencode", "pi", "kimi"].includes(e.harness) ||
     !path.isAbsolute(e.file || "") ||
-    !["json", "jsonc", "yaml"].includes(e.format) ||
+    !(e.harness === "kimi" ? e.format === "toml" && managedToml.validPath(e.path) && !e.replace : ["json", "jsonc", "yaml"].includes(e.format)) ||
     !Array.isArray(e.path) ||
     !e.path.length ||
     e.path.some(
@@ -256,6 +259,8 @@ class NativeFields {
       const target = next ? present(next.value) : old.before;
       if (!equal(current, target))
         file.after = edit(file.after, e.format, e.path, target);
+      else if (old && e.format === "toml")
+        managedToml.assertOwned(file.after, e.path);
       if (next) {
         const { value: _, before: __, after: ___, ...metadata } = next;
         entries.push({
@@ -264,6 +269,12 @@ class NativeFields {
           after: target,
         });
       }
+    }
+    if (harness === "kimi") for (const file of files.values()) {
+      const current = document(file.before, "toml").data, next = document(file.after, "toml").data;
+      if (previous.some((e) => e.file === file.file && e.path[0] === "models" && e.path[1] === current.default_model) &&
+          !Object.hasOwn(next.models || {}, current.default_model))
+        throw Error("Kimi 默认模型仍属于待移除的供应商，请先在 Kimi 切换模型");
     }
     return {
       entries,

@@ -82,10 +82,11 @@ const json = (file) => {
     const object = (v) => v && typeof v === "object" && !Array.isArray(v);
     const strings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (!object(value) || (value.schemaVersion !== undefined && ![1, 2, 3].includes(value.schemaVersion))) throw Error();
-    for (const key of ["selected", "credentialHomes", "executables", "accountBindings", "accountExclusions", "apiBindings", "apiExclusions", "injections", "nativeProfileTargets", "modelSelections"])
+    for (const key of ["selected", "credentialHomes", "executables", "accountBindings", "accountExclusions", "apiBindings", "apiExclusions", "injections", "nativeProfileTargets", "modelSelections", "nativeVariants"])
       if (value[key] !== undefined && !object(value[key])) throw Error();
     for (const key of ["selected", "credentialHomes", "executables"])
       if (Object.values(value[key] || {}).some((v) => typeof v !== "string")) throw Error();
+    if (Object.entries(value.nativeVariants || {}).some(([id, v]) => id !== "kimi" || !["auto", "current", "legacy"].includes(v))) throw Error();
     for (const key of ["accountBindings", "accountExclusions", "apiBindings", "apiExclusions", "nativeProfileTargets"])
       if (Object.values(value[key] || {}).some((v) => !strings(v))) throw Error();
     for (const config of Object.values(value.injections || {}))
@@ -335,6 +336,7 @@ class HarnessManager {
       selected: {},
       modelSelections: {},
       credentialHomes: {},
+      nativeVariants: {},
       executables: {},
       workspace: "",
       accountBindings: {},
@@ -508,7 +510,7 @@ class HarnessManager {
   }
   assertManaged(id) {
     if (this.spec(id).nativeLoginOnly)
-      throw Error("此客户端目前仅支持原生识别；请在原生客户端管理账户与模型");
+      throw Error("此客户端账户目前仅支持原生识别；请在原生客户端管理登录");
   }
   root(harness, id) {
     this.spec(harness);
@@ -527,14 +529,24 @@ class HarnessManager {
           const native = additional.inspect(s.id, { home: this.nativeHome, env: this.nativeEnv,
             override: this.state.credentialHomes[s.id] });
           const launcher = this.launcher(s.id);
+          const ownedCache = new Map();
+          const owned = (file, provider) => {
+            const key = JSON.stringify([file, provider]);
+            if (!ownedCache.has(key)) ownedCache.set(key, !!this.options.nativeConfig?.owns(s.id, file, provider));
+            return ownedCache.get(key);
+          };
+          const accounts = native.accounts.filter((a) => !owned(a.sourcePath, a.provider));
+          const modelAccounts = native.modelAccounts.map((a) => ({ ...a,
+            declaredModels: a.declaredModels.filter((m) => !owned(a.sourcePath, m.nativeProvider)) }));
           return { ...s, detected: !!(launcher.ready || launcher.installed ||
               this.discovery[s.id]?.some((c) => resolveLauncher(s.id, c.location, this.launchEnv).ready) ||
               native.sources.some((source) => source.status !== "missing")),
             executable: launcher.executable, launcher, selected: "", desktop: null,
             accountServices: [], oauthProviders: [], availableApiAccounts: [],
             credentialHome: this.state.credentialHomes[s.id] || "", credentialSources: native.sources,
-            accounts: native.accounts, modelAccounts: [...native.accounts, ...native.modelAccounts],
-            injection: { models: [], excludedProviders: [] } };
+            nativeVariant: s.id === "kimi" ? this.state.nativeVariants.kimi || "auto" : undefined,
+            accounts, modelAccounts: [...accounts, ...modelAccounts],
+            injection: s.injectionUnsupported ? { models: [], excludedProviders: [] } : this.injection(s.id) };
         }
         const native = discoverNative(s.id, {
           home: this.nativeHome,
@@ -693,7 +705,7 @@ class HarnessManager {
     return { ...settings, models: injectionCatalog(harness, this.getState().providers, settings) };
   }
   setInjection(harness, changes) {
-    this.assertManaged(harness);
+    if (this.spec(harness).injectionUnsupported) throw Error("此客户端尚未支持供应商接入");
     if (!changes || typeof changes !== "object" || Array.isArray(changes) || Object.keys(changes).some((k) => k !== "excludedProviders"))
       throw Error("接入范围请按供应商设置");
     const next = { ...this.state.injections[harness], ...changes };
@@ -769,6 +781,15 @@ class HarnessManager {
       throw Error("请选择有效的凭据目录");
     this.state.credentialHomes[harness] = dir;
     this.save();
+  }
+  setNativeVariant(harness, variant) {
+    if (harness !== "kimi" || !["auto", "current", "legacy"].includes(variant))
+      throw Error("无效的客户端配置版本");
+    if (this.options.isConnected?.(harness) || this.options.nativeConfig?.list([harness]).length)
+      throw Error("请先断开 Kimi 接入，再切换配置版本");
+    const previous = this.state.nativeVariants.kimi;
+    this.state.nativeVariants.kimi = variant;
+    try { this.save(); } catch (error) { this.state.nativeVariants.kimi = previous; throw error; }
   }
   setExecutable(harness, file) {
     this.spec(harness);

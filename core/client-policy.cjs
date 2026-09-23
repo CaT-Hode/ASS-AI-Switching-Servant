@@ -6,6 +6,7 @@ const ACCOUNT_SERVICES = {
   dsh: ["deepseek"],
   opencode: ["opencode-go", "opencode"],
   pi: [],
+  kimi: [],
 };
 function officialApiService(provider) {
   try {

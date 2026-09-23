@@ -211,16 +211,19 @@ test("malformed and oversized native files remain intact and never disclose cont
   assert.equal(fs.readFileSync(bad, "utf8"), 'api_key = "secret-with-invalid-syntax');
   assert.ok(!JSON.stringify(f.check("kimi")).includes("secret-with-invalid"));
 });
-test("read-only clients reject every account/injection mutation and keep managed-client history unchanged", (t) => {
+test("native-login clients reject account mutations while Kimi supports separate provider injection", (t) => {
   const f = fixture(t), manager = f.manager();
   for (const id of ["kimi", "zcode", "antigravity"]) {
     for (const action of [() => manager.add(id, "test"), () => manager.select(id, "native:x"),
-      () => manager.bindApi(id, "x", false), () => manager.setInjection(id, { excludedProviders: [] }),
+      () => manager.bindApi(id, "x", false),
       () => manager.plan(id, "native:x"), () => manager.modelPlan(id, "x")]) assert.throws(action, /仅支持原生识别/);
     assert.equal(manager.oauthHistoryAllows(id, "test"), false);
   }
+  assert.doesNotThrow(() => manager.setInjection("kimi", { excludedProviders: [] }));
+  for (const id of ["zcode", "antigravity"])
+    assert.throws(() => manager.setInjection(id, { excludedProviders: [] }), /尚未支持供应商接入/);
   assert.deepEqual(new Set(manager.oauthHistorySources().map((s) => s.harness)), new Set(["codex", "claude", "pi"]));
-  assert.deepEqual(fs.readdirSync(f.home), []);
+  assert.deepEqual(fs.readdirSync(f.home), ["clients.json"]);
 });
 test("model catalogs aggregate without inflating official account counts and client preference persists", (t) => {
   const f = fixture(t); f.put(".kimi-code/config.toml", kimiConfig({ type: "openai", base_url: "https://third.example/v1", api_key: "third-party" }));

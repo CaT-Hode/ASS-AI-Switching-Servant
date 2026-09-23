@@ -5,7 +5,8 @@ const { NativeFields, document, read, hash } = require("./native-fields.cjs");
 const { nativeLocations } = require("./credential-status.cjs");
 const { endpoint } = require("./models.cjs");
 const { injectionCatalog, modelRef } = require("./client-policy.cjs");
-const DIRECT = ["opencode", "pi", "dsh"];
+const { target: kimiTarget } = require("./kimi-config.cjs");
+const DIRECT = ["opencode", "pi", "dsh", "kimi"];
 const APIS = {
   "openai-responses": "openai-responses",
   "openai-chat": "openai-completions",
@@ -33,6 +34,7 @@ const piLiteral = (value) =>
     .replace(/^!/, "$!");
 
 function locations(harness, manager) {
+  if (harness === "kimi") return kimiTarget(manager);
   const env = manager.nativeEnv,
     home = manager.nativeHome;
   const dir = nativeLocations(
@@ -183,6 +185,24 @@ function compose(harness, manager, selection, targetOverride) {
           { type: "api_key", key: piLiteral(p.apiKey) },
           { credentialProvider: id },
         );
+      } else if (harness === "kimi") {
+        const legacy = target.variant === "legacy";
+        field(target.config, "toml", ["providers", id], {
+          type: wire === "anthropic" ? "anthropic" : wire === "openai-responses" ? "openai_responses" : legacy ? "openai_legacy" : "openai",
+          base_url: base,
+          api_key: p.apiKey,
+          ...(Object.keys(headers).length ? { custom_headers: headers } : {}),
+        }, { credentialProvider: id });
+        for (const m of models) {
+          const alias = id + "-" + createHash("sha256").update(m.model).digest("hex").slice(0, 16);
+          field(target.config, "toml", ["models", alias], {
+            provider: id, model: m.model, display_name: m.displayName,
+            max_context_size: m.contextWindow,
+            ...(m.efforts.length ? { capabilities: ["thinking"] } : {}),
+            ...(!legacy ? { max_output_size: m.maxOutputTokens, support_efforts: m.efforts,
+              ...(m.efforts.length ? { default_effort: m.defaultEffort } : {}) } : {}),
+          });
+        }
       } else {
         field(target.config, "yaml", ["llm-pi-ai", "providers", id], {
           displayName: p.name,
@@ -290,7 +310,11 @@ class NativeConfig {
     return this.fields.owns(id, file, provider);
   }
   desired(id, selection) {
+    if (id === "kimi" && selection) throw Error("请在 Kimi 内选择模型；ASS 不修改默认模型");
     const plan = compose(id, this.manager, selection);
+    if (id === "kimi" && this.fields.entries.some((e) => e.harness === id &&
+        path.resolve(e.file).toLowerCase() !== path.resolve(plan.target.config).toLowerCase()))
+      throw Error("Kimi 目标目录已变化，请先断开接入，再切换目录或版本");
     for (const dir of this.manager.state.nativeProfileTargets?.[id] || []) {
       this.validateProfile(id, dir);
       const profile = compose(id, this.manager, undefined, profileLocations(id, dir));
