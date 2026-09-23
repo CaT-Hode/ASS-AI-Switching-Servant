@@ -45,6 +45,7 @@ const {
 } = require("../core/official-services.cjs");
 const { NativeKeyStore } = require("../core/native-key-store.cjs");
 const { OAuthHistory } = require("../core/oauth-history.cjs");
+const { NativeLogin } = require("../core/native-login.cjs");
 const { OpenRouterAuth } = require("../core/openrouter-auth.cjs");
 const { UpdateChecker } = require("../core/updates.cjs");
 const { InjectionFiles } = require("../core/injection-files.cjs");
@@ -82,6 +83,7 @@ let window,
   proxyConfig,
   nativeKeys,
   oauthHistory,
+  nativeLogin,
   accountInfo,
   diagnosticHistory,
   openRouterAuth,
@@ -791,6 +793,7 @@ else {
         allows: (id, provider) => harnesses.oauthHistoryAllows(id, provider),
         onChange: push,
       });
+      nativeLogin = new NativeLogin({ harnesses, history: oauthHistory, processes });
       try {
         if (connections.routerEnabled()) await router.start(servicePort);
       } catch (error) {
@@ -830,6 +833,8 @@ else {
         connections.preview(scope, enabled, quit),
       );
       register("connection-apply", async (input) => {
+        for (const id of connections.tickets.get(input?.ticket)?.ids || [])
+          await nativeLogin.assertIdle(id);
         diagnosticBatch.cancel();
         for (const controller of diagnosticControllers.values())
           controller.abort();
@@ -903,8 +908,15 @@ else {
         oauthHistory.scan({ immediate: true });
         return snapshot();
       });
-      register("oauth-switch-preview", (id, account) => {
+      register("native-login-preview", async (id) => {
+        if (connections.busy) throw Error("正在修改客户端接入，请稍后登录");
+        return nativeLogin.preview(id);
+      });
+      register("native-login-apply", (ticket, choice, confirmed) => connections.launch(() =>
+        nativeLogin.apply(ticket, choice, confirmed)));
+      register("oauth-switch-preview", async (id, account) => {
         if (connections.busy) throw Error("正在修改客户端接入，请稍后切换账户");
+        await nativeLogin.assertIdle(id);
         return oauthHistory.preview(id, account);
       });
       register("oauth-switch-apply", (ticket, confirmed) => connections.launch(async () => {
@@ -912,6 +924,7 @@ else {
         // confirmation warns about existing sessions; tokens stay in main only.
         if (router.active || probeControllers.size || diagnosticControllers.size)
           throw Error("ASS 仍有请求执行中，请等待结束后再切换账户");
+        await nativeLogin.assertIdle(oauthHistory.tickets.get(ticket)?.harness);
         return oauthHistory.apply(ticket, confirmed);
       }));
       register("pi-import-oauth", async (sourceId, label) => {
@@ -981,7 +994,7 @@ else {
         return {
           ok: true,
           message:
-            "已打开 OpenCode Desktop；沿用其原生账户，没有注入或切换凭据。",
+            "已打开 " + harnesses.spec(id).name + " 桌面端；沿用其原生账户，没有注入或切换凭据。",
         };
       });
       register("client-location", async (id, location) => {
@@ -1260,6 +1273,7 @@ else {
           nativeConfig,
           nativeKeys,
           oauthHistory,
+          nativeLogin,
           accountInfo,
           preferences,
           openRouterAuth,

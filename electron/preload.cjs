@@ -34,6 +34,8 @@ const allowed = [
   "account-select",
   "oauth-switch-preview",
   "oauth-switch-apply",
+  "native-login-preview",
+  "native-login-apply",
   "account-info",
   "account-info-doc",
   "client-refresh",

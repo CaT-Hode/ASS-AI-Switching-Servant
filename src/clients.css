@@ -792,6 +792,9 @@
 .client-support-note { font-size: 12px; color: #617189; line-height: 1.8; }
 .oauth-switch-dialog { width: min(440px, calc(100vw - 48px)); }
 .oauth-switch-dialog > p { font-size: 13px; line-height: 1.8; }
+.native-login-options { display: flex; gap: 8px; }
+.native-login-options > button { flex: 1; }
+.native-login-options > button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 @media (prefers-reduced-motion: reduce) { .provider-injection-switch i, .provider-disclosure { transition: none; } }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .client-list { background: #fff; } }
 .app-shell[data-input="keyboard"] .provider-injection-switch i, .app-shell[data-input="keyboard"] .provider-disclosure { transition: none; }

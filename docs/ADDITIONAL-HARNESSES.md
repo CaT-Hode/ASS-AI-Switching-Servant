@@ -4,8 +4,8 @@
 
 | 客户端 | 当前能力 | 尚未完成 |
 | --- | --- | --- |
-| Kimi Code | 新旧版目录与原生账户识别；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML，支持 Chat / Responses / Anthropic；同步及撤回 | 登录发起、原生请求测试、本地 Token 账本 |
-| ZCode | CLI / Windows 桌面安装识别；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；可识别 Desktop 版本时查询 Start Plan 额度；按供应商直写规则、同步及撤回 | 登录发起、CLI 版本适配、Coding Plan / Team / MCP 额度、完整内置目录合并、原生请求测试、本地 Token 账本 |
+| Kimi Code | 新旧版目录与原生账户识别；原生登录发起；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML，支持 Chat / Responses / Anthropic；同步及撤回 | 原生请求测试、本地 Token 账本 |
+| ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；可识别 Desktop 版本时查询 Start Plan 额度；按供应商直写规则、同步及撤回 | CLI 额度版本适配、Coding Plan / Team / MCP 额度、完整内置目录合并、原生请求测试、本地 Token 账本 |
 | Antigravity | `agy` 命令、Windows LocalAppData 下的 CLI；`.gemini/antigravity-cli/settings.json`；Gemini API 模式 | IDE 适配、系统密钥库 OAuth 读取 / 切换、模型配置写入、请求测试、用量与额度 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
@@ -26,6 +26,15 @@
 - ZCode 只记录 `oauth:active_provider` 对应的完整会话（用户资料、access / refresh、共享 `zcodejwttoken` 和登录归因），不把残留的另一供应商 token 配上当前用户 JWT。切换遵循原生互斥身份域规则，清除另一 OAuth 命名空间的旧 token / 用户字段，但保留 API、MCP 等无关凭据。写回使用原生 AES-GCM 格式，并遵循同一文件锁；锁占用时提示重试，不删除别人的锁。
 - 完整性、区域、目录或环境覆盖有冲突时停止切换。ZCode 会话 JWT 已到期即拒绝切换，不因为 provider 仍有 refresh token 就认为会话有效。只有孤立 token、缺少当前供应商或完整用户资料的旧记录仍可只读显示，但不开放换号。
 - 两套 Kimi 配置需先选择版本；CLI / Desktop 同时存在不同有效 ZCode 登录目录时需先指定目录。更多恢复与并发约束见 [OAuth 账户历史](OAUTH-HISTORY.md)。
+
+## 从 ASS 发起登录
+
+- 在 Kimi / ZCode 的“官方账户”标题右侧点击登录图标，选择区域或供应商并确认。先加密保存可识别的旧 OAuth，再打开原生登录终端，由原生客户端处理浏览器授权与令牌写入；ASS 自动记录文件登录变化，不会自动重启客户端。
+- 新版 Kimi 使用 `login --region mainland-cn|global`；旧版使用 `login`，仅提供原生默认中国区。能从 npm 包识别新版；程序版本不明确时，先在客户端设置中选择版本，不根据 `kimi.exe` 文件名猜测。两套目录并存或入口与所选版本不一致时要求明确选择。
+- ZCode 使用 `login zai|bigmodel`。桌面版必须存在 `resources/glm/zcode.cjs`，通过桌面版自身的 Electron Node 模式运行，不向运行中的桌面窗口传递 CLI 参数。凭据目录须能表示为 `<数据根目录>/.zcode/v2`；自定义配置文件按已选位置保留。
+- 登录可能由原生客户端更新默认模型。确认窗提示先结束任务；登录期间不允许 ASS 再次登录、换号或修改同一客户端的接入。终端失败时保留错误等待关闭，避免一闪而过。
+- 每次登录使用 ASS 内新的空工作目录，避免加载用户项目 `.env`。子进程清除第三方 API / 授权端点和 Node 启动脚本覆盖项，保留标准代理 / CA 环境变量，Node 启用系统 CA；不关闭 TLS 校验。ZCode 保留原生加密密钥环境，不写入脚本或界面。
+- 仅验证了隔离环境中的发起、取消、参数、旧账户保存和并发限制；未替用户进行真实浏览器授权。原生客户端的网络实现与服务端登录结果仍由该客户端负责。
 
 ## 账户资料与额度
 
@@ -51,7 +60,7 @@
 - 写入模型上下文、输出上限及可选思维档位，保留 ZCode 原生模型 / 协议的请求参数映射；不伪造工具、视觉等能力。ZCode 没有模型级显示名称和默认思维档位的对应字段，因此模型选择与默认档位留在原生客户端。
 - 按 `providerId` 和 `providerId + modelId` 确认条目所有权，不以列表下标或整张列表作为恢复单位。原生重排列表、添加供应商后可继续同步和撤回；重复 / 冲突条目、未知结构、外部修改 ASS 条目会停止覆盖。原有排序、默认模型及非 ASS 规则保留。
 - 初次创建文件时补全 `schemaVersion: 1` 和必要的空规则列表，关闭后留下合法空结构；密钥和模型规则全部撤回。当前默认模型属于待移除供应商时，要求先在 ZCode 中切换模型。
-- Windows 自动发现常见安装目录下的 ZCode / ZCode Preview；通过 Electron 资源区分桌面版和 CLI，不尝试向桌面程序传递 CLI 登录参数或自动重启进程。
+- Windows 自动发现常见安装目录下的 ZCode / ZCode Preview；通过 Electron 资源区分桌面版和 CLI。登录只使用明确存在的内置 CLI，不向桌面 UI 传递登录参数或自动重启进程。
 
 ## 官方依据
 
@@ -60,5 +69,6 @@
 - [Kimi Code 数据位置](https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html)、[配置文件](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html)。源码 `MoonshotAI/kimi-code` 提交 `6451f1e056e90037bbf832f3578955cf8e55db64`：`packages/oauth/src/storage.ts`、`toolkit.ts`（逻辑 key 到存储 slot 的映射）、`types.ts`、`token-state.ts`、`packages/agent-core-v2/src/app/kosongConfig/configSection.ts`。旧 CLI 提交 `9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82`，`src/kimi_cli/config.py`、`auth/oauth.py`。
 - [ZCode 原生凭据](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts)、同目录 `credential-cipher.ts`；[供应商 / 模型规则](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/config/rule-data-schema.ts)。同提交的 `provider-config-file-codec.ts`、`provider-data-schema.ts`、`shared/src/model-config.ts` 定义写入格式；`model-execution.ts` 使用 Vercel AI SDK，Anthropic Base URL 保留 `/v1`。桌面目录与安装身份参照 `desktopDataBaseDirBootstrap.ts` 和 `desktop-product-identity.mjs`。
 - [Antigravity CLI 安装与授权](https://antigravity.google/docs/cli/install)。文档中的 Gemini API 模式不是通用 OpenAI / Anthropic 协议接入。
+- 登录命令以同一提交的 [Kimi `login.ts`](https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/apps/kimi-code/src/cli/sub/login.ts)、[旧版 Kimi CLI](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/cli/__init__.py)、[ZCode `login-command.ts`](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/cli/src/login-command.ts) 为依据；ZCode `auth-login.ts` 会保存默认模型，`zcodeAgentProcessManager.ts` 定义桌面内置 CLI 的 Electron Node 启动方式。
 
 当前验证使用合成凭据及隔离 Electron 窗口。本机默认位置未发现三者的实际账户，不宣称真实用户登录、订阅额度或完整 Agent 任务已验证。

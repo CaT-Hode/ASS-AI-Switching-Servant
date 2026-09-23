@@ -1101,7 +1101,8 @@ class HarnessManager {
   async launchPlan(harness, plan, account, action, launcher) {
     this.materialize(plan);
     const workspace =
-      this.state.workspace || path.join(this.dataDir, "workspace");
+      plan.workspace || this.state.workspace || path.join(this.dataDir, "workspace");
+    safePath(workspace);
     fs.mkdirSync(workspace, { recursive: true });
     // The terminal is deliberately visible: native login/TUI requires user interaction.
     const marker = crypto.randomBytes(16).toString("hex");
@@ -1109,7 +1110,8 @@ class HarnessManager {
       `# ASS session ${marker}\n` +
       `Set-Location -LiteralPath ${q(workspace)}\n` +
       (plan.hint ? `Write-Host ${q(plan.hint)}\n` : "") +
-      `& ${q(launcher.executable)} ${[...launcher.args, ...plan.args].map(q).join(" ")}\n`;
+      `& ${q(launcher.executable)} ${[...launcher.args, ...plan.args].map(q).join(" ")}\n` +
+      (plan.pauseOnFailure ? `if (-not $?) { Read-Host 'Login failed. Press Enter to close' }\n` : "");
     const terminal = path.join(
       process.env.SystemRoot || "C:\\Windows",
       "System32",
@@ -1117,7 +1119,7 @@ class HarnessManager {
       "v1.0",
       "powershell.exe",
     );
-    const child = spawn(
+    const child = (this.options.spawn || spawn)(
       terminal,
       [
         "-NoProfile",
@@ -1138,6 +1140,7 @@ class HarnessManager {
       child.once("spawn", resolve);
       child.once("error", reject);
     });
+    plan.onSpawn?.(child);
     child.unref();
     let tracking = "";
     if (this.options.processes) {

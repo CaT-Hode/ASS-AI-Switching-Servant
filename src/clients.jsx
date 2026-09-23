@@ -316,6 +316,7 @@ export function Clients({
     [nativeKey, setNativeKey] = useState(null),
     [candidates, setCandidates] = useState(null),
     [switching, setSwitching] = useState(null),
+    [loggingIn, setLoggingIn] = useState(null),
     [notice, setNotice] = useState("");
   const client =
     state.harnesses.clients.find((c) => c.id === selected) ||
@@ -491,6 +492,11 @@ export function Clients({
             <ClientInjection key={"injection:" + client.id} {...{ client, state, act, busy, onManage }} />
             <header className="client-accounts-heading"><h3>官方账户 <span className="count">{client.accounts.length}</span></h3>
               {!client.nativeLoginOnly && <button className="button" ref={addButton} onClick={() => setAdding(true)}><Plus size={14} />添加账户</button>}
+              {["kimi", "zcode"].includes(client.id) && <button className="icon-button" disabled={!!busy}
+                aria-label={"登录 " + client.name + " 账户"} title="登录账户"
+                onClick={() => act("native-login-preview", async () => {
+                  setLoggingIn(await api.call("native-login-preview", client.id));
+                })}><LogIn size={17} /></button>}
             </header>
             {client.oauthHistoryError && <p className="error-box" role="alert">{client.oauthHistoryError}</p>}
             <div className="client-account-grid">
@@ -510,7 +516,7 @@ export function Clients({
                 <div className="empty">
                   <KeyRound size={23} />
                   <p>
-                    {client.nativeLoginOnly ? "在原生客户端中管理登录" : "暂无官方账户"}
+                    {client.nativeLoginOnly && !["kimi", "zcode"].includes(client.id) ? "在原生客户端中管理登录" : "暂无官方账户"}
                   </p>
                 </div>
               )}
@@ -688,6 +694,9 @@ export function Clients({
         onClose={() => setSwitching(null)}
         onDone={(message) => { setSwitching(null); setNotice(message); }}
       />}
+      {loggingIn && <NativeLoginDialog preview={loggingIn}
+        onClose={() => setLoggingIn(null)}
+        onDone={(message) => { setLoggingIn(null); setNotice(message); }} />}
       {adding && (
         <AddAccount
           key={client.id}
@@ -758,6 +767,31 @@ export function Clients({
       )}
     </>
   );
+}
+
+function NativeLoginDialog({ preview, onClose, onDone }) {
+  const [choice, setChoice] = useState(preview.selected);
+  const [pending, setPending] = useState(false), [error, setError] = useState("");
+  return <Modal title={"登录 " + preview.clientName} className="oauth-switch-dialog"
+    onClose={onClose} dismissible={!pending}
+    fallbackFocus={() => document.querySelector('.client-accounts-heading button')}>
+    <div className="native-login-options" role="group" aria-label="登录区域或供应商">
+      {preview.choices.map((item) => <button key={item.id} className="button"
+        aria-pressed={item.id === choice} disabled={pending} onClick={() => setChoice(item.id)}>{item.label}</button>)}
+    </div>
+    <p>请先结束客户端内的任务。登录会更新当前账户，可能调整默认模型；旧账户先保存，不自动重启客户端。</p>
+    <details className="account-origin"><summary>登录位置</summary><code>{preview.target}</code></details>
+    {error && <p className="error-box" role="alert">{error}</p>}
+    <footer>
+      <button className="button" disabled={pending} onClick={onClose} data-autofocus>取消</button>
+      <button className="button primary" disabled={pending} onClick={async () => {
+        setPending(true); setError("");
+        try { const result = await api.call("native-login-apply", preview.ticket, choice, true); onDone(result.message); }
+        catch (e) { setError(e.message); }
+        finally { setPending(false); }
+      }}>{pending ? "打开中…" : "确定"}</button>
+    </footer>
+  </Modal>;
 }
 
 function OAuthSwitchDialog({ preview, onClose, onDone }) {

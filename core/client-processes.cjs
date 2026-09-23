@@ -8,7 +8,7 @@ const MAX_JOURNAL_BYTES = 256 * 1024;
 const MAX_ADAPTER_OUTPUT = 1024 * 1024;
 const MAX_SESSIONS = 128;
 const HELPER_TIMEOUT_MS = 15_000;
-const HARNESSES = new Set(["codex", "claude", "opencode", "pi", "dsh"]);
+const HARNESSES = new Set(["codex", "claude", "opencode", "pi", "dsh", "kimi", "zcode"]);
 
 const PS_INSPECT = String.raw`
 $ErrorActionPreference = 'Stop'
