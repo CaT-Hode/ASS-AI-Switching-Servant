@@ -33,8 +33,11 @@ export function ConnectionStatus({ client, state, busy, onManage }) {
     (s) => s.harness === client.id && s.status !== "gone",
   );
   if (!connection || client.injectionUnsupported) return null;
+  const modelCount = Number.isInteger(connection.modelCount) && connection.modelCount > 0
+    ? ` · ${connection.modelCount} 个模型`
+    : "";
   const note = connection.syncError ? `未同步：${connection.syncError}` : connection.pending ? "供应商接入有变更，点击同步后生效。" :
-    connection.enabled ? (connection.mode === "native" ? "已写入原生配置 · 新会话生效" : client.id === "codex" ? "已接入 · 任务结束后重启客户端" : "已接入 · 新窗口生效") : "";
+    connection.enabled ? (connection.mode === "native" ? `已写入原生配置${modelCount} · 新会话生效` : client.id === "codex" ? "已接入 · 任务结束后重启客户端" : "已接入 · 新窗口生效") : "";
   if (!note && !sessions.length && !connection.active) return null;
   return (
     <section
