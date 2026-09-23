@@ -6,7 +6,6 @@ export const CLIENT_NAMES = {
   dsh: "DSH",
   kimi: "Kimi Code",
   zcode: "ZCode",
-  antigravity: "Antigravity",
 };
 export const detectedClients = (state) => state.harnesses.clients.filter((c) =>
   c.detected === true || (c.detected === undefined && !!(c.executable || c.launcher?.installed || c.desktop)));

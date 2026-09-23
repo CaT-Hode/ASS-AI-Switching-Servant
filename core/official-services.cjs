@@ -69,7 +69,7 @@ const OFFICIAL_SERVICES = [
     console: "https://www.kimi.com/code/console",
     docs: "https://www.kimi.com/code/docs/en/",
     externalOAuth: true,
-    note: "Kimi Code 订阅 Key 与 Moonshot 开放平台 Key 不通用。原生 Kimi OAuth 由 Kimi 客户端管理，本版不复制其令牌。",
+    note: "Kimi Code 订阅 Key 与 Moonshot 开放平台 Key 不通用；OAuth 由 Kimi 原生登录，ASS 仅加密保存检测到的账户用于切换。",
     profiles: [
       api(
         "kimi-plan",
