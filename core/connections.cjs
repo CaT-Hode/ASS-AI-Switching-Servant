@@ -23,6 +23,7 @@ class Connections {
     writeCatalog = () => {},
     onChange = () => {},
     extraActive = () => 0,
+    restarter,
   }) {
     Object.assign(this, {
       router,
@@ -35,6 +36,7 @@ class Connections {
       writeCatalog,
       onChange,
       extraActive,
+      restarter,
     });
     this.file = path.join(dataDir, "connections.json");
     this.enabled = Object.fromEntries(
@@ -172,6 +174,7 @@ class Connections {
     await this.processes.refresh();
     const ids = this.ids(scope).filter((id) => !quit || this.needsRouter(id));
     this.preflight(ids, enabled, quit);
+    const restart = !quit && this.restarter ? await this.restarter.preview(ids) : null;
     const snapshot = this.processes.snapshot();
     const ticket = crypto.randomBytes(24).toString("hex");
     for (const [key, p] of this.tickets)
@@ -184,9 +187,11 @@ class Connections {
       quit,
       fingerprint: this.fingerprint(ids, enabled, quit),
       expires: Date.now() + 180000,
+      restart,
     });
     return {
       ticket,
+      restart: this.restarter?.public(restart),
       scope,
       enabled,
       quit,
@@ -219,7 +224,7 @@ class Connections {
       ),
     };
   }
-  async apply({ ticket, mode, acknowledged } = {}) {
+  async apply({ ticket, mode, acknowledged, restart = false } = {}) {
     const plan = this.tickets.get(ticket);
     if (!plan || plan.expires < Date.now())
       throw Error("确认已过期，请重新打开接入菜单");
@@ -228,6 +233,8 @@ class Connections {
       throw Error("请先阅读影响范围并确认");
     if (plan.enabled && mode !== "safe")
       throw Error("开启接入不允许终止客户端");
+    if (typeof restart !== "boolean" || (restart && (plan.quit || !plan.restart?.available || !this.restarter)))
+      throw Error("此操作没有已确认的重启目标");
     this.tickets.delete(ticket);
     this.busy = true;
     try {
@@ -237,6 +244,7 @@ class Connections {
       )
         throw Error("配置或窗口清单已变化，请重新预览后确认");
       this.preflight(plan.ids, plan.enabled, plan.quit);
+      if (restart) await this.restarter.validate(plan.restart);
       if (plan.enabled) {
         // Model/routing changes affect later requests of the same task too.
         // Never apply while uploads or in-flight responses still use this scope.
@@ -305,6 +313,20 @@ class Connections {
       }
       atomic(this.file, JSON.stringify(this.enabled));
       this.revision++;
+      let restarted;
+      if (restart) {
+        try { restarted = await this.restarter.restart(plan.restart, () => {
+          // The old desktop is gone and configuration is committed. Let the
+          // new instance use the route immediately instead of receiving 503.
+          for (const id of plan.ids) this.blocked.delete(id);
+        }); }
+        catch { restarted = { ok: false }; }
+      }
+      if (restart) return {
+        ok: true, quit: false, restart: restarted,
+        message: restarted.ok ? "接入配置已更新，所选桌面客户端已重启。"
+          : "接入配置已更新，但客户端重启未完成；请检查窗口并从开始菜单手动重启。",
+      };
       return {
         ok: true,
         quit: plan.quit,

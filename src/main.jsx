@@ -30,6 +30,7 @@ import { Updates, UpdateBanner } from "./updates.jsx";
 import { modelKey, ModelCheckButton } from "./model-inspection.jsx";
 import { DiagnosticTime } from "./diagnostic-time.jsx";
 import { Overview } from "./overview.jsx";
+import { latestSnapshot } from "./state-snapshot.mjs";
 const api = window.ass;
 const date = (value) =>
   new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
@@ -317,12 +318,12 @@ function App() {
     api
       .call("snapshot")
       .then((next) => {
-        setState(next);
+        setState((current) => latestSnapshot(current, next));
         setViewLocal(next.preferences.view);
         setClientTargetLocal(next.preferences.client);
       })
       .catch((e) => setToast({ error: true, message: e.message }));
-    return api.subscribe(setState);
+    return api.subscribe((next) => setState((current) => latestSnapshot(current, next)));
   }, []);
   useEffect(() => {
     if (toast) {
@@ -340,7 +341,8 @@ function App() {
         setToast({
           message: `已导入 ${r.providers} 个供应商、${r.models} 个模型`,
         });
-      setState(await api.call("snapshot"));
+      const next = await api.call("snapshot");
+      setState((current) => latestSnapshot(current, next));
       return r;
     } catch (e) {
       setToast({
@@ -519,11 +521,11 @@ function App() {
         <ConnectionDialog
           request={connectionRequest}
           onClose={() => setConnectionRequest(null)}
-          onComplete={(message) => {
-            setToast({ message });
+          onComplete={(message, error = false) => {
+            setToast({ message, error });
             api
               .call("snapshot")
-              .then(setState)
+              .then((next) => setState((current) => latestSnapshot(current, next)))
               .catch(() => {});
           }}
         />

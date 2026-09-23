@@ -109,6 +109,9 @@ async function launch() {
   assert.ok(page.url().startsWith("file://"));
   await app.evaluate(({ BrowserWindow, dialog }) => {
     BrowserWindow.getAllWindows()[0].setSize(1380, 940);
+    // Synthetic installed-provider registry; never depend on this machine's pi.
+    global.assTest.harnesses.piProviders = ["openai-codex", "github-copilot", "anthropic"].map((id) => ({ id, name: id }));
+    global.assTest.oauthHistory.scan({ immediate: true });
     global.assTest.confirm = 1;
     dialog.showMessageBox = async (...args) => {
       global.assTest.lastConfirmation = args.at(-1);
@@ -415,10 +418,7 @@ async function run() {
       name: piAccount.label + " 账户",
       exact: true,
     });
-    await work
-      .getByRole("button", { name: "设为启动账户", exact: true })
-      .click();
-    await work.getByRole("button", { name: "下次启动使用", exact: true }).waitFor();
+    await work.getByRole("button", { name: "当前账户", exact: true }).waitFor();
     await page.getByRole("switch", { name: "工作 API 供应商接入", exact: true }).click();
     assert.equal(
       (await snapshot()).harnesses.clients
@@ -807,7 +807,7 @@ async function run() {
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
       .click();
-    await work.getByRole("button", { name: "下次启动使用", exact: true }).waitFor();
+    await work.getByRole("button", { name: "当前账户", exact: true }).waitFor();
     await chooseClient("DeepSeek Harness");
     const deepAccount = page.getByRole("article", { name: "DeepSeek 账户", exact: true });
     await deepAccount
@@ -848,7 +848,7 @@ async function run() {
     assert.equal(
       await page
         .getByRole("article", { name: piAccount.label + " 账户", exact: true })
-        .getByRole("button", { name: "下次启动使用", exact: true })
+        .getByRole("button", { name: "当前账户", exact: true })
         .count(),
       1,
     );

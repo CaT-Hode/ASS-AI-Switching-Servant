@@ -324,4 +324,4 @@ class NativeFields {
     });
   }
 }
-module.exports = { NativeFields, document, edit, read, hash, safePath };
+module.exports = { NativeFields, document, edit, read, hash, safePath, atomic };

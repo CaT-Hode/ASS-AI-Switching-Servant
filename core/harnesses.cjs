@@ -16,6 +16,7 @@ const { ACCOUNT_SERVICES, officialApiService, acceptsApiAccount, acceptsNativeAc
 const {
   inspectCredentials,
   discoverNative,
+  nativeLocations,
   digest,
 } = require("./credential-status.cjs");
 const {
@@ -394,6 +395,26 @@ class HarnessManager {
     }
     const pi = this.launcher("pi");
     this.piProviders = await piOAuthProviders(pi.ready ? pi.entryPoint : "");
+  }
+  oauthHistorySources() {
+    return SPECS.filter((s) => s.oauth).flatMap(({ id }) => [
+      ...nativeLocations(id, this.nativeHome, this.nativeEnv, this.state.credentialHomes[id], this.codexDir)
+        .map((dir) => ({ harness: id, dir, native: true })),
+      ...this.state.profiles.filter((p) => p.harness === id)
+        .map((p) => ({ harness: id, dir: this.root(id, p.id), native: false })),
+    ]);
+  }
+  oauthHistoryAllows(id, provider) {
+    return this.spec(id).oauth && (id === "pi" ? this.piProviders.some((p) => p.id === provider)
+      : ACCOUNT_SERVICES[id].includes(provider));
+  }
+  oauthHistoryTarget(id) {
+    if (!this.spec(id).oauth) throw Error("此客户端不支持 OAuth 账户切换");
+    const source = this.oauthHistorySources().find((s) => s.harness === id);
+    const envKeys = id === "codex" ? ["CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_CLIENT_ID"]
+      : id === "claude" ? ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"] : [];
+    return { ...source, blocked: envKeys.some((k) => this.nativeEnv[k])
+      ? "当前环境变量覆盖原生登录，请先在客户端清除覆盖后再切换 OAuth" : "" };
   }
   launcher(harness) {
     this.spec(harness);

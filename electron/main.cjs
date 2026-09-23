@@ -44,11 +44,13 @@ const {
   serviceForProvider,
 } = require("../core/official-services.cjs");
 const { NativeKeyStore } = require("../core/native-key-store.cjs");
+const { OAuthHistory } = require("../core/oauth-history.cjs");
 const { OpenRouterAuth } = require("../core/openrouter-auth.cjs");
 const { UpdateChecker } = require("../core/updates.cjs");
 const { InjectionFiles } = require("../core/injection-files.cjs");
 const { ClientProcesses } = require("../core/client-processes.cjs");
 const { Connections } = require("../core/connections.cjs");
+const { ClientRestart } = require("../core/client-restart.cjs");
 const { Preferences } = require("../core/preferences.cjs");
 const { UsageHistory } = require("../core/usage-history.cjs");
 const accountTransactions = require("../core/account-transactions.cjs");
@@ -77,11 +79,13 @@ let window,
   nativeConfig,
   proxyConfig,
   nativeKeys,
+  oauthHistory,
   accountInfo,
   diagnosticHistory,
   openRouterAuth,
   updates,
   connections,
+  restarter,
   processes,
   preferences,
   usageHistory,
@@ -89,6 +93,7 @@ let window,
 let recent = [],
   balances = {};
 let startupError = "";
+let snapshotSequence = 0;
 const capabilities = Object.create(null),
   capabilityJobs = Object.create(null);
 const modelDirectory = new ModelDirectory({
@@ -285,13 +290,16 @@ function snapshot() {
         };
       }
     }
+  // History cards are account UI only: never turn inactive grants into a native
+  // model source or read credentials from their former file location.
+  const sources = modelSources(publicState, clientState, {
+    home: harnesses.nativeHome, env: harnesses.nativeEnv, directories: providerModels,
+  });
+  for (const client of clientState.clients) oauthHistory?.decorate(client);
   return {
     ...publicState,
-    modelSources: modelSources(publicState, clientState, {
-      home: harnesses.nativeHome,
-      env: harnesses.nativeEnv,
-      directories: providerModels,
-    }),
+    sequence: ++snapshotSequence,
+    modelSources: sources,
     preferences: preferences.state,
     usage: usageHistory?.public(),
     harnesses: clientState,
@@ -729,6 +737,11 @@ else {
         allowClient: (id) => connections.allow(id),
         onActivity: push,
       });
+      restarter = new ClientRestart({
+        desktop: (id) => harnesses.desktop(id),
+        // Never discover or terminate real desktop processes from an isolated QA.
+        ...(testMode ? { adapter: { inventory: async () => ({ apps: [], rows: [] }) } } : {}),
+      });
       connections = new Connections({
         dataDir,
         router,
@@ -740,6 +753,14 @@ else {
         port: servicePort,
         onChange: push,
         extraActive: () => probeControllers.size,
+        restarter,
+      });
+      oauthHistory = new OAuthHistory({
+        dataDir, crypto: safeStorage,
+        sources: () => harnesses.oauthHistorySources(),
+        target: (id) => harnesses.oauthHistoryTarget(id),
+        allows: (id, provider) => harnesses.oauthHistoryAllows(id, provider),
+        onChange: push,
       });
       try {
         if (connections.routerEnabled()) await router.start(servicePort);
@@ -864,8 +885,20 @@ else {
       register("client-refresh", async () => {
         await processes.refresh();
         await harnesses.refreshOAuth();
+        oauthHistory.scan({ immediate: true });
         return snapshot();
       });
+      register("oauth-switch-preview", (id, account) => {
+        if (connections.busy) throw Error("正在修改客户端接入，请稍后切换账户");
+        return oauthHistory.preview(id, account);
+      });
+      register("oauth-switch-apply", (ticket, confirmed) => connections.launch(async () => {
+        // No process termination and no implicit connection changes. The small
+        // confirmation warns about existing sessions; tokens stay in main only.
+        if (router.active || probeControllers.size || diagnosticControllers.size)
+          throw Error("ASS 仍有请求执行中，请等待结束后再切换账户");
+        return oauthHistory.apply(ticket, confirmed);
+      }));
       register("pi-import-oauth", async (sourceId, label) => {
         const source = harnesses.oauthSources().find((s) => s.id === sourceId);
         if (!source) throw new Error("授权来源已变化，请刷新");
@@ -1210,11 +1243,13 @@ else {
           harnesses,
           nativeConfig,
           nativeKeys,
+          oauthHistory,
           accountInfo,
           preferences,
           openRouterAuth,
           updates,
           connections,
+          restarter,
           processes,
           setFetch: (value) => {
             testFetch = value;
@@ -1234,6 +1269,7 @@ else {
             app.quit();
           },
         };
+      oauthHistory.start();
       if (!testMode) updates.start();
     })
     .catch((error) => {
@@ -1249,6 +1285,7 @@ else {
     }
     quitting = true;
     updates?.stop();
+    oauthHistory?.stop();
     modelDirectory.invalidate();
     diagnosticBatch.cancel();
     for (const controller of diagnosticControllers.values()) controller.abort();

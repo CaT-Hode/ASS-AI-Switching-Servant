@@ -15,6 +15,7 @@ import {
   Wallet,
   Unlink,
   ExternalLink,
+  ArrowRightLeft,
 } from "lucide-react";
 import { Modal } from "./editors.jsx";
 import {
@@ -113,8 +114,9 @@ function AccountCard({
   run,
   openProvider,
   editProvider,
+  switchOAuth,
 }) {
-  const selected = a.id === client.selected;
+  const selected = a.oauthRecordId ? a.oauthCurrent : a.id === client.selected;
   const warning = [
     "expired",
     "refresh-required",
@@ -219,7 +221,10 @@ function AccountCard({
             : balance.message}
         </p>
       )}
-      {a.kind !== "api" && (
+      {a.updatedAt && a.oauthRecordId && (
+        <small className="account-expiry">更新于 {new Date(a.updatedAt).toLocaleString()}</small>
+      )}
+      {a.kind !== "api" && a.sourcePath && (
         <details className="account-origin">
           <summary>凭据位置</summary>
           <code>{a.sourcePath}</code>
@@ -229,7 +234,15 @@ function AccountCard({
         <small className="account-expiry">供应商在原生客户端内选择</small>
       )}
       <footer>
-        <button
+        {a.oauthRecordId ? <button
+          className={"text-button account-choice" + (a.oauthCurrent ? " chosen" : "")}
+          disabled={!!busy || a.oauthCurrent || !a.ready}
+          title={a.oauthCurrent ? "原生凭据文件当前记录的账户" : "切换原生客户端的 OAuth 凭据"}
+          onClick={() => switchOAuth(a)}
+        >
+          {a.oauthCurrent ? <Check size={13} /> : <ArrowRightLeft size={13} />}
+          {a.oauthCurrent ? "当前账户" : "切换账户"}
+        </button> : <button
           className={"text-button account-choice" + (selected ? " chosen" : "")}
           disabled={!!busy || selected}
           onClick={() =>
@@ -240,8 +253,8 @@ function AccountCard({
         >
           {selected && <Check size={13} />}
           {selected ? "下次启动使用" : "设为启动账户"}
-        </button>
-        <div className="actions">
+        </button>}
+        {a.kind !== "oauth-history" && <div className="actions">
           {a.kind !== "api" && a.authType !== "api" && (
             <>
               <button
@@ -281,7 +294,7 @@ function AccountCard({
             <Terminal size={14} />
             启动
           </button>
-        </div>
+        </div>}
       </footer>
     </article>
   );
@@ -302,6 +315,7 @@ export function Clients({
     [editor, setEditor] = useState(null),
     [nativeKey, setNativeKey] = useState(null),
     [candidates, setCandidates] = useState(null),
+    [switching, setSwitching] = useState(null),
     [notice, setNotice] = useState("");
   const client =
     state.harnesses.clients.find((c) => c.id === selected) ||
@@ -478,6 +492,7 @@ export function Clients({
             <header className="client-accounts-heading"><h3>官方账户 <span className="count">{client.accounts.length}</span></h3>
               {!client.nativeLoginOnly && <button className="button" ref={addButton} onClick={() => setAdding(true)}><Plus size={14} />添加账户</button>}
             </header>
+            {client.oauthHistoryError && <p className="error-box" role="alert">{client.oauthHistoryError}</p>}
             <div className="client-account-grid">
               {client.accounts.map((a) => (
                 <AccountCard
@@ -485,6 +500,10 @@ export function Clients({
                   account={a}
                   {...{ client, state, act, busy, run, openProvider }}
                   editProvider={setEditor}
+                  switchOAuth={(a) => act("oauth-switch-preview", async () => {
+                    const preview = await api.call("oauth-switch-preview", client.id, a.oauthRecordId);
+                    setSwitching({ ...preview, clientName: client.name });
+                  })}
                 />
               ))}
               {!client.accounts.length && (
@@ -654,6 +673,11 @@ export function Clients({
         )}
       </div>
       <ConnectionService {...{ state, busy, onManage }} />
+      {switching && <OAuthSwitchDialog
+        preview={switching}
+        onClose={() => setSwitching(null)}
+        onDone={(message) => { setSwitching(null); setNotice(message); }}
+      />}
       {adding && (
         <AddAccount
           key={client.id}
@@ -724,4 +748,24 @@ export function Clients({
       )}
     </>
   );
+}
+
+function OAuthSwitchDialog({ preview, onClose, onDone }) {
+  const [pending, setPending] = useState(false), [error, setError] = useState("");
+  return <Modal title={"切换 " + preview.clientName + " 账户"} className="oauth-switch-dialog"
+    onClose={onClose} dismissible={!pending}
+    fallbackFocus={() => document.querySelector('.client-heading button[aria-label="刷新状态"]')}>
+    <p>切换到 <strong>{preview.label}</strong>？当前登录会先保存。请先结束客户端内的任务；ASS 不会重启客户端。</p>
+    <details className="account-origin"><summary>目标凭据位置</summary><code>{preview.target}</code></details>
+    {error && <p className="error-box" role="alert">{error}</p>}
+    <footer>
+      <button className="button" disabled={pending} onClick={onClose} data-autofocus>取消</button>
+      <button className="button primary" disabled={pending} onClick={async () => {
+        setPending(true); setError("");
+        try { const result = await api.call("oauth-switch-apply", preview.ticket, true); onDone(result.message); }
+        catch (e) { setError(e.message); }
+        finally { setPending(false); }
+      }}>{pending ? "切换中…" : "确定"}</button>
+    </footer>
+  </Modal>;
 }

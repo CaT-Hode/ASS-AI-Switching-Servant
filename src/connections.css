@@ -189,6 +189,10 @@
 .modal.connection-confirm footer .button {
   min-width: 76px;
 }
+.connection-restart { margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.connection-restart label { display: flex; align-items: center; gap: 9px; font-size: 13px; cursor: pointer; }
+.connection-restart input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent, #0866e8); }
+.connection-restart small { display: block; margin: 8px 0 0 25px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 @media (prefers-reduced-motion: reduce) {
   .connection-switch,
   .connection-pill-track i {

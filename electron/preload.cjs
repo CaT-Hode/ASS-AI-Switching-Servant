@@ -31,6 +31,8 @@ const allowed = [
   "export",
   "account-add",
   "account-select",
+  "oauth-switch-preview",
+  "oauth-switch-apply",
   "account-info",
   "account-info-doc",
   "client-refresh",

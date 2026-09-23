@@ -17,6 +17,7 @@ clients.before-account-separation.json
 clients.before-provider-injection.json
 native-accounts.json
 account-info.enc.json
+oauth-history.enc.json
 diagnostics.enc.json
 native-injections.enc.json
 usage-history.enc.json

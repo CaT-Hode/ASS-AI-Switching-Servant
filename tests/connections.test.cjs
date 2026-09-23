@@ -48,7 +48,7 @@ function connectionFixture(t, overrides = {}) {
   };
   Object.assign(router, overrides.router); Object.assign(config, overrides.config);
   Object.assign(injections, overrides.injections); Object.assign(processes, overrides.processes);
-  const connections = new Connections({ dataDir, router, config, injections, processes, extraActive: overrides.extraActive || (() => 0) });
+  const connections = new Connections({ dataDir, router, config, injections, processes, extraActive: overrides.extraActive || (() => 0), restarter: overrides.restarter });
   return { dataDir, router, config, injections, processes, connections };
 }
 
@@ -72,6 +72,36 @@ test("initial all-false connection state is persisted and restart stays closed w
   await restarted.apply({ ticket: plan.ticket, mode: "safe", acknowledged: true });
   assert.equal(f.router.starts, 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(restarted.file, "utf8")), expected);
+});
+function fakeRestarter() {
+  return { calls: [], preview: async () => ({ available: true, applicable: true, names: ["Codex 桌面端"] }),
+    public: (p) => p, async validate() { this.calls.push("validate"); }, async restart() { this.calls.push("restart"); return { ok: true }; } };
+}
+test("connection enable and disable restart only with explicit per-operation opt-in", async (t) => {
+  const r = fakeRestarter(), f = connectionFixture(t, { restarter: r });
+  const first = await f.connections.preview("codex", true);
+  await f.connections.apply({ ticket: first.ticket, mode: "safe", acknowledged: true }); assert.deepEqual(r.calls, []);
+  const off = await f.connections.preview("codex", false);
+  await f.connections.apply({ ticket: off.ticket, mode: "safe", acknowledged: true, restart: true }); assert.deepEqual(r.calls, ["validate", "restart"]);
+  r.calls = []; const on = await f.connections.preview("codex", true);
+  await f.connections.apply({ ticket: on.ticket, mode: "safe", acknowledged: true, restart: true }); assert.deepEqual(r.calls, ["validate", "restart"]);
+});
+test("restart rejects unsupported selection and changed processes before configuration writes", async (t) => {
+  const f = connectionFixture(t); const p = await f.connections.preview("codex", true);
+  await assert.rejects(f.connections.apply({ ticket: p.ticket, mode: "safe", acknowledged: true, restart: true }), /重启目标/);
+  assert.equal(f.config.attachCalls, 0);
+  const r = fakeRestarter(); r.validate = async () => { throw Error("process changed"); };
+  const g = connectionFixture(t, { restarter: r }), q = await g.connections.preview("codex", true);
+  await assert.rejects(g.connections.apply({ ticket: q.ticket, mode: "safe", acknowledged: true, restart: true }), /changed/);
+  assert.equal(g.config.attachCalls, 0); assert.equal(g.router.starts, 0);
+});
+test("restart failure reports applied configuration separately; active requests never restart", async (t) => {
+  const r = fakeRestarter(); r.restart = async () => { throw Error("failed"); };
+  const f = connectionFixture(t, { restarter: r }), p = await f.connections.preview("codex", true);
+  const result = await f.connections.apply({ ticket: p.ticket, mode: "safe", acknowledged: true, restart: true });
+  assert.equal(result.restart.ok, false); assert.equal(f.connections.enabled.codex, true); assert.match(result.message, /配置已更新.*重启未完成/);
+  f.router.active.codex = 1; const q = await f.connections.preview("codex", false);
+  await assert.rejects(f.connections.apply({ ticket: q.ticket, mode: "safe", acknowledged: true, restart: true }), /请求正在进行/);
 });
 
 test("preview is read-only and tickets are one-use, missing, and expiry checked", async (t) => {

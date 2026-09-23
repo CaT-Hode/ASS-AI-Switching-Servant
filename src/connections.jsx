@@ -54,11 +54,13 @@ export function ConnectionStatus({ client, state, busy, onManage }) {
 export function ConnectionDialog({ request, onClose, onComplete }) {
   const [plan, setPlan] = useState(null),
     [error, setError] = useState(""),
+    [restart, setRestart] = useState(false),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     let active = true;
     setPlan(null);
     setError("");
+    setRestart(false);
     api
       .call(
         "connection-preview",
@@ -94,7 +96,7 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
   if (plan) {
     if (plan.enabled) {
       warning = plan.codexConfig
-        ? "将更新 Codex 的接入配置，请在任务结束后手动重启客户端。"
+        ? restart ? "将更新 Codex 的接入配置。请先结束任务。" : "将更新 Codex 的接入配置，请在任务结束后手动重启客户端。"
         : plan.native
           ? "将同步模型及其凭据。请先结束客户端任务；原有登录保留。"
           : `后续从 ASS 启动的 ${target} 将使用路由配置，不影响已有窗口。`;
@@ -102,7 +104,7 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
       const windows = plan.sessions.length
         ? `并关闭 ${plan.sessions.length} 个由 ASS 启动的窗口`
         : "";
-      warning = `将恢复接口配置${windows}${plan.stopService ? "，停止路由服务" : ""}。请先结束任务，并退出自行启动的客户端。`;
+      warning = `将恢复接口配置${windows}${plan.stopService ? "，停止路由服务" : ""}。${restart ? "请先结束任务。" : "请先结束任务，并退出自行启动的客户端。"}`;
       if (plan.quit && plan.retainedNative?.length)
         warning = `将退出 ASS 并关闭依赖路由的接入${windows}。${plan.retainedNative.join("、")} 的直连配置与窗口保留。`;
     }
@@ -116,8 +118,9 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
         ticket: plan.ticket,
         mode: plan.enabled ? "safe" : "terminate",
         acknowledged: true,
+        restart,
       });
-      onComplete(result.message);
+      onComplete(result.message, result.restart?.ok === false);
       onClose();
     } catch (e) {
       setError(
@@ -142,6 +145,14 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
       >
         {error || warning}
       </p>
+      {plan?.restart?.applicable && !request.quit && <div className="connection-restart">
+        <label>
+          <input type="checkbox" checked={restart} disabled={busy || !plan.restart.available}
+            onChange={(e) => setRestart(e.target.checked)} />
+          <span>立即重启{plan.restart.names.length ? " " + plan.restart.names.join("、") : "客户端"}</span>
+        </label>
+        <small>{restart ? "会强制关闭所选客户端及其任务，再重新打开。" : plan.restart.available ? "默认不重启，可在任务结束后手动重启。" : plan.restart.reason}</small>
+      </div>}
       <footer>
         <button
           className="button"

@@ -619,4 +619,4 @@ class ClientProcesses {
   }
 }
 
-module.exports = { ClientProcesses, NativePowerShellAdapter };
+module.exports = { ClientProcesses, NativePowerShellAdapter, runPowerShell };
