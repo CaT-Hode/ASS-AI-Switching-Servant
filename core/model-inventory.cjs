@@ -3,6 +3,7 @@ const path = require("node:path");
 const YAML = require("yaml");
 const { parse: parseJSONC } = require("jsonc-parser");
 const { EFFORTS } = require("./models.cjs");
+const { createHash } = require("node:crypto");
 const APIs = {
   "openai-completions": "openai-chat",
   "openai-responses": "openai-responses",
@@ -100,7 +101,7 @@ const deepseekDefaults = [
     input: ["text", "image"],
   },
 ].map((m) => ({ ...m, contextWindow: 1000000 }));
-function opencodeModels(account, dir, provider, home, env) {
+function opencodeProvider(account, dir, provider, home, env, readConfig = read) {
   const native = account.kind === "native";
   const configDir = native
     ? path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "opencode")
@@ -128,7 +129,7 @@ function opencodeModels(account, dir, provider, home, env) {
   const custom = new Set();
   for (const file of files) {
     if (!path.isAbsolute(file)) continue;
-    const c = read(file);
+    const c = readConfig(file);
     if (
       Array.isArray(c.disabled_providers) &&
       c.disabled_providers.includes(provider)
@@ -149,7 +150,11 @@ function opencodeModels(account, dir, provider, home, env) {
     }
     p = { ...p, ...next, models };
   }
-  if (blocked || p.enabled === false) return [];
+  return { ...p, enabled: !blocked && p.enabled !== false, custom };
+}
+function opencodeModels(account, dir, provider, home, env) {
+  const p = opencodeProvider(account, dir, provider, home, env);
+  if (!p.enabled) return [];
   return Object.entries(p.models || {}).flatMap(([id, raw]) => {
     if (
       !raw ||
@@ -165,7 +170,7 @@ function opencodeModels(account, dir, provider, home, env) {
           {
             ...m,
             nativeProvider: provider,
-            catalogSource: custom.has(id)
+            catalogSource: p.custom.has(id)
               ? "OpenCode 本机配置"
               : "OpenCode 本机模型缓存（未联网验证）",
           },
@@ -233,7 +238,14 @@ function nativeModels(client, account, home, env) {
         );
     }
   }
-  return flat.filter(Boolean);
+  return flat.filter(Boolean).map((m) => ({ ...m, nativeProvider: m.nativeProvider || provider || "" }));
+}
+// A native model belongs to a specific local account/catalog and provider, not
+// just a harness. Never share a test record between same-named models or homes.
+function nativeTargetId(client, account, model) {
+  return "native-test:" + client.id + ":" + createHash("sha256")
+    .update(JSON.stringify([account.id, account.sourcePath, model.nativeProvider || ""]))
+    .digest("hex").slice(0, 32);
 }
 function modelSources(
   store,
@@ -263,9 +275,12 @@ function modelSources(
     const directory = directories["native-" + client.id];
     for (const a of accounts)
       for (const m of directory?.accounts?.[a.id]?.models ||
-        nativeModels(client, a, home || "", env))
-        if (!models.has((m.nativeProvider || "") + "::" + m.model))
-          models.set((m.nativeProvider || "") + "::" + m.model, m);
+        nativeModels(client, a, home || "", env)) {
+        const diagnosticProviderId = nativeTargetId(client, a, m);
+        models.set(diagnosticProviderId + "::" + m.model, {
+          ...m, diagnosticProviderId, nativeAccountLabel: a.label || "",
+        });
+      }
     sources.push({
       id: "native-" + client.id,
       name: client.name + " · 原生账户",
@@ -285,4 +300,4 @@ function modelSources(
   }
   return sources;
 }
-module.exports = { modelSources, nativeModels };
+module.exports = { modelSources, nativeModels, nativeTargetId, opencodeProvider };

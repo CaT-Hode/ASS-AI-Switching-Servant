@@ -24,7 +24,8 @@ const statusText = {
 const declaration = (v) =>
   v === true ? "声明支持" : v === false ? "声明不支持" : "未声明";
 export function ModelCheckButton({ provider, model, state, act, busy }) {
-  const key = modelKey(provider.id, model.model),
+  const providerId = model.diagnosticProviderId || provider.id;
+  const key = modelKey(providerId, model.model),
     result = state.diagnostics[key];
   const running = busy === "diag-" + key || state.diagnosticJobs?.[key];
   return (
@@ -42,7 +43,7 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
             exactTime(result.time) +
             (result.saveError ? " · " + result.saveError : "") +
             " · 点击重新检测"
-          : "检测此模型连接（小请求，可能计费）"
+          : (model.diagnosticProviderId ? "使用此模型的原生配置直连检测（小请求，可能计费）" : "检测此模型连接（小请求，可能计费）")
       }
       disabled={
         !!busy ||
@@ -52,7 +53,7 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
         provider.enabled === false
       }
       onClick={() =>
-        act("diag-" + key, () => api.call("diagnose", provider.id, model.model))
+        act("diag-" + key, () => api.call("diagnose", providerId, model.model))
       }
     >
       {running ? (

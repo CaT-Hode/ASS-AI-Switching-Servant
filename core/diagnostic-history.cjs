@@ -42,6 +42,7 @@ function diagnosticFingerprint(context) {
         model.wireApi,
         model.efforts,
         provider.id === "official" ? "low" : model.defaultEffort || "medium",
+        ...(provider.nativeRequest ? [provider.nativeRequest] : []),
       ]),
     )
     .digest("hex");
@@ -73,14 +74,17 @@ function normalizeResult(result) {
     result.ms < 0
   )
     return null;
+  const nativeProtocol = result.providerId.startsWith("native-test:") &&
+    ["openai-chat", "openai-responses", "anthropic"].includes(result.protocol) ? result.protocol : undefined;
   return {
     providerId: result.providerId,
     model: result.model,
     ok: result.ok,
     ms: result.ms,
     time: new Date(result.time).toISOString(),
+    ...(nativeProtocol ? { protocol: nativeProtocol } : {}),
     message: result.ok
-      ? "HTTP 200 · response.completed"
+      ? nativeProtocol ? "连接成功 · 完整流式响应" : "HTTP 200 · response.completed"
       : failureMessage(result.message),
   };
 }

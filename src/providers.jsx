@@ -771,7 +771,7 @@ export function Providers({
                 p.readOnly ? (
                   <div
                     className="native-model-row"
-                    key={(m.nativeProvider || "") + "::" + m.model}
+                    key={modelKey(m.diagnosticProviderId || p.id, m.model)}
                   >
                     <div>
                       <strong>{m.displayName || m.model}</strong>
@@ -779,12 +779,19 @@ export function Providers({
                         {m.nativeProvider ? m.nativeProvider + " / " : ""}
                         {m.model}
                       </small>
+                      {m.nativeAccountLabel && <small>{m.nativeAccountLabel}</small>}
                     </div>
                     <span>
                       {protocols[m.wireApi] || m.wireApi || "原生协议"}
                     </span>
                     <span>上下文 {number(m.contextWindow)}</span>
                     <span>{m.efforts?.join(" · ") || "思维档位未声明"}</span>
+                    <div className="native-model-check">
+                      <ModelCheckButton provider={p} model={m} {...{ state, act, busy }} />
+                      {state.diagnostics[modelKey(m.diagnosticProviderId || p.id, m.model)] && (
+                        <DiagnosticTime result={state.diagnostics[modelKey(m.diagnosticProviderId || p.id, m.model)]} />
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <InlineModel

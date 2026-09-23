@@ -33,6 +33,7 @@ const {
 const { ModelDirectory } = require("../core/model-directory.cjs");
 const {
   DiagnosticHistory,
+  diagnosticFingerprint,
   failureMessage,
 } = require("../core/diagnostic-history.cjs");
 const {
@@ -57,6 +58,7 @@ const { UsageHistory } = require("../core/usage-history.cjs");
 const accountTransactions = require("../core/account-transactions.cjs");
 const { modelSources, nativeModels } = require("../core/model-inventory.cjs");
 const { nativeOfficialProvider } = require("../core/native-official.cjs");
+const { resolveNativeDiagnostic, checkNativeConnection } = require("../core/native-model-diagnostics.cjs");
 const {
   nativeSubscriptionProvider,
 } = require("../core/subscription-usage.cjs");
@@ -157,7 +159,15 @@ function authReady() {
     return false;
   }
 }
+function nativeDiagnosticContext(id, name) {
+  return resolveNativeDiagnostic(id, name, harnesses.snapshot(), {
+    home: harnesses.nativeHome, env: harnesses.nativeEnv, directories: providerModels,
+  });
+}
 function diagnosticContext(id, name) {
+  if (id.startsWith("native-test:")) {
+    try { return nativeDiagnosticContext(id, name); } catch { return null; }
+  }
   if (id !== "official") {
     const provider = store.state.providers.find((p) => p.id === id);
     return { provider, model: provider?.models.find((m) => m.model === name) };
@@ -401,8 +411,9 @@ async function diagnose(providerId, modelName, signal) {
   if (connections.busy) throw new Error("正在切换接入，请稍后检查模型");
   const start = Date.now();
   const official = providerId === "official";
-  const p = store.state.providers.find((p) => p.id === providerId);
-  const selected = (
+  const native = providerId.startsWith("native-test:") ? nativeDiagnosticContext(providerId, modelName) : null;
+  const p = native?.provider || store.state.providers.find((p) => p.id === providerId);
+  const selected = native?.model || (
     official ? store.public().officialModels : p?.models || []
   ).find((m) => m.model === modelName && m.enabled !== false);
   if (!selected || (!official && !p.enabled))
@@ -410,7 +421,7 @@ async function diagnose(providerId, modelName, signal) {
   const name = selected.model,
     key = modelKey(providerId, name);
   if (diagnosticControllers.has(key)) throw Error("此模型正在检测");
-  const fingerprint = diagnosticHistory.fingerprint(providerId, name);
+  const fingerprint = native ? diagnosticFingerprint(native) : diagnosticHistory.fingerprint(providerId, name);
   const controller = new AbortController();
   const requestSignal = AbortSignal.any([
     controller.signal,
@@ -434,11 +445,16 @@ async function diagnose(providerId, modelName, signal) {
     reasoning: {
       effort: official
         ? "low"
-        : p.models.find((m) => m.model === name)?.defaultEffort || "medium",
+        : selected.defaultEffort || "medium",
     },
   };
   try {
     requestSignal.throwIfAborted();
+    if (native) {
+      const checked = await checkNativeConnection(native, upstream, requestSignal);
+      result = { providerId, model: name, ok: true, ms: Date.now() - start,
+        time: new Date().toISOString(), ...checked };
+    } else {
     if (!router.server) await router.start(servicePort);
     const headers = official
       ? readAuth()
@@ -473,6 +489,7 @@ async function diagnose(providerId, modelName, signal) {
       model: name,
       message: "HTTP 200 · response.completed",
     };
+    }
   } catch (error) {
     result = {
       providerId,

@@ -22,7 +22,7 @@ const SPECS = [
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const has = (v) => typeof v === "string" && !!v.trim();
 const hash = (v) => createHash("sha256").update(v).digest("hex").slice(0, 20);
-const protocols = { openai: "openai-chat", openai_legacy: "openai-chat",
+const protocols = { kimi: "openai-chat", openai: "openai-chat", openai_legacy: "openai-chat",
   openai_responses: "openai-responses", anthropic: "anthropic",
   "openai-chat-completions": "openai-chat", "openai-responses": "openai-responses",
   "anthropic-messages": "anthropic" };
