@@ -361,7 +361,7 @@ class HarnessManager {
       const backup = path.join(dataDir, "clients.before-provider-injection.json");
       if (!fs.existsSync(backup)) atomic(backup, fs.readFileSync(this.file, "utf8"));
     }
-    for (const { id } of SPECS) {
+    for (const { id } of ACTIVE_SPECS) {
       const providers = this.getState().providers;
       const bindings = this.state.accountBindings[id] || (legacy ? this.state.apiBindings?.[id] : []) || [];
       this.state.accountBindings[id] = bindings.filter((pid) =>
@@ -380,7 +380,7 @@ class HarnessManager {
         } else delete this.state.selected[id];
       }
     }
-    if (providerMigration) for (const { id } of SPECS) {
+    if (providerMigration) for (const { id } of ACTIVE_SPECS) {
       const old = this.state.injections[id];
       // A partially excluded provider migrates OFF: never broaden access to a
       // previously excluded model. Applied native/proxy configuration is untouched.
@@ -403,12 +403,6 @@ class HarnessManager {
     const pi = this.launcher("pi");
     const [piProviders] = await Promise.all([piOAuthProviders(pi.ready ? pi.entryPoint : "")]);
     this.piProviders = piProviders;
-  }
-  async refreshOAuthSecrets() {
-    // Retired adapters do not scan native stores. This method remains as a
-    // stable OAuthHistory callback for upgrades from older ASS versions.
-    this.antigravityKeyring = null;
-    return null;
   }
   oauthHistorySources() {
     const native = ["kimi", "zcode"].flatMap((id) => additional.locations(id, {
@@ -449,11 +443,6 @@ class HarnessManager {
       if (active.length > 1) throw Error("检测到多个 ZCode 登录目录，请在客户端设置中指定凭据目录");
       if (this.nativeEnv.ZCODE_DATA_BASE_DIR && !path.isAbsolute(this.nativeEnv.ZCODE_DATA_BASE_DIR)) throw Error("ZCode 自定义配置路径须为绝对路径");
       return { ...(active[0] || candidates[0]), harness: id, env: this.nativeEnv, native: true };
-    }
-    if (id === "antigravity") {
-      const source = this.oauthHistorySources().find((s) => s.harness === id);
-      if (!source) throw Error("当前 Antigravity 原生凭据不可读，请先在客户端登录并刷新状态");
-      return source;
     }
     const source = this.oauthHistorySources().find((s) => s.harness === id);
     const envKeys = id === "codex" ? ["CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_CLIENT_ID"]
@@ -498,10 +487,6 @@ class HarnessManager {
       ...(this.discovery[harness] || []),
     ];
     const desktop = candidates.find((c) => c.kind === "desktop");
-    const selectedDesktop = selected && resolveLauncher(harness, selected, this.launchEnv).kind === "desktop";
-    if (harness === "antigravity" && !selectedDesktop &&
-        new Set(candidates.filter((c) => c.kind === "desktop").map((c) => c.desktopExecutable?.toLowerCase())).size > 1)
-      return null;
     // Recheck immediately before exposing/opening an executable; no stale paths.
     if (!desktop) return null;
     const current = resolveLauncher(
@@ -549,7 +534,7 @@ class HarnessManager {
     atomic(this.file, JSON.stringify(this.state, null, 2));
   }
   spec(id) {
-    const spec = SPECS.find((s) => s.id === id);
+    const spec = ACTIVE_SPECS.find((s) => s.id === id);
     if (!spec) throw new Error("未知客户端");
     return spec;
   }
@@ -573,8 +558,7 @@ class HarnessManager {
         if (s.nativeLoginOnly) {
           const launcher = this.launcher(s.id);
           const native = additional.inspect(s.id, { home: this.nativeHome, env: this.nativeEnv,
-            override: this.state.credentialHomes[s.id], launcher,
-            ...(s.id === "antigravity" ? { keyring: this.antigravityKeyring } : {}) });
+            override: this.state.credentialHomes[s.id], launcher });
           const ownedCache = new Map();
           const owned = (file, provider) => {
             const key = JSON.stringify([file, provider]);

@@ -226,8 +226,12 @@ test("native-login clients reject account mutations while retired clients stay o
   assert.equal(manager.oauthHistoryAllows("antigravity", "google-antigravity"), false);
   assert.doesNotThrow(() => manager.setInjection("kimi", { excludedProviders: [] }));
   assert.doesNotThrow(() => manager.setInjection("zcode", { excludedProviders: [] }));
-  for (const id of ["antigravity"])
-    assert.throws(() => manager.setInjection(id, { excludedProviders: [] }), /尚未支持供应商接入/);
+  for (const action of [
+    () => manager.spec("antigravity"),
+    () => manager.detect("antigravity"),
+    () => manager.setInjection("antigravity", { excludedProviders: [] }),
+    () => manager.setCredentialHome("antigravity", f.home),
+  ]) assert.throws(action, /未知客户端/);
   assert.deepEqual(new Set(manager.oauthHistorySources().map((s) => s.harness)), new Set(["codex", "claude", "pi", "zcode"]));
   assert.equal(manager.oauthHistoryAllows("zcode", "zai"), true);
   assert.deepEqual(fs.readdirSync(f.home), ["clients.json"]);

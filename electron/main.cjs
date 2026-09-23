@@ -810,7 +810,8 @@ else {
         sources: () => harnesses.oauthHistorySources(),
         target: (id, provider) => harnesses.oauthHistoryTarget(id, provider),
         allows: (id, provider) => harnesses.oauthHistoryAllows(id, provider),
-        refresh: () => harnesses.refreshOAuthSecrets(),
+        // Kept only for recovery of a transaction created by an older ASS;
+        // retired clients are not scanned, exposed, or writable through IPC.
         external: { "antigravity-keyring": require("../core/antigravity-status.cjs").keyringAdapter },
         onChange: push,
       });

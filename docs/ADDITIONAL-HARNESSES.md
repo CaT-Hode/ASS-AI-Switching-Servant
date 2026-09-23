@@ -4,7 +4,7 @@
 
 | 客户端 | 当前能力 | 尚未完成 |
 | --- | --- | --- |
-| Kimi Code | 新旧版目录与原生账户识别；原生登录发起；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML、同步及撤回；本地 Wire Token 记录与首页统计；原生 API / 文件型 OAuth 逐模型直连检测 | 不落盘 Wire 的实验性会话存储；真实账户与完整 Agent 请求尚未验证 |
+| Kimi Code | 新旧版目录与原生账户识别；原生登录发起；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML、同步及撤回；本地 Wire Token 记录与首页统计；原生 API / 文件型 OAuth 逐模型直连检测 | 真实账户与完整 Agent 请求尚未验证 |
 | ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；Start Plan、个人 / Team Coding Plan、MCP 额度；当前账户 Start Plan 运行时模型权益；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计；API / Start / 已缓存 Coding Plan Key 的逐模型直连检测 | 真实账户与完整 Agent 请求尚未验证 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
@@ -90,7 +90,7 @@
 
 2026-09-23 核对：
 
-- [Kimi Code 数据位置](https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html)、[配置文件](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html)。源码 `MoonshotAI/kimi-code` 提交 `6451f1e056e90037bbf832f3578955cf8e55db64`：`packages/oauth/src/storage.ts`、`toolkit.ts`（逻辑 key 到存储 slot 的映射）、`types.ts`、`token-state.ts`、`packages/agent-core-v2/src/app/kosongConfig/configSection.ts`。旧 CLI 提交 `9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82`，`src/kimi_cli/config.py`、`auth/oauth.py`。
+- [Kimi Code 数据位置](https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html)、[配置文件](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html)。源码 `MoonshotAI/kimi-code` 提交 `6451f1e056e90037bbf832f3578955cf8e55db64`：`packages/oauth/src/storage.ts`、`toolkit.ts`（逻辑 key 到存储 slot 的映射）、`types.ts`、`token-state.ts`、`packages/agent-core-v2/src/app/kosongConfig/configSection.ts`。生产 `bootstrap.ts` 固定使用文件存储，MiniDB 仅作为会话索引与搜索读模型；会话事件仍落在 `agents/*/wire.jsonl`。旧 CLI 提交 `9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82`，`src/kimi_cli/config.py`、`auth/oauth.py`。
 - [ZCode 原生凭据](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts)、同目录 `credential-cipher.ts`；[供应商 / 模型规则](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/config/rule-data-schema.ts)。同提交的 `provider-config-file-codec.ts`、`provider-data-schema.ts`、`shared/src/model-config.ts` 定义写入格式；`model-execution.ts` 使用 Vercel AI SDK，Anthropic Base URL 保留 `/v1`。桌面目录与安装身份参照 `desktopDataBaseDirBootstrap.ts` 和 `desktop-product-identity.mjs`。
 - 模型目录覆盖顺序依据同提交 [Provider Resolver](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/resolver.ts)、`config/model-config.ts`、`owned-order.ts`；缓存选择依据 [Built-in Source](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider-node/src/zcode-builtin-provider-config-source.ts)、`zcode-builtin-cache-paths.ts`、`desktopProviderConfig.ts`、`provider-runtime-env.ts`。
 - Start Plan 动态模型范围依据同提交的 [Start Plan Billing](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/model-provider/zaiStartPlanBilling.ts) 与 [Provider Availability](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/model-provider/codingPlanProviderAvailability.ts)。ASS 只缓存经过清洗的状态、模型 ID 与查询时间，不保存响应体，也不写 ZCode 的账户供应商覆盖层。

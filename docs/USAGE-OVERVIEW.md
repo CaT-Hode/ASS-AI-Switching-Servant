@@ -30,7 +30,7 @@
 
 OpenCode 独立输出 / 推理口径依据[官方 getUsage 实现](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/session.ts)；DSH 本机 llm-deepseek / llm-pi-ai 适配器将 inputTokens 与 cacheReadTokens 分开上报。
 
-Kimi 新版模型 / 供应商仅使用日志中可匹配的 `llm.request` 和 `usage.record`；旧版没有此信息的记录显示“未标注”，不使用当前配置反推历史。主代理与子代理归入同一会话；新版中标记为旧版迁移副本的会话不重复导入。旧版缺少 message_id 时只能按文件内记录计数，无法可靠识别跨文件复制。依据 [UsageRecord](https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/packages/agent-core-v2/src/agent/usage/usageOps.ts) 与旧版 Wire / TokenUsage 定义；尚未覆盖不落盘 Wire 日志的实验性存储后端。
+Kimi 新版模型 / 供应商仅使用日志中可匹配的 `llm.request` 和 `usage.record`；旧版没有此信息的记录显示“未标注”，不使用当前配置反推历史。主代理与子代理归入同一会话；新版中标记为旧版迁移副本的会话不重复导入。旧版缺少 message_id 时只能按文件内记录计数，无法可靠识别跨文件复制。依据 [UsageRecord](https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/packages/agent-core-v2/src/agent/usage/usageOps.ts)、生产启动的文件存储注入与旧版 Wire / TokenUsage 定义。当前 Kimi Code 的 MiniDB 是会话索引与搜索读模型，不替代 `agents/*/wire.jsonl` 的事件日志。
 
 ZCode 读取原生 `ZCODE_SESSION_DB_PATH` / `ZCODE_SESSION_DB` 指定的绝对或 home 相对路径；项目相对路径不猜工作目录。此数据库独立于 OAuth 的 `.zcode/v2` 目录，不因切换凭据位置而臆造另一个数据库路径。CLI 原生逐请求表只保留 30 天，ASS 会在加密缓存中保留已读到且后来被原生清理的较早记录，最多覆盖近一年；首次接入前已清理的数据不能找回。字段与保留期依据 [ZCode usage.ts](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/usage.ts)。
 
