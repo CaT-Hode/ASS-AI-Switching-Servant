@@ -40,4 +40,4 @@
 
 DSH 的 `DEEPSEEK_API_KEY` 对应 DeepSeek 官方目录；OpenCode 的 `opencode` 与 `opencode-go` 分别对应 Zen / Go。进入模型弹窗时只读查询 `/models`，失败保留本机目录并显示错误。不会把原生 Key 复制为新的 ASS 供应商。模型列表本身不验证推理能力或余额。
 
-OpenCode 本机目录合并模型缓存及 JSON / JSONC 声明，兼容 XDG 路径、`OPENCODE_CONFIG`、`OPENCODE_CONFIG_DIR`，只归入已登录供应商；本机配置筛选仅用于本机目录，在线目录展示服务端提供的模型。DSH 无显式 `llm-deepseek.models` 时使用[官方插件内置目录](https://github.com/deepseek-ai/deepseek-harness/blob/aa8262ec091698bae9a6b04773a6b5b06ad4aef2/packages/llm/llm-deepseek/src/index.ts)，明确标为预置、未联网验证；在线结果优先，避免把旧缓存当作实时列表。
+OpenCode 本机目录合并模型缓存及 JSON / JSONC 声明，兼容 XDG 路径、`OPENCODE_CONFIG`、`OPENCODE_CONFIG_DIR`，只归入已登录供应商；本机配置筛选仅用于本机目录，在线目录展示服务端提供的模型。DSH 无显式 `llm-deepseek.models` 时使用[官方插件内置目录](https://github.com/deepseek-ai/deepseek-harness/blob/aa8262ec091698bae9a6b04773a6b5b06ad4aef2/packages/llm/llm-deepseek/src/index.ts)；在线结果优先，避免把旧缓存当作实时列表。

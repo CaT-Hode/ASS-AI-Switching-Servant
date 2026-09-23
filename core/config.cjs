@@ -33,7 +33,7 @@ function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/
     parsed.model_providers?.aimai1
   )
     throw new Error(
-      "存在非 ASS 管理的 openai / aimai1 provider，请先恢复原配置，避免覆盖",
+      "存在其他工具或非 ASS 管理的模型供应商，请先恢复原配置，避免覆盖",
     );
   let first = clean.search(/^\[/m);
   if (first < 0) first = clean.length;
@@ -45,7 +45,7 @@ function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/
   }
   const model = defaultModel ? `model = ${JSON.stringify(defaultModel.model)}\nmodel_reasoning_effort = ${JSON.stringify(defaultModel.effort)}\n` : "";
   const block = `${START}\nmodel_provider = "ass_router"\nmodel_catalog_json = ${JSON.stringify(catalog)}\n${model}${END}\n`;
-  const providers = `\n${START}\n[model_providers.ass_router]\nname = "ASS"\nbase_url = ${JSON.stringify(baseUrl)}\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n\n[model_providers.aimai1]\nname = "ASS (历史任务兼容)"\nbase_url = ${JSON.stringify(baseUrl)}\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n${END}\n`;
+  const providers = `\n${START}\n[model_providers.ass_router]\nname = "ASS"\nbase_url = ${JSON.stringify(baseUrl)}\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n${END}\n`;
   const result = block + top + rest + providers;
   TOML.parse(result);
   return { text: result, replaced };

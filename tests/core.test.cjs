@@ -125,6 +125,9 @@ test("attach refuses another active router and competing provider definitions", 
   assert.throws(() =>
     prepareConfig('[model_providers.openai]\nname="mine"', "x"),
   );
+  const generated = prepareConfig("", "catalog.json").text;
+  assert.match(generated, /model_providers\.ass_router/);
+  assert.doesNotMatch(generated, /aimai1|历史任务兼容/);
 });
 test("Anthropic conversion handles tool calls and tool results, excludes reasoning", () => {
   const request = convertRequest(

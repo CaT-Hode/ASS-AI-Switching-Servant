@@ -38,6 +38,9 @@ test("OpenCode merges logged-in provider cache with JSONC overrides, respects fi
     },
     other: { models: { private: { id: "private" } } },
   });
+  const cached = nativeModels({ id: "opencode" }, account, home, {});
+  assert.equal(cached[0].catalogSource, "OpenCode 本机模型缓存");
+  assert.doesNotMatch(JSON.stringify(cached), /未联网验证/);
   write(
     ".config/opencode/opencode.jsonc",
     '{// config\n"provider":{"opencode":{"apiKey":"synthetic-secret","models":{"x":{"name":"Custom X"},"extra":{"name":"Extra"}},"blacklist":["off"]}},}',
@@ -86,7 +89,7 @@ test("DSH official API credential gets labeled built-in models even with no expl
   const builtin = nativeModels({ id: "dsh" }, a, home, {});
   assert.equal(builtin.length, 4);
   assert.ok(builtin.some((m) => m.model === "deepseek-flash"));
-  assert.match(builtin[0].catalogSource, /预置/);
+  assert.equal(builtin[0].catalogSource, "DSH 内置目录");
   write(".dsh/settings.yaml", "llm-deepseek:\n  models:\n    - id: selected\n");
   const overridden = nativeModels({ id: "dsh" }, a, home, {});
   assert.deepEqual(

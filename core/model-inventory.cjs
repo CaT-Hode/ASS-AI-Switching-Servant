@@ -172,7 +172,7 @@ function opencodeModels(account, dir, provider, home, env) {
             nativeProvider: provider,
             catalogSource: p.custom.has(id)
               ? "OpenCode 本机配置"
-              : "OpenCode 本机模型缓存（未联网验证）",
+              : "OpenCode 本机模型缓存",
           },
         ]
       : [];
@@ -212,7 +212,7 @@ function nativeModels(client, account, home, env) {
                 nativeProvider: "deepseek-official",
                 catalogSource: Array.isArray(deep.models)
                   ? "DSH 本机配置"
-                  : "DSH 内置目录（预置，未联网验证）",
+                  : "DSH 内置目录",
               }
             );
           }),
