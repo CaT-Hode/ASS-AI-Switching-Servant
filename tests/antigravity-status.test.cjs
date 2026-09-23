@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { inspect } = require("../core/additional-harnesses.cjs");
 const { HarnessManager } = require("../core/harnesses.cjs");
-const { parseStoredToken, readKeyring, shouldReadKeyring } = require("../core/antigravity-status.cjs");
+const { parseStoredToken, readKeyring, writeKeyringRawSync, shouldReadKeyring } = require("../core/antigravity-status.cjs");
 const now = Date.UTC(2026, 8, 23);
 const expiry = new Date(now + 3600000).toISOString();
 const token = (extra = {}) => ({ token: { access_token: "synthetic-access-secret", refresh_token: "synthetic-refresh-secret", expiry },
@@ -94,6 +94,24 @@ test("the OS reader uses one fixed target, bounded hidden execution and returns 
   const failure = await readKeyring({ platform: "win32", run: (_e, _a, _o, cb) => cb(Error("secret-error"), "secret-output") });
   assert.equal(failure.status, "unreadable"); assert.ok(!JSON.stringify(failure).includes("secret"));
   assert.equal((await readKeyring({ platform: "linux", run: () => assert.fail("must not run") })).status, "external");
+});
+
+test("the OS writer uses one fixed target and keeps credential payload out of process arguments", () => {
+  const payload = JSON.stringify(token()), calls = [];
+  const run = (exe, args, options) => {
+    calls.push({ exe, args, options });
+    return { status: 0, stdout: '{"status":"ok"}' };
+  };
+  writeKeyringRawSync(payload, { platform: "win32", run });
+  writeKeyringRawSync(null, { platform: "win32", run });
+  const script = Buffer.from(calls[0].args.at(-1), "base64").toString("utf16le");
+  assert.match(script, /CredWriteW/); assert.match(script, /CredDeleteW/);
+  assert.match(script, /gemini:antigravity/); assert.match(script, /Persist = 2/); assert.match(script, /UserName = "antigravity"/);
+  assert.ok(!calls[0].args.join(" ").includes("synthetic-access-secret"));
+  assert.equal(calls[0].options.input, "write\n" + payload); assert.equal(calls[1].options.input, "delete\n");
+  assert.equal(calls[0].options.windowsHide, true); assert.equal(calls[0].options.timeout, 5000);
+  assert.throws(() => writeKeyringRawSync("x".repeat(2561), { platform: "win32", run }), /容量/);
+  assert.equal(calls.length, 2);
 });
 
 test("cached keyring expiry is updated on snapshots and corrupt files never disclose contents", (t) => {

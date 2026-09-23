@@ -10,6 +10,7 @@ const { makeCatalog } = require("./models.cjs");
 const { apiProfile } = require("./account-info.cjs");
 const additional = require("./additional-harnesses.cjs");
 const additionalOAuth = require("./additional-oauth.cjs");
+const antigravityStatus = require("./antigravity-status.cjs");
 const kimiConfig = require("./kimi-config.cjs");
 const { officialAccountPlan } = require("./official-account-plan.cjs");
 const { assertClaudeAccount } = require("./claude-launch-policy.cjs");
@@ -400,15 +401,18 @@ class HarnessManager {
       if (!this.state.executables[id] || id === "opencode") this.detect(id);
     }
     const pi = this.launcher("pi");
-    const antigravity = require("./antigravity-status.cjs");
-    const context = { home: this.nativeHome, override: this.state.credentialHomes.antigravity,
-      launcher: this.launcher("antigravity") };
-    const [piProviders, antigravityKeyring] = await Promise.all([
+    const [piProviders] = await Promise.all([
       piOAuthProviders(pi.ready ? pi.entryPoint : ""),
-      antigravity.shouldReadKeyring(context) ? antigravity.readKeyring() : null,
+      this.refreshOAuthSecrets(),
     ]);
     this.piProviders = piProviders;
-    this.antigravityKeyring = antigravityKeyring;
+  }
+  async refreshOAuthSecrets() {
+    const context = { home: this.nativeHome, override: this.state.credentialHomes.antigravity,
+      launcher: this.launcher("antigravity") };
+    this.antigravityKeyring = antigravityStatus.shouldReadKeyring(context)
+      ? await antigravityStatus.readKeyring({ includeGrant: true }) : null;
+    return this.antigravityKeyring;
   }
   oauthHistorySources() {
     const native = ["kimi", "zcode"].flatMap((id) => additional.locations(id, {
@@ -419,7 +423,9 @@ class HarnessManager {
       catch { return [{ ...location, harness: id, authFile: path.join(location.dir, "config.toml"),
         issue: "Kimi OAuth 配置无法读取" }]; }
     }));
-    return [...native, ...SPECS.filter((s) => s.oauth && !s.nativeLoginOnly).flatMap(({ id }) => [
+    const antigravity = antigravityStatus.historySources({ home: this.nativeHome,
+      override: this.state.credentialHomes.antigravity, keyring: this.antigravityKeyring });
+    return [...native, ...antigravity, ...SPECS.filter((s) => s.oauth && !s.nativeLoginOnly).flatMap(({ id }) => [
       ...nativeLocations(id, this.nativeHome, this.nativeEnv, this.state.credentialHomes[id], this.codexDir)
         .map((dir) => ({ harness: id, dir, native: true })),
       ...this.state.profiles.filter((p) => p.harness === id)
@@ -429,6 +435,7 @@ class HarnessManager {
   oauthHistoryAllows(id, provider) {
     if (id === "kimi") return /^kimi:[a-f0-9]{20}$/.test(provider);
     if (id === "zcode") return ["zai", "bigmodel"].includes(provider);
+    if (id === "antigravity") return provider === "google-antigravity";
     return this.spec(id).oauth && (id === "pi" ? this.piProviders.some((p) => p.id === provider)
       : ACCOUNT_SERVICES[id].includes(provider));
   }
@@ -448,6 +455,11 @@ class HarnessManager {
       if (active.length > 1) throw Error("检测到多个 ZCode 登录目录，请在客户端设置中指定凭据目录");
       if (this.nativeEnv.ZCODE_DATA_BASE_DIR && !path.isAbsolute(this.nativeEnv.ZCODE_DATA_BASE_DIR)) throw Error("ZCode 自定义配置路径须为绝对路径");
       return { ...(active[0] || candidates[0]), harness: id, env: this.nativeEnv, native: true };
+    }
+    if (id === "antigravity") {
+      const source = this.oauthHistorySources().find((s) => s.harness === id);
+      if (!source) throw Error("当前 Antigravity 原生凭据不可读，请先在客户端登录并刷新状态");
+      return source;
     }
     const source = this.oauthHistorySources().find((s) => s.harness === id);
     const envKeys = id === "codex" ? ["CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_CLIENT_ID"]

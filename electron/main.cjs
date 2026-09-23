@@ -808,6 +808,8 @@ else {
         sources: () => harnesses.oauthHistorySources(),
         target: (id, provider) => harnesses.oauthHistoryTarget(id, provider),
         allows: (id, provider) => harnesses.oauthHistoryAllows(id, provider),
+        refresh: () => harnesses.refreshOAuthSecrets(),
+        external: { "antigravity-keyring": require("../core/antigravity-status.cjs").keyringAdapter },
         onChange: push,
       });
       nativeLogin = new NativeLogin({ harnesses, history: oauthHistory, processes });

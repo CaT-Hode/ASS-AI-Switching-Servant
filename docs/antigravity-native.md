@@ -10,6 +10,8 @@
 - 系统凭据仅查询 `gemini:antigravity`，不枚举、不读取其他服务。应用启动或刷新客户端时异步读取，最多等待 5 秒；凭据值只在主进程内解析，界面与持久化状态不接收 token。
 - 文件回退为 `.gemini/jetski-standalone-oauth-token`，支持新 `StoredToken` 对象与旧 OAuth2 Token 对象。正常优先系统条目；系统条目不存在 / 读取失败时使用原生文件；一小时内的 `cache/antigravity-keyring-unavailable` 标记使文件优先。ASS 不创建、清除或更新该标记。
 - 空的当前系统授权不会用旧文件伪装成另一个已登录账户；过期、待原生刷新、缺失访问令牌分别保留状态。不会把仅有套餐或项目信息的残留记录算作账户。
+- ASS 运行时定期检测当前原生存储的 OAuth 变化，把完整 `StoredToken` 连同恢复事务用 Windows DPAPI 加密保存；界面只拿到账户白名单字段。
+- 账户卡片可在确认后切换已保存的 OAuth。切换前重新比对当前值；写入失败会回滚，外部登录已再次改动时停止自动恢复。系统条目固定为 `gemini:antigravity`，文件回退只写原生 token 文件。
 - 自定义目录不借用默认系统凭据；测试 home 不访问宿主密钥库。路径拒绝符号链接，文件最多读取 2 MiB。
 - `modelProvider: "gemini"` 配合 `GEMINI_API_KEY` 才算 CLI API 账户。单独出现环境变量、普通 Gemini CLI 凭据、IDE UI 缓存都不是 Antigravity 登录证据。CLI API 模式与已发现 Desktop / IDE 的共享 OAuth 分开显示。
 
@@ -17,7 +19,7 @@
 
 ## 尚未开放
 
-OAuth 记录 / 切换、第三方模型注入、模型请求测试及额度 / Token 查询。旧 IDE 若使用不同的专有存储，不猜测或扫描其 SQLite 密钥。当前本机没有安装 Antigravity，真实登录与旧版本兼容性仍需联调。
+原生登录发起、第三方模型注入、模型请求测试及额度 / Token 查询。旧 IDE 若使用不同的专有存储，不猜测或扫描其 SQLite 密钥。当前本机没有安装 Antigravity，真实登录、换号与旧版本兼容性仍需联调。
 
 ## 实现依据
 
@@ -27,6 +29,6 @@ OAuth 记录 / 切换、第三方模型注入、模型请求测试及额度 / To
   - `auth_client/auth_client.go`：keyring user `antigravity`。
   - `code_assist_client/composite_token_storage.go`：系统 / 文件优先级、失败标记与一小时有效期。
 - 官方 Google LLC 签名的 [Desktop 2.16.0 安装包](https://storage.googleapis.com/antigravity-public/antigravity-hub/2.16.0-4917332007583744/windows-x64/Antigravity-x64.exe)，仅解包：`package.json`、`dist/paths.js`、`dist/ideInstall/constants.js` 用于桌面产品身份、配置路径和 IDE 安装目录。没有安装或运行程序。
-- [go-keyring Windows 实现](https://github.com/zalando/go-keyring/blob/master/keyring_windows.go) 使用 `service:username` 作为 Generic Credential 目标。ASS 只调用 `CredReadW` 和 `CredFree`，不实现该库的枚举 / 写入 / 删除功能。
+- [go-keyring Windows 实现](https://github.com/zalando/go-keyring/blob/master/keyring_windows.go) 使用 `service:username` 作为 Generic Credential 目标。ASS 只对固定目标调用 `CredReadW`、`CredWriteW`、`CredDeleteW` 与 `CredFree`，不实现凭据枚举。
 
 这属于对指定原生版本的适配，不是 Google 对第三方账户管理器的稳定接口承诺。原生布局变化时保留“无法读取”，不代用其他账户。

@@ -45,10 +45,10 @@ function identity(harness, provider, grant) {
   }
   return null; // Do not pretend an opaque rotating token identifies a person.
 }
-function readSource(source) {
+function readSource(source, options) {
   const { harness, dir } = source;
   if (!SUPPORTED.has(harness)) throw Error("此客户端不支持 OAuth 账户切换");
-  if (additional.SUPPORTED.has(harness)) return additional.readSource(source);
+  if (additional.SUPPORTED.has(harness)) return additional.readSource(source, options);
   let config = {}, configText = null;
   if (harness === "codex") {
     configText = read(path.join(dir, "config.toml"));
@@ -91,8 +91,9 @@ function readSource(source) {
 }
 
 class OAuthHistory {
-  constructor({ dataDir, crypto: encryption, sources, target, allows = () => true, onChange = () => {}, now = Date.now }) {
-    Object.assign(this, { encryption, sources, target, allows, onChange, now });
+  constructor({ dataDir, crypto: encryption, sources, target, allows = () => true, onChange = () => {},
+    now = Date.now, refresh, external = {} }) {
+    Object.assign(this, { encryption, sources, target, allows, onChange, now, refresh, external });
     this.file = path.join(dataDir, "oauth-history.enc.json");
     this.entries = [];
     this.observed = new Map();
@@ -123,7 +124,10 @@ class OAuthHistory {
   }
   recover(transaction) {
     if (!Array.isArray(transaction) || transaction.length > 2 || !transaction.length ||
-      transaction.some((w) => !path.isAbsolute(w.file) || typeof w.after !== "string" || (w.before !== null && typeof w.before !== "string"))) throw Error();
+      transaction.some((w) => !path.isAbsolute(w.file) || typeof w.after !== "string" ||
+        (w.before !== null && typeof w.before !== "string") ||
+        (w.external !== undefined && (!this.external[w.external] || typeof this.external[w.external].read !== "function" ||
+          typeof this.external[w.external].write !== "function")))) throw Error();
     const releases = [];
     try {
       for (const w of transaction) if (w.lock === "zcode") releases.push(additional.lock(w.file));
@@ -133,12 +137,20 @@ class OAuthHistory {
   recoverLocked(transaction) {
     // A crashed multi-file switch is reversible only while every file still
     // equals our before/after image. Never roll back a subsequent native login.
-    for (const w of transaction) if (![w.before, w.after].includes(read(w.file))) throw Error();
+    for (const w of transaction) if (![w.before, w.after].includes(this.targetRead(w))) throw Error();
     for (const w of [...transaction].reverse()) {
-      if (read(w.file) !== w.after) continue;
-      if (w.before === null) fs.unlinkSync(w.file); else atomic(w.file, w.before);
+      if (this.targetRead(w) !== w.after) continue;
+      this.targetWrite(w, w.before);
     }
     this.persist(this.entries);
+  }
+  targetRead(write) {
+    try { return write.external ? this.external[write.external].read() : read(write.file); }
+    catch { throw Error("原生 OAuth 凭据无法读取"); }
+  }
+  targetWrite(write, value) {
+    if (write.external) return this.external[write.external].write(value);
+    if (value === null) fs.unlinkSync(write.file); else atomic(write.file, value);
   }
   capture(state) {
     let entries = this.entries.slice(), changed = false;
@@ -152,7 +164,8 @@ class OAuthHistory {
       const fingerprint = stamp([g.grant, g.metadata, g.lastRefresh, g.query]);
       if (previous?.fingerprint === fingerprint) continue;
       // Another native/isolated directory can contain an older copy of this user.
-      if (previous && state.modified < previous.sourceModified && previous.sourceFile !== key(state.auth.file)) continue;
+      if (previous && state.source.harness !== "antigravity" &&
+          state.modified < previous.sourceModified && previous.sourceFile !== key(state.auth.file)) continue;
       const entry = { id, harness: state.source.harness, provider: g.row.provider,
         identity: g.identity, grantKey: g.grantKey, grant: g.grant,
         metadata: g.metadata, lastRefresh: g.lastRefresh, profile: g.row.profile, query: g.query,
@@ -202,8 +215,19 @@ class OAuthHistory {
     this.scan({ immediate: true });
     this.timer = setInterval(() => this.scan(), 2000);
     this.timer.unref?.();
+    if (this.refresh) {
+      this.refreshTimer = setInterval(() => this.refreshExternal(), 10000);
+      this.refreshTimer.unref?.();
+    }
   }
-  stop() { clearInterval(this.timer); this.timer = null; }
+  async refreshExternal() {
+    if (!this.refresh || this.refreshing) return;
+    this.refreshing = true;
+    try { await this.refresh(); this.scan({ immediate: true }); }
+    catch { /* Keep encrypted history and the last readable snapshot. */ }
+    finally { this.refreshing = false; }
+  }
+  stop() { clearInterval(this.timer); clearInterval(this.refreshTimer); this.timer = this.refreshTimer = null; }
   lookup(harness, id) {
     if (!SUPPORTED.has(harness)) throw Error("此客户端不支持 OAuth 账户切换");
     const entry = this.entries.find((e) => e.harness === harness && e.id === id);
@@ -215,7 +239,7 @@ class OAuthHistory {
     const source = this.target(harness, entry.provider);
     if (!source || source.harness !== harness) throw Error("无法确定客户端凭据目录");
     if (source.blocked) throw Error(source.blocked);
-    const state = readSource(source), data = state.auth.data;
+    const state = readSource(source, { fresh: harness === "antigravity" }), data = state.auth.data;
     if (harness === "codex") {
       if (state.config.forced_login_method === "api") throw Error("Codex 已限定使用 API Key，未切换");
       if (state.config.forced_chatgpt_workspace_id && entry.profile?.fields.find((f) => f.id === "accountId")?.value !== state.config.forced_chatgpt_workspace_id)
@@ -242,11 +266,12 @@ class OAuthHistory {
     const sources = this.sources();
     const current = new Map();
     for (const a of client.accounts) {
-      if (a.authType !== "oauth" || !a.sourcePath || !path.isAbsolute(a.sourcePath)) continue;
+      const accountSource = a.oauthHistorySource || a.sourcePath;
+      if (a.authType !== "oauth" || !accountSource || !path.isAbsolute(accountSource)) continue;
       try {
-        const source = sources.find((s) => s.harness === client.id && key(sourceFile(s)) === key(a.sourcePath));
+        const source = sources.find((s) => s.harness === client.id && key(sourceFile(s)) === key(accountSource));
         if (!source) continue;
-        const observed = this.observed.get(key(a.sourcePath));
+        const observed = this.observed.get(key(accountSource));
         if (!observed || observed.fingerprint !== readSource(source).fingerprint) continue;
         const id = observed.ids[a.oauthHistoryProvider || a.provider || a.oauthProvider];
         if (!id || !records.some((e) => e.id === id)) continue;
@@ -273,7 +298,7 @@ class OAuthHistory {
       target: key(state.auth.file), expires: this.now() + 120000 });
     const f = entry.profile?.fields || [];
     return { ticket, harness, label: f.find((v) => v.id === "email")?.value || f.find((v) => v.id === "name")?.value || this.publicEntry(entry).label,
-      target: state.auth.file };
+      target: state.source.storage === "keyring" ? "Windows 凭据管理器 · gemini:antigravity" : state.auth.file };
   }
   apply(ticket, confirmed) {
     const t = this.tickets.get(ticket);
@@ -307,12 +332,14 @@ class OAuthHistory {
     }
     // Synchronous, compare-before-write. Never restart a client or remove locks.
     check();
-    this.persist(this.entries, writes.map((w) => ({ file: w.file, before: w.text, after: w.after, lock: w.lock })));
+    this.persist(this.entries, writes.map((w) => ({ file: w.file, before: w.text, after: w.after,
+      lock: w.lock, ...(w.external ? { external: w.external } : {}) })));
     const done = [];
     try {
       for (const w of writes) {
-        if (read(w.file) !== w.text) throw Error("登录信息已变化，请重新确认切换");
-        atomic(w.file, w.after);
+        if (this.targetRead(w) !== w.text) throw Error("登录信息已变化，请重新确认切换");
+        this.targetWrite(w, w.after);
+        w.afterWrite?.(w.after);
         done.push(w);
       }
       this.persist(this.entries);
@@ -320,8 +347,9 @@ class OAuthHistory {
       let conflict = false;
       for (const w of done.reverse()) {
         try {
-          if (read(w.file) !== w.after) { conflict = true; continue; }
-          if (w.text === null) fs.unlinkSync(w.file); else atomic(w.file, w.text);
+          if (this.targetRead(w) !== w.after) { conflict = true; continue; }
+          this.targetWrite(w, w.text);
+          w.afterWrite?.(w.text);
         } catch { conflict = true; }
       }
       if (!conflict) {

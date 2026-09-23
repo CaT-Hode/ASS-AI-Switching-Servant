@@ -4,10 +4,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { execFile } = require("node:child_process");
+const { execFile, execFileSync, spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { text, claims } = require("./account-info.cjs");
-const { status: authorization } = require("./additional-oauth.cjs");
 const { safePath } = require("./native-fields.cjs");
 
 const TOKEN_FILE = "jetski-standalone-oauth-token";
@@ -18,6 +17,15 @@ const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLower
 const digest = (v) => createHash("sha256").update(v).digest("hex").slice(0, 20);
 const variants = { "antigravity-cli": "cli", antigravity: "desktop", "antigravity-ide": "ide" };
 const labels = { cli: "Antigravity CLI", desktop: "Antigravity 2.0", ide: "Antigravity IDE", custom: "Antigravity" };
+const powershell = () => path.join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+const encoded = (script) => Buffer.from(script, "utf16le").toString("base64");
+const authorization = (access, refresh, seconds, now = Date.now()) => {
+  const n = Number(seconds), expiresAt = Number.isFinite(n) && n > 0 && n < 8.64e12 ? n * 1000 : null;
+  const expired = expiresAt !== null && expiresAt <= now;
+  return { authType: "oauth", ready: has(access) && (!expired || has(refresh)), expiresAt,
+    status: !has(access) ? "incomplete" : expired ? has(refresh) ? "refresh-required" : "expired" : "detected",
+    message: !has(access) ? "OAuth 凭据不完整" : expired ? has(refresh) ? "访问令牌已到期 · 由客户端刷新" : "授权已到期 · 需要重新登录" : "OAuth" };
+};
 
 function locations({ home, override }) {
   if (override) {
@@ -68,13 +76,14 @@ function parseStoredToken(data, now = Date.now()) {
     ["projectId", "Google Cloud 项目", data.project_id], ["region", "区域", data.region],
     ["authMethod", "授权方式", data.auth_method], ["wifProvider", "身份联邦", data.wif_provider]]
     .flatMap(([id, label, value]) => { const safe = text(value, secrets); return safe ? [{ id, label, value: safe }] : []; });
-  return { account: { ...auth, refreshable: has(t.refresh_token), identityKey: has(identity.sub) ? digest(identity.iss + "\0" + identity.sub) : "",
+  return { grant: data, account: { ...auth, refreshable: has(t.refresh_token),
+    identityKey: has(identity.sub) ? digest(identity.iss + "\0" + identity.sub) : "",
     profile: { source: "local", docs: ["antigravity"], fields } } };
 }
 
-// Fixed native target only: no CredEnumerate, no arbitrary target from IPC, no
-// credential writes. The child output is captured privately and immediately
-// reduced to presentation metadata; tokens never enter ASS state or logs.
+// Fixed native target only: no CredEnumerate and no arbitrary target from IPC.
+// Raw payloads stay in the main process and are used only by encrypted OAuth
+// history; renderer state receives presentation metadata only.
 const KEYRING_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 try {
@@ -123,27 +132,131 @@ namespace ASS {
   else { [Console]::Write((@{status='detected';payload=$credentialValue} | ConvertTo-Json -Compress)) }
 } catch { [Console]::Write('{"status":"unreadable"}') }
 `;
-async function readKeyring({ platform = process.platform, run = execFile, now = Date.now() } = {}) {
+const KEYRING_WRITE_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace ASS {
+  public static class AntigravityCredentialWrite {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct Credential {
+      public uint Flags, Type;
+      [MarshalAs(UnmanagedType.LPWStr)] public string TargetName;
+      [MarshalAs(UnmanagedType.LPWStr)] public string Comment;
+      public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+      public uint CredentialBlobSize;
+      public IntPtr CredentialBlob;
+      public uint Persist, AttributeCount;
+      public IntPtr Attributes;
+      [MarshalAs(UnmanagedType.LPWStr)] public string TargetAlias;
+      [MarshalAs(UnmanagedType.LPWStr)] public string UserName;
+    }
+    [DllImport("advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredWrite(ref Credential credential, uint flags);
+    [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredDelete(string target, uint type, uint flags);
+    public static void Apply(string action, string value) {
+      if (action == "delete") {
+        if (!CredDelete("gemini:antigravity", 1, 0)) {
+          int error = Marshal.GetLastWin32Error();
+          if (error != 1168) throw new Win32Exception(error);
+        }
+        return;
+      }
+      if (action != "write") throw new InvalidOperationException();
+      byte[] bytes = new UTF8Encoding(false, true).GetBytes(value);
+      if (bytes.Length == 0 || bytes.Length > 2560) throw new InvalidOperationException();
+      IntPtr blob = Marshal.AllocHGlobal(bytes.Length);
+      try {
+        Marshal.Copy(bytes, 0, blob, bytes.Length);
+        Credential c = new Credential { Type = 1, TargetName = "gemini:antigravity",
+          CredentialBlobSize = (uint)bytes.Length, CredentialBlob = blob,
+          Persist = 2, UserName = "antigravity" };
+        if (!CredWrite(ref c, 0)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      } finally {
+        for (int i = 0; i < bytes.Length; i++) Marshal.WriteByte(blob, i, 0);
+        Array.Clear(bytes, 0, bytes.Length);
+        Marshal.FreeHGlobal(blob);
+      }
+    }
+  }
+}
+'@
+  $inputValue = [Console]::In.ReadToEnd()
+  $separator = $inputValue.IndexOf([char]10)
+  if ($separator -lt 0) { throw 'invalid input' }
+  $action = $inputValue.Substring(0, $separator).TrimEnd([char]13)
+  $payload = $inputValue.Substring($separator + 1)
+  [ASS.AntigravityCredentialWrite]::Apply($action, $payload)
+  [Console]::Write('{"status":"ok"}')
+} catch { [Console]::Write('{"status":"unreadable"}') }
+`;
+function rawResult(output) {
+  const result = JSON.parse(String(output).replace(/^\uFEFF/, ""));
+  if (result.status === "missing") return null;
+  if (result.status !== "detected" || typeof result.payload !== "string" || result.payload.length > 65536) throw Error();
+  return result.payload;
+}
+function readKeyringRawSync({ platform = process.platform, run = execFileSync } = {}) {
+  if (platform !== "win32") throw Error("Antigravity 系统凭据仅支持 Windows");
+  try {
+    return rawResult(run(powershell(), ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded(KEYRING_SCRIPT)],
+      { windowsHide: true, timeout: 5000, maxBuffer: 256 * 1024, encoding: "utf8" }));
+  } catch { throw Error("Antigravity 系统凭据无法读取"); }
+}
+function writeKeyringRawSync(value, { platform = process.platform, run = spawnSync } = {}) {
+  if (platform !== "win32") throw Error("Antigravity 系统凭据仅支持 Windows");
+  if (value !== null && (typeof value !== "string" || !value || Buffer.byteLength(value) > 2560))
+    throw Error("Antigravity 系统凭据超过原生容量限制");
+  try {
+    const result = run(powershell(), ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded(KEYRING_WRITE_SCRIPT)],
+      { input: (value === null ? "delete" : "write") + "\n" + (value || ""), windowsHide: true,
+        timeout: 5000, maxBuffer: 256 * 1024, encoding: "utf8" });
+    if (result.error || result.status !== 0 || JSON.parse(String(result.stdout).replace(/^\uFEFF/, "")).status !== "ok") throw Error();
+  } catch { throw Error("Antigravity 系统凭据无法写入"); }
+}
+const keyringAdapter = { read: () => readKeyringRawSync(), write: (value) => writeKeyringRawSync(value) };
+async function readKeyring({ platform = process.platform, run = execFile, now = Date.now(), includeGrant = false } = {}) {
   const base = { file: KEYRING_SOURCE, checkedAt: now };
   if (platform !== "win32") return { ...base, status: "external", message: "此系统密钥库暂未适配" };
-  const executable = path.join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
   return new Promise((resolve) => {
     const failure = () => resolve({ ...base, status: "unreadable", message: "Antigravity 系统凭据无法读取" });
     try {
-      run(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(KEYRING_SCRIPT, "utf16le").toString("base64")],
+      run(powershell(), ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded(KEYRING_SCRIPT)],
         { windowsHide: true, timeout: 5000, maxBuffer: 256 * 1024, encoding: "utf8" }, (err, output) => {
           if (err) return failure();
           try {
-            const result = JSON.parse(output.replace(/^\uFEFF/, ""));
-            if (result.status === "missing") return resolve({ ...base, status: "missing" });
-            if (result.status !== "detected" || typeof result.payload !== "string" || result.payload.length > 65536) return failure();
-            const parsed = parseStoredToken(JSON.parse(result.payload), now);
+            const raw = rawResult(output);
+            if (raw === null) return resolve({ ...base, status: "missing", ...(includeGrant ? { raw: null } : {}) });
+            const parsed = parseStoredToken(JSON.parse(raw), now);
             if (parsed.invalid) return failure();
-            resolve({ ...base, status: "detected", account: parsed.account });
+            resolve({ ...base, status: "detected", account: parsed.account,
+              ...(includeGrant ? { raw, grant: parsed.grant } : {}) });
           } catch { failure(); }
         });
     } catch { failure(); }
   });
+}
+function historyFile(source) {
+  return source.storage === "keyring" ? path.join(source.root, ".ass-keyring-gemini-antigravity") : path.join(source.root, TOKEN_FILE);
+}
+function historySources(options) {
+  const root = credentialRoot(options), now = options.now || Date.now(), fallback = path.join(root, TOKEN_FILE);
+  let storage = "";
+  if (filePreferred(root, now)) storage = "file";
+  else if (options.keyring?.status === "detected" && typeof options.keyring.raw === "string") storage = "keyring";
+  else if (options.keyring?.status === "missing" && fs.existsSync(fallback)) storage = "file";
+  else if (options.keyring?.status === "missing") storage = "keyring";
+  else if (options.keyring?.status && options.keyring.status !== "detected" && fs.existsSync(fallback)) storage = "file";
+  else if (!options.keyring && fs.existsSync(fallback)) storage = "file";
+  else if (options.override && fs.existsSync(fallback)) storage = "file";
+  if (!storage) return [];
+  return [{ harness: "antigravity", dir: root, root, storage, native: true,
+    keyring: options.keyring, keyringAdapter: options.keyringAdapter || options.keyring?.adapter || keyringAdapter }];
 }
 function shouldReadKeyring(options) {
   // Test/custom homes must never silently read the host OS account.
@@ -197,8 +310,10 @@ function inspect(options, read, makeAccount) {
     value.profile = { ...a.profile, fields: [...a.profile.fields,
       { id: "credentialStorage", label: "存储", value: selected === source ? "Windows 凭据管理器" : "原生凭据文件" },
       ...(oauthSurfaces.length ? [{ id: "clientSurface", label: "客户端", value: [...new Set(oauthSurfaces.map((v) => labels[v]).filter(Boolean))].join(" / ") }] : [])] };
+    value.oauthHistorySource = historyFile({ root, storage: selected === source ? "keyring" : "file" });
     accounts.push(value);
   }
   return { sources, accounts, modelAccounts: [] };
 }
-module.exports = { locations, inspect, parseStoredToken, readKeyring, shouldReadKeyring };
+module.exports = { locations, inspect, parseStoredToken, readKeyring, readKeyringRawSync, writeKeyringRawSync,
+  shouldReadKeyring, historySources, historyFile, keyringAdapter, KEYRING_SOURCE };

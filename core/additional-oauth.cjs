@@ -6,7 +6,8 @@ const crypto = require("node:crypto");
 const { read, document, edit, hash, safePath } = require("./native-fields.cjs");
 const { text, claims } = require("./account-info.cjs");
 const zcodeInfo = require("./zcode-account-info.cjs");
-const SUPPORTED = new Set(["kimi", "zcode"]);
+const antigravity = require("./antigravity-status.cjs");
+const SUPPORTED = new Set(["kimi", "zcode", "antigravity"]);
 const has = (v) => typeof v === "string" && !!v.trim();
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const stamp = (v) => hash(JSON.stringify(v));
@@ -79,7 +80,9 @@ function encryptZCode(value, env) {
   return "enc:v1:" + [iv, cipher.getAuthTag(), body].map((p) => p.toString("base64url")).join(".");
 }
 function sourceFile(source) {
-  return source.harness === "kimi" ? source.authFile : path.join(source.dir, "credentials.json");
+  if (source.harness === "kimi") return source.authFile;
+  if (source.harness === "antigravity") return antigravity.historyFile(source);
+  return path.join(source.dir, "credentials.json");
 }
 function zcodeUser(grant) {
   try { const user = JSON.parse(grant.user_info); return object(user) ? user : {}; } catch { return {}; }
@@ -91,6 +94,13 @@ function zcodeIdentity(provider, user) {
 function publicGrant(harness, provider, grant, now) {
   if (harness === "kimi") return { ...status(grant.access_token, grant.refresh_token, grant.expires_at, now),
     provider, label: "Kimi Code", profile: { source: "local", docs: ["kimi"], fields: [] } };
+  if (harness === "antigravity") {
+    const parsed = antigravity.parseStoredToken(grant, now);
+    if (parsed.invalid || !parsed.account) return { ...status("", "", null, now), provider,
+      label: "Google Antigravity", profile: { source: "local", docs: ["antigravity"], fields: [] } };
+    const { identityKey, refreshable, ...account } = parsed.account;
+    return { ...account, provider, label: "Google Antigravity" };
+  }
   const user = zcodeUser(grant), secrets = [grant.access_token, grant.refresh_token, grant.session_token,
     ...(Array.isArray(grant.coding) ? grant.coding.map((c) => c?.apiKey) : [])];
   const fields = provider === "zai" && has(user.user_id)
@@ -109,7 +119,7 @@ function publicGrant(harness, provider, grant, now) {
       const safe = text(value, secrets); return safe ? [{ id, label, value: safe }] : [];
     }) } };
 }
-function readSource(source) {
+function readSource(source, { fresh = false } = {}) {
   if (source.issue) throw Error(source.issue);
   let config, auth, grants = [];
   if (source.harness === "kimi") {
@@ -130,6 +140,29 @@ function readSource(source) {
         [env.KIMI_CODE_OAUTH_HOST, env.KIMI_OAUTH_HOST].every((v) => !v || endpoint(v) === source.host);
       grants.push({ row, grant, identity: null, grantKey: stamp(["kimi", source.provider, grant.refresh_token || grant.access_token]),
         query: official ? { kind: "kimi-code", baseUrl: source.base } : null });
+    }
+  } else if (source.harness === "antigravity") {
+    let raw;
+    if (source.storage === "keyring") {
+      if (!source.keyringAdapter || typeof source.keyringAdapter.read !== "function") throw Error("Antigravity 系统凭据读取器不可用");
+      raw = fresh ? source.keyringAdapter.read() : source.keyring?.raw;
+      if (raw !== null && (typeof raw !== "string" || raw.length > 65536)) throw Error("Antigravity 系统凭据格式无法识别");
+      auth = { file: sourceFile(source), text: raw ?? null, data: raw ? document(raw, "json").data : {} };
+    } else {
+      auth = part(sourceFile(source));
+    }
+    if (auth.text !== null) {
+      const parsed = antigravity.parseStoredToken(auth.data);
+      if (parsed.invalid) throw Error("Antigravity OAuth 格式无法识别");
+      if (parsed.account) {
+        const token = Object.hasOwn(parsed.grant, "token") ? parsed.grant.token : parsed.grant;
+        if (has(token.access_token)) {
+          const row = publicGrant("antigravity", "google-antigravity", parsed.grant);
+          grants.push({ row, grant: parsed.grant,
+            identity: parsed.account.identityKey ? stamp(["antigravity", parsed.account.identityKey]) : null,
+            grantKey: stamp(["antigravity", token.refresh_token || token.access_token]), query: null });
+        }
+      }
     }
   } else {
     auth = part(sourceFile(source));
@@ -157,7 +190,8 @@ function readSource(source) {
       }
     }
   }
-  const parts = [auth], modified = auth.text === null ? 0 : fs.statSync(auth.file).mtimeMs;
+  const parts = [auth], modified = auth.text === null ? 0 : source.harness === "antigravity" && source.storage === "keyring"
+    ? Number(source.keyring?.checkedAt) || Date.now() : fs.statSync(auth.file).mtimeMs;
   return { source, auth, parts, config: config?.data || {}, grants, modified,
     fingerprint: stamp([parts.map((p) => [p.file, p.text]), config?.text ?? null,
       // Changing the native cipher key must invalidate a confirmation too.
@@ -166,6 +200,21 @@ function readSource(source) {
 function writes(state, entry) {
   let value = state.auth.text;
   const set = (key, v) => { value = edit(value, "json", [key], v === undefined ? { exists: false } : { exists: true, value: v }); };
+  if (entry.harness === "antigravity") {
+    if (entry.provider !== "google-antigravity") throw Error("不支持此 Antigravity 授权");
+    const parsed = antigravity.parseStoredToken(entry.grant);
+    if (parsed.invalid || !parsed.account) throw Error("Antigravity 授权格式无法识别");
+    const after = JSON.stringify(entry.grant);
+    if (state.source.storage === "keyring" && Buffer.byteLength(after) > 2560)
+      throw Error("Antigravity 授权超过系统凭据容量，未切换");
+    return [{ ...state.auth, after,
+      ...(state.source.storage === "keyring" ? { external: "antigravity-keyring",
+        afterWrite: (raw) => {
+          const parsed = raw ? antigravity.parseStoredToken(JSON.parse(raw)) : {};
+          Object.assign(state.source.keyring, { raw, grant: parsed.grant, account: parsed.account, checkedAt: Date.now(),
+            status: raw === null ? "missing" : "detected" });
+        } } : {}) }];
+  }
   if (entry.harness === "kimi") {
     if (state.source.provider !== entry.provider) throw Error("Kimi OAuth 区域或存储位置不匹配");
     for (const k of KIMI_FIELDS) set(k, entry.grant[k]);

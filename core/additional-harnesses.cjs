@@ -16,7 +16,7 @@ const SPECS = [
   { id: "kimi", name: "Kimi Code", command: "kimi" },
   { id: "zcode", name: "ZCode", command: "zcode" },
   { id: "antigravity", name: "Antigravity", command: "agy" },
-].map((s) => ({ ...s, oauth: ["kimi", "zcode"].includes(s.id), nativeLoginOnly: true,
+].map((s) => ({ ...s, oauth: ["kimi", "zcode", "antigravity"].includes(s.id), nativeLoginOnly: true,
   injectionUnsupported: ["kimi", "zcode"].includes(s.id) ? undefined : s.id === "antigravity"
     ? "支持原生账户识别；Antigravity 的第三方供应商接入与账户切换暂未适配。"
     : "此版本仅识别原生账户与模型；账户切换与配置接入尚未适配。" }));

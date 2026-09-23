@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Kimi Code | 新旧版目录与原生账户识别；原生登录发起；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML、同步及撤回；本地 Wire Token 记录与首页统计；原生 API / 文件型 OAuth 逐模型直连检测 | 不落盘 Wire 的实验性会话存储；真实账户与完整 Agent 请求尚未验证 |
 | ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；Start Plan、个人 / Team Coding Plan、MCP 额度；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计；API / Start / 已缓存 Coding Plan Key 的逐模型直连检测 | CLI 的 Start Plan 版本适配、账户运行时权益模型；真实账户与完整 Agent 请求尚未验证 |
-| Antigravity | CLI、2.0 Desktop / IDE 安装入口识别；Gemini API 模式；Windows 指定凭据条目与原生文件回退的共享 OAuth 读取；已有用户、套餐、项目、区域与令牌到期信息 | 共享 OAuth 的保存 / 切换、旧 IDE 专有存储、模型配置写入、请求测试、用量与额度；尚未在真实安装及账户上联调 |
+| Antigravity | CLI、2.0 Desktop / IDE 安装入口识别；Gemini API 模式；Windows 指定凭据条目与原生文件回退的共享 OAuth 读取；OAuth 变化加密留存与确认切换；已有用户、套餐、项目、区域与令牌到期信息 | 原生登录发起、旧 IDE 专有存储、模型配置写入、请求测试、用量与额度；尚未在真实安装及账户上联调 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
 
@@ -17,14 +17,15 @@
 - ZCode 解密遵循原生实现：自定义 `ZCODE_CREDENTIAL_SECRET` 或 OS 平台 / 真实 home / 用户名派生密钥，覆写数据根目录不改变密钥身份。只读取官方 OAuth 命名空间及当前身份 / 项目对应的 Coding Plan Key，忽略第三方 MCP 授权及无关凭据；解密失败不伪造账户。用户资料仅展示同一命名空间缓存中的白名单字段，不推断套餐。
 - 只有精确官方 HTTPS 端点的 API 才成为客户端账户。第三方配置模型单独聚合；模型声明不增加账户计数。未声明的上下文、协议、思维能力保持未知，不套用猜测值。
 - Antigravity 的 `GEMINI_API_KEY` 只有在 `modelProvider = "gemini"` 时生效；`GOOGLE_API_KEY` 不算登录。仅查询 Windows 的 `gemini:antigravity` 条目与原生文件回退，不枚举其他系统凭据，不读取 Gemini CLI 的 `oauth_creds.json` 代替。共享 OAuth 不因同时存在 CLI / Desktop / IDE 而重复生成账户。来源、读取优先级及支持边界见 [Antigravity 原生识别](antigravity-native.md)。
-- 前端及后端共同限制尚未实现的账户选择 / 启动操作；Antigravity 仍只读。旧版五 / 六客户端接入状态可直接读取，新增客户端默认关闭，不触发自动写入原生配置。
+- 前端及后端共同限制尚未实现的账户启动操作。Antigravity 只在单独确认换号时写入当前原生 OAuth 存储，不提供登录发起或模型接入。旧版五 / 六客户端接入状态可直接读取，新增客户端默认关闭，不触发自动写入原生模型配置。
 
 ## OAuth 账户切换
 
-- Kimi 与 ZCode 接入现有加密历史和账户卡片。原生登录发生变化后自动保存；点击“切换账户”确认后写回目标目录，不需要开启模型接入，不自动关闭或重启原生客户端。
+- Kimi、ZCode 与 Antigravity 接入现有加密历史和账户卡片。原生登录发生变化后自动保存；点击“切换账户”确认后写回当前原生存储，不需要开启模型接入，不自动关闭或重启原生客户端。
 - Kimi 只跟踪配置实际引用的文件 OAuth，不扫描无关凭据；中国区、Global 与不同 slot 分开。只替换六个原生 token 字段，保留 TOML 和其他 JSON 字段。无法确定身份的 opaque token 按 refresh grant 区分，不虚构邮箱，也不把轮换令牌当作同一个人。
 - ZCode 只记录 `oauth:active_provider` 对应的完整会话（用户资料、access / refresh、共享 `zcodejwttoken` 和登录归因），不把残留的另一供应商 token 配上当前用户 JWT。切换遵循原生互斥身份域规则，清除另一 OAuth 命名空间的旧 token / 用户字段，但保留 API、MCP 等无关凭据。写回使用原生 AES-GCM 格式，并遵循同一文件锁；锁占用时提示重试，不删除别人的锁。
-- 完整性、区域、目录或环境覆盖有冲突时停止切换。ZCode 会话 JWT 已到期即拒绝切换，不因为 provider 仍有 refresh token 就认为会话有效。只有孤立 token、缺少当前供应商或完整用户资料的旧记录仍可只读显示，但不开放换号。
+- Antigravity 只跟踪当前原生选择的共享 OAuth 存储：优先固定的 Windows `gemini:antigravity` 凭据条目，原生失败标记有效或系统条目不存在时跟随原生规则使用文件回退。完整 `StoredToken` 只存在 DPAPI 加密历史中；界面不接收 token。切换写回原存储，不枚举或修改其他系统凭据。
+- 完整性、区域、目录、存储来源或环境覆盖有冲突时停止切换。ZCode 会话 JWT 已到期即拒绝切换，不因为 provider 仍有 refresh token 就认为会话有效。只有孤立 token、缺少当前供应商或完整用户资料的旧记录仍可只读显示，但不开放换号。
 - 两套 Kimi 配置需先选择版本；CLI / Desktop 同时存在不同有效 ZCode 登录目录时需先指定目录。更多恢复与并发约束见 [OAuth 账户历史](OAUTH-HISTORY.md)。
 
 ## 从 ASS 发起登录

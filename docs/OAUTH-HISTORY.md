@@ -1,10 +1,10 @@
 # OAuth 账户历史与切换
 
-适用当前支持的 Codex、Claude Code、pi、Kimi Code、ZCode 的文件型 OAuth。DSH、OpenCode Go / Zen 的 API 账户不进入这套记录；不因为其他 harness 能读取某种文件就开放跨供应商登录。
+适用当前支持的 Codex、Claude Code、pi、Kimi Code、ZCode 文件型 OAuth，以及 Antigravity 固定 Windows 凭据条目 / 原生文件回退。DSH、OpenCode Go / Zen 的 API 账户不进入这套记录；不因为其他 harness 能读取某种文件就开放跨供应商登录。
 
 ## 记录
 
-- 主进程每 2 秒读取已配置的原生目录和 ASS 独立授权目录；连续稳定至少 750ms 才自动记录变化。启动及显式刷新会读取完整的当前文件。无论页面是否前台，ASS 运行时都会检测。
+- 主进程每 2 秒读取已配置的原生目录和 ASS 独立授权目录；Antigravity 的固定系统条目每 10 秒只读刷新。连续稳定至少 750ms 才自动记录变化。启动及显式刷新会读取完整的当前存储。无论页面是否前台，ASS 运行时都会检测。
 - 凭据、身份资料、更新时间和恢复事务整体使用 Electron safeStorage（Windows DPAPI）加密到数据目录的 `oauth-history.enc.json`。文件丢失或系统加密不可用不会退回明文。损坏的历史不会自动覆盖。
 - Codex 去重键包含 provider、用户和工作区，不把同一工作区的其他人当作同一账户。显式工作区或用户与令牌冲突时不记录。JWT 仅作为本地元数据解析，不宣称已经服务端验证。
 - 无稳定身份的授权只能通过同一 refresh grant 关联；opaque 令牌连同 refresh grant 轮换时不能可靠判定是不是换了用户，所以保留新记录。Claude 缓存的邮箱只用于展示，不能单独作为合并凭证。
@@ -24,6 +24,8 @@ ASS 不结束客户端进程，不撤销旧授权，也不代替原生客户端�
 Kimi 写回配置引用的同区域、同 slot 文件，保留配置与未知字段；CN / Global 不互换授权。新旧版本并存时先选择版本。Kimi 的标准 token 文件没有用户身份字段，界面以保存时间区分记录，opaque refresh grant 轮换会保留新条目。
 
 ZCode 保存的是当前完整会话：对应供应商的 access / refresh / user_info、共享会话 JWT 与登录归因。换号同步 `oauth:active_provider`，清除另一互斥 OAuth 身份域的残留字段，保留独立 API / MCP 凭据。使用原生 AES-GCM 格式和 `credentials.json.lock/owner-*.json` 协作锁；锁占用时拒绝切换，不清理别人的锁。事务恢复也须取得同一把锁。过期的会话 JWT 不用 provider 的 refresh token 冒充可恢复。
+
+Antigravity 保存当前原生选择的完整 `StoredToken`。正常使用固定 Windows `gemini:antigravity` 条目；原生失败标记有效或系统条目不存在时使用 `.gemini/jetski-standalone-oauth-token`。切换通过同一确认票据和加密事务写回当前存储；启动恢复只在系统条目或文件仍等于事务前 / 后镜像时执行，避免覆盖新的原生登录。
 
 ## 边界
 
