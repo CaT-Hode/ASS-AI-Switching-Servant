@@ -103,7 +103,8 @@ test("native login: strips conflicting endpoints and TLS bypass, retains proxy/C
   Object.assign(f.env, { KIMI_CODE_OAUTH_HOST: "https://example.invalid", KIMI_API_KEY: "synthetic-key",
     KIMI_CODE_HOME: path.join(f.root, "custom-kimi"), ZCODE_BASE_URL: "https://example.invalid",
     ZCODE_ENV: "test", ZCODE_CREDENTIAL_SECRET: "synthetic-cipher", NODE_OPTIONS: "--require untrusted.js",
-    NODE_TLS_REJECT_UNAUTHORIZED: "0", HTTPS_PROXY: "http://127.0.0.1:1234", NODE_EXTRA_CA_CERTS: "custom-ca.pem" });
+    NODE_TLS_REJECT_UNAUTHORIZED: "0", HTTPS_PROXY: "http://127.0.0.1:1234", NODE_EXTRA_CA_CERTS: "custom-ca.pem",
+    ZCODE_HTTP_PROXY: "http://127.0.0.1:1235", ZCODE_AGENT_CA_CERT: "zcode-ca.pem", ZCODE_NO_PROXY: "localhost" });
   const k = loginSpec(f.manager, "kimi"), z = loginSpec(f.manager, "zcode");
   assert.equal(k.env.KIMI_CODE_HOME, path.join(f.root, "custom-kimi"));
   for (const env of [k.env, z.env]) {
@@ -112,6 +113,8 @@ test("native login: strips conflicting endpoints and TLS bypass, retains proxy/C
     assert.equal(env.NODE_EXTRA_CA_CERTS, "custom-ca.pem");
   }
   assert.equal(z.env.ZCODE_CREDENTIAL_SECRET, "synthetic-cipher");
+  assert.equal(z.env.ZCODE_HTTP_PROXY, f.env.ZCODE_HTTP_PROXY); assert.equal(z.env.ZCODE_AGENT_CA_CERT, "zcode-ca.pem");
+  assert.equal(z.env.ZCODE_NO_PROXY, "localhost");
   assert.equal(z.env.ZCODE_BASE_URL, "https://zcode.z.ai"); assert.equal(z.env.ZCODE_ENV, "production");
 });
 

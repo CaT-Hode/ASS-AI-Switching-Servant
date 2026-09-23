@@ -3,53 +3,11 @@
 // cache reads/writes; reasoning is a subset of output, never an extra charge.
 const fs = require("node:fs");
 const path = require("node:path");
-const crypto = require("node:crypto");
 const { nativeLocations } = require("./credential-status.cjs");
-const CLIENTS = ["codex", "claude", "opencode", "pi", "dsh"];
-const hash = (value) =>
-  crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, 24);
-const num = (v) =>
-  typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
-const known = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
-const label = (v) =>
-  typeof v === "string" && v.length <= 200 && !/[\x00-\x1f]/.test(v)
-    ? v
-    : "未标注";
-function dayKey(value) {
-  const d = new Date(value);
-  return Number.isFinite(d.getTime())
-    ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-    : "";
-}
-function localHour(value) {
-  // Date-only ledgers have no time precision; midnight is not an observation.
-  if (
-    value == null ||
-    (typeof value === "string" && !/[T ]\d{2}:\d{2}/.test(value))
-  )
-    return null;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.getHours() : null;
-}
-function normalized(
-  input,
-  output,
-  cacheRead,
-  cacheWrite,
-  reasoning,
-  includesCache = false,
-) {
-  cacheRead = num(cacheRead);
-  cacheWrite = num(cacheWrite);
-  input = num(input) + (includesCache ? 0 : cacheRead + cacheWrite);
-  return {
-    input,
-    output: num(output),
-    cacheRead: Math.min(input, cacheRead),
-    cacheWrite: Math.min(Math.max(0, input - cacheRead), cacheWrite),
-    reasoning: Math.min(num(output), num(reasoning)),
-  };
-}
+const { safePath } = require("./native-fields.cjs");
+const { hash, num, known, label, dayKey, localHour, normalized } = require("./usage-common.cjs");
+const extra = require("./usage-extra.cjs");
+const CLIENTS = ["codex", "claude", "opencode", "pi", "dsh", "kimi", "zcode"];
 function codexUsage(u) {
   return normalized(
     u.input_tokens,
@@ -182,15 +140,15 @@ function parser(client, fileKey) {
     },
   };
 }
-async function readJsonl(file, client, fileKey) {
-  const reader = parser(client, fileKey);
+async function readJsonl(file, client, fileKey, context) {
+  const reader = client === "kimi" ? extra.kimiParser(fileKey, context) : parser(client, fileKey);
   let pending = "",
     oversized = false,
-    malformed = 0;
+    malformed = 0, lineNumber = 0;
   const wanted =
     client === "codex"
       ? /"(?:token_count|turn_context|session_meta)"/
-      : /"(?:assistant|session)"/;
+      : client === "kimi" ? /"(?:usage.record|llm.request|forked|StatusUpdate)"/ : /"(?:assistant|session)"/;
   for await (const chunk of fs.createReadStream(file, {
     encoding: "utf8",
     highWaterMark: 256 * 1024,
@@ -199,10 +157,11 @@ async function readJsonl(file, client, fileKey) {
     let cut;
     while ((cut = pending.indexOf("\n")) >= 0) {
       const line = pending.slice(0, cut);
+      lineNumber++;
       pending = pending.slice(cut + 1);
       if (!oversized && wanted.test(line)) {
         try {
-          reader.accept(JSON.parse(line));
+          reader.accept(JSON.parse(line), lineNumber);
         } catch {
           malformed++;
         }
@@ -218,7 +177,7 @@ async function readJsonl(file, client, fileKey) {
   }
   if (pending.trim() && !oversized && wanted.test(pending)) {
     try {
-      reader.accept(JSON.parse(pending));
+      reader.accept(JSON.parse(pending), lineNumber + 1);
     } catch {
       /* a live append may be incomplete */
     }
@@ -328,6 +287,8 @@ function filesUnder(dir, found, depth = 0, status) {
   }
 }
 function rootsFor(client, options) {
+  if (client === "kimi") return extra.rootsFor(client, options);
+  if (client === "zcode") return [];
   const dirs = nativeLocations(
     client,
     options.home,
@@ -363,10 +324,15 @@ async function scan(options, previousCache = {}) {
           ? "DSH cost-meter 日账本"
           : client === "opencode"
             ? "OpenCode SQLite"
+            : client === "zcode" ? "ZCode SQLite · 原生保留 30 天，已读取历史本地留存"
+            : client === "kimi" ? "Kimi 会话 Wire JSONL"
             : "本机会话 JSONL",
     };
-    const files = [];
-    for (const dir of rootsFor(client, options)) {
+    const files = client === "zcode" ? extra.zcodeFiles(options, source) : [];
+    let roots;
+    try { roots = rootsFor(client, options); } catch { roots = []; source.partial = true; }
+    for (const dir of roots) {
+      try { safePath(dir); } catch { source.partial = true; continue; }
       if (client === "opencode") files.push(path.join(dir, "opencode.db"));
       else if (client === "dsh")
         files.push(path.join(dir, "storages/cost-meter/ledger.json"));
@@ -382,8 +348,10 @@ async function scan(options, previousCache = {}) {
         );
     }
     for (const file of new Set(files)) {
+      if (client === "kimi" && path.basename(file) !== "wire.jsonl") continue;
       let stat;
       try {
+        safePath(file);
         stat = fs.lstatSync(file);
         if (!stat.isFile() || stat.isSymbolicLink()) continue;
       } catch (e) {
@@ -393,7 +361,7 @@ async function scan(options, previousCache = {}) {
       source.files++;
       const key = hash(client + "\0" + file),
         wal =
-          client === "opencode" &&
+          ["opencode", "zcode"].includes(client) &&
           (() => {
             try {
               return fs.statSync(file + "-wal");
@@ -401,6 +369,9 @@ async function scan(options, previousCache = {}) {
               return null;
             }
           })();
+      let context;
+      try { if (client === "kimi") context = extra.kimiContext(file, roots); }
+      catch { source.partial = true; continue; }
       const signature = [
         2,
         timeZone,
@@ -408,6 +379,7 @@ async function scan(options, previousCache = {}) {
         stat.mtimeMs,
         wal?.size,
         wal?.mtimeMs,
+        ...(context ? [context.signature] : []),
       ].join(":");
       try {
         let entry = previousCache[key];
@@ -423,15 +395,25 @@ async function scan(options, previousCache = {}) {
               ? readOpenCode(file)
               : client === "dsh"
                 ? readDsh(file)
-                : await readJsonl(file, client, key)),
+                : client === "zcode" ? extra.readZCode(file)
+                : await readJsonl(file, client, key, context)),
           };
         }
+        if (client === "zcode") entry = extra.retainZCodeHistory(entry, previousCache[key], now);
         cache[key] = entry;
         if (entry.malformed) source.partial = true;
         for (const row of entry.rows)
           if (row.day >= from && row.day <= to) records.set(row.key, row);
       } catch {
         source.partial = true;
+        const previous = previousCache[key];
+        if (previous?.signature?.startsWith(`2:${timeZone}:`)) {
+          // A locked or damaged live file must not erase already observed
+          // metadata. Keep its old signature so the next scan retries it.
+          cache[key] = previous;
+          for (const row of previous.rows || [])
+            if (row.day >= from && row.day <= to) records.set(row.key, row);
+        }
       }
     }
     source.records = [...records.values()].filter(

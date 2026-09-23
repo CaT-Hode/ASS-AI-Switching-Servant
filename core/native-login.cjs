@@ -80,8 +80,9 @@ function loginSpec(manager, harness) {
   const env = isolatedEnv(harness, target.dir, manager.nativeEnv);
   // Native OAuth must not inherit a third-party endpoint/API login or a Node
   // startup script. Keep system proxy and CA variables, never bypass TLS.
+  const zcodeNetwork = new Set(["ZCODE_CREDENTIAL_SECRET", "ZCODE_HTTP_PROXY", "ZCODE_NO_PROXY", "ZCODE_AGENT_CA_CERT", "ZCODE_HTTP_TIMEOUT", "ZCODE_TIMEOUT"]);
   for (const name of Object.keys(env))
-    if (/^(KIMI_|ZCODE_)/i.test(name) && !(harness === "zcode" && name === "ZCODE_CREDENTIAL_SECRET") ||
+    if (/^(KIMI_|ZCODE_)/i.test(name) && !(harness === "zcode" && zcodeNetwork.has(name)) ||
         /^(NODE_OPTIONS|DOTENV_CONFIG_.+|PYTHONPATH|PYTHONSTARTUP)$/i.test(name)) delete env[name];
   env.NODE_USE_SYSTEM_CA = "1";
   if (harness === "kimi") env[target.variant === "legacy" ? "KIMI_SHARE_DIR" : "KIMI_CODE_HOME"] = target.dir;

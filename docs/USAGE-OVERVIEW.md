@@ -4,7 +4,7 @@
 
 ## 视图
 
-- 客户端筛选：汇总、Codex、Claude Code、OpenCode、pi、DSH。只筛选展示，不切换登录或路由。
+- 客户端筛选仅显示已识别的客户端，包含 Codex、Claude Code、OpenCode、pi、DSH、Kimi Code、ZCode；只筛选展示，不切换登录或路由。尚未适配用量的客户端不补造 Token。
 - 活跃趋势：本周每格 1 小时，本月每格 4 小时，小方格均先从上到下、再从左到右排列。每列 6 格，本周每天 4 列，本月每天 1 列；近一年保持原来的 365 日热力图。悬停 / 键盘聚焦显示对应日期或小时区间、次数、Token；未来日期 / 小时留空，不显示为零。
 - Token：非缓存输入、缓存输入、输出堆叠；同一范围内可按客户端或模型分类。
 - 账户与额度：展示已有账户和其上次查询结果，支持单账户刷新。多个客户端绑定同一 ASS API 账户时合并显示一次，不相加余额。订阅窗口按账户分别展示，不相加百分比、不折算 Token。
@@ -21,12 +21,18 @@
 | OpenCode | opencode.db 的 message / session 表 | SQLite readOnly，仅读 assistant 用量元数据；过滤早于会话创建的分叉复制消息；输出补回独立 reasoning 字段 |
 | pi | agent/sessions 下的 JSONL | assistant message 按 ID 去重，输入加缓存读取 / 写入，跳过分叉种子 |
 | DSH | storages/cost-meter/ledger.json | 使用已有插件日账本的模型分组；不叠加日合计 / 会话合计；没有此账本时不伪造历史数据 |
+| Kimi Code | 新版 `.kimi-code/sessions` 与旧版 `.kimi/sessions` 内的 `wire.jsonl` | 新版只计 `usage.record`，不叠加状态累计或消息副本；`forked` 标记前的继承历史不计。旧版只计 `StatusUpdate.token_usage`，按 message_id 替换修订 / 去重复制；输入加缓存读取和创建 |
+| ZCode | 默认 `.zcode/cli/db/db.sqlite` 的 `model_usage` 表 | SQLite readOnly，只取已结束请求的用量字段，不读提示词 / 原始响应；当前 input 已包含缓存，旧记录按原生总量判定口径；reasoning 不再叠加到 output |
 
 读取客户端已知目录、配置目录覆盖和 ASS 独立账户目录；不需要让请求经过 ASS 代理。**不采集会话内容，不发送模型请求，不刷新 OAuth，不改写客户端文件。** 不把 ASS 路由日志再相加，避免一个请求被统计两次。历史记录通常没有可靠的登录账户归属，因此只支持客户端 / 模型分类，不猜测每条请求属于哪一个当前账户。
 
 输入统一包含缓存读取与写入，总 Token = 输入 + 输出；推理包含在输出内。缓存读取为输入的子集，不额外加到总量。调用数为读到的用量记录数，不等于付费账单请求数。会话按匿名摘要去重，模型切换不增加会话数。没有输入 / 输出计数的记录不作为零 Token 记录。
 
 OpenCode 独立输出 / 推理口径依据[官方 getUsage 实现](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/session.ts)；DSH 本机 llm-deepseek / llm-pi-ai 适配器将 inputTokens 与 cacheReadTokens 分开上报。
+
+Kimi 新版模型 / 供应商仅使用日志中可匹配的 `llm.request` 和 `usage.record`；旧版没有此信息的记录显示“未标注”，不使用当前配置反推历史。主代理与子代理归入同一会话；新版中标记为旧版迁移副本的会话不重复导入。旧版缺少 message_id 时只能按文件内记录计数，无法可靠识别跨文件复制。依据 [UsageRecord](https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/packages/agent-core-v2/src/agent/usage/usageOps.ts) 与旧版 Wire / TokenUsage 定义；尚未覆盖不落盘 Wire 日志的实验性存储后端。
+
+ZCode 读取原生 `ZCODE_SESSION_DB_PATH` / `ZCODE_SESSION_DB` 指定的绝对或 home 相对路径；项目相对路径不猜工作目录。此数据库独立于 OAuth 的 `.zcode/v2` 目录，不因切换凭据位置而臆造另一个数据库路径。CLI 原生逐请求表只保留 30 天，ASS 会在加密缓存中保留已读到且后来被原生清理的较早记录，最多覆盖近一年；首次接入前已清理的数据不能找回。字段与保留期依据 [ZCode usage.ts](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/usage.ts)。
 
 ## 持久化与范围
 
