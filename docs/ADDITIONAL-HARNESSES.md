@@ -5,7 +5,7 @@
 | 客户端 | 当前能力 | 尚未完成 |
 | --- | --- | --- |
 | Kimi Code | 新旧版目录与原生账户识别；原生登录发起；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML、同步及撤回；本地 Wire Token 记录与首页统计 | 原生请求测试、不落盘 Wire 的实验性会话存储 |
-| ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；可识别 Desktop 版本时查询 Start Plan 额度；按供应商直写规则、同步及撤回；原生逐请求 SQLite 账本与首页统计 | CLI 额度版本适配、Coding Plan / Team / MCP 额度、完整内置目录合并、原生请求测试 |
+| ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；可识别 Desktop 版本时查询 Start Plan 额度；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计 | CLI 额度版本适配、Coding Plan / Team / MCP 额度、账户运行时权益模型、原生请求测试 |
 | Antigravity | `agy` 命令、Windows LocalAppData 下的 CLI；`.gemini/antigravity-cli/settings.json`；Gemini API 模式 | IDE 适配、系统密钥库 OAuth 读取 / 切换、模型配置写入、请求测试、用量与额度 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
@@ -66,12 +66,21 @@
 - 初次创建文件时补全 `schemaVersion: 1` 和必要的空规则列表，关闭后留下合法空结构；密钥和模型规则全部撤回。当前默认模型属于待移除供应商时，要求先在 ZCode 中切换模型。
 - Windows 自动发现常见安装目录下的 ZCode / ZCode Preview；通过 Electron 资源区分桌面版和 CLI。登录只使用明确存在的内置 CLI，不向桌面 UI 传递登录参数或自动重启进程。
 
+### ZCode 本机模型目录
+
+- “供应商与模型”读取本机内置目录和个人配置，不再只显示 `personalModelIds`。模板只为已创建的供应商提供模型，不把全部模板虚构成已配置账户；固定 OAuth 供应商只显示已识别账户所属区域的目录。
+- 合并模型通用规则、协议规则、端点规则、模板精确规则、供应商精确规则与个人覆盖。保留原生模型顺序、去重和停用 / 隐藏过滤；上下文、输出上限、思维档位、视觉 / 工具能力来自目录声明。未声明字段保持未知；不执行参数映射表达式，不把声明当成连接实测或套餐权益。ASS 自己写入的供应商继续按配置所有权过滤，避免重复展示。
+- 桌面版读取所选安装中的目录；活动缓存按当前平台、真实应用版本及服务地址隔离，并按原生 revision 选择。相同 revision 冲突优先内置目录，无效活动文件回退内置目录，不跨版本 / 服务地址扫描取最大版本。独立程序读取已落盘 bundled 副本，Node CLI 读取入口旁 `provider/zcode-builtin.json`；显式环境路径也可识别。CLI 无可信应用版本时不猜测活动缓存路径；尚未运行而没有落盘目录的单文件程序不会凭空生成模型。
+- 只读，不下载或改写原生缓存，不为读取目录刷新 OAuth。官方 `api.z.ai` / `open.bigmodel.cn` 的 Anthropic API 端点也可识别为原生 API 账户。目录解析失败保留可读取的个人模型；正则匹配有时间预算，损坏目录不阻塞主进程。
+- ZCode 原生运行时可再根据账户权益调整模型集合；本机目录不证明当前账号有权调用，也不显示未经读取的运行时模型。此部分与真实模型请求仍待适配。
+
 ## 官方依据
 
 2026-09-23 核对：
 
 - [Kimi Code 数据位置](https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html)、[配置文件](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html)。源码 `MoonshotAI/kimi-code` 提交 `6451f1e056e90037bbf832f3578955cf8e55db64`：`packages/oauth/src/storage.ts`、`toolkit.ts`（逻辑 key 到存储 slot 的映射）、`types.ts`、`token-state.ts`、`packages/agent-core-v2/src/app/kosongConfig/configSection.ts`。旧 CLI 提交 `9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82`，`src/kimi_cli/config.py`、`auth/oauth.py`。
 - [ZCode 原生凭据](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts)、同目录 `credential-cipher.ts`；[供应商 / 模型规则](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/config/rule-data-schema.ts)。同提交的 `provider-config-file-codec.ts`、`provider-data-schema.ts`、`shared/src/model-config.ts` 定义写入格式；`model-execution.ts` 使用 Vercel AI SDK，Anthropic Base URL 保留 `/v1`。桌面目录与安装身份参照 `desktopDataBaseDirBootstrap.ts` 和 `desktop-product-identity.mjs`。
+- 模型目录覆盖顺序依据同提交 [Provider Resolver](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/resolver.ts)、`config/model-config.ts`、`owned-order.ts`；缓存选择依据 [Built-in Source](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider-node/src/zcode-builtin-provider-config-source.ts)、`zcode-builtin-cache-paths.ts`、`desktopProviderConfig.ts`、`provider-runtime-env.ts`。
 - [Antigravity CLI 安装与授权](https://antigravity.google/docs/cli/install)。文档中的 Gemini API 模式不是通用 OpenAI / Anthropic 协议接入。
 - 登录命令以同一提交的 [Kimi `login.ts`](https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/apps/kimi-code/src/cli/sub/login.ts)、[旧版 Kimi CLI](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/cli/__init__.py)、[ZCode `login-command.ts`](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/cli/src/login-command.ts) 为依据；ZCode `auth-login.ts` 会保存默认模型，`zcodeAgentProcessManager.ts` 定义桌面内置 CLI 的 Electron Node 启动方式。
 

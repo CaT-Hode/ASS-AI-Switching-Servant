@@ -8,6 +8,7 @@ const { safePath } = require("./native-fields.cjs");
 const { text, claims } = require("./account-info.cjs");
 const { EFFORTS } = require("./models.cjs");
 const zcode = require("./zcode-config.cjs");
+const zcodeCatalog = require("./zcode-catalog.cjs");
 const { decryptZCode, kimiReference, publicGrant, status: authorization } = require("./additional-oauth.cjs");
 
 const SPECS = [
@@ -63,7 +64,7 @@ function official(base, service) {
     if (service === "kimi") return (["api.kimi.com", "api.kimi.ai"].includes(u.hostname) && p === "/coding/v1") ||
       (["api.moonshot.cn", "api.moonshot.ai"].includes(u.hostname) && p === "/v1");
     if (service === "zcode") return ["open.bigmodel.cn", "api.z.ai"].includes(u.hostname) &&
-      ["/api/paas/v4", "/api/coding/paas/v4"].includes(p);
+      ["/api/paas/v4", "/api/coding/paas/v4", "/api/anthropic", "/api/anthropic/v1"].includes(p);
     return u.hostname === "generativelanguage.googleapis.com";
   } catch { return false; }
 }
@@ -151,7 +152,7 @@ function inspectKimi(location, { env, now }) {
   return { sources, accounts, modelAccounts: models.length ? [catalog("kimi", dir, file, models)] : [] };
 }
 
-function inspectZCode({ dir, bootstrap, issue }, { env, now, override }) {
+function inspectZCode({ dir, bootstrap, issue }, { env, now, override, launcher }) {
   const credentials = read(path.join(dir, "credentials.json")), accounts = [], models = [], sources = [credentials];
   if (bootstrap) sources.push({ file: bootstrap, status: issue ? "unreadable" : "detected", message: issue || "" });
   if (credentials.data && Object.values(credentials.data).some((v) => typeof v !== "string")) {
@@ -191,25 +192,25 @@ function inspectZCode({ dir, bootstrap, issue }, { env, now, override }) {
   if (stored.data && (stored.data.schemaVersion !== 1 || !object(config) || !Array.isArray(rules) ||
       !Array.isArray(modelRules?.providerModelRules) || !Array.isArray(modelRules?.manualProviderModelRules))) {
     stored.status = "unreadable"; stored.message = "ZCode 供应商配置版本或结构无法识别";
-  } else if (stored.data) {
-    for (const r of rules) if (has(r?.config?.access?.apiKey)) secrets.push(r.config.access.apiKey);
-    for (const r of rules) {
-      if (!object(r) || !object(r.config) || !has(r.providerId) || r.enabled === false ||
-          (r.providerId.startsWith("account:") && r.config.access !== undefined)) continue;
-      const p = r.config, access = p.access;
-      if (["api-key", "zhipu-coding-plan-api-key"].includes(access?.type) && has(access.apiKey) && official(p.api?.baseUrl, "zcode"))
-        accounts.push(account("zcode", dir, file, r.providerId, r.providerName || "ZCode API", apiAuth,
-          [["provider", "供应商", r.providerName || r.providerId]], secrets));
-      const exact = [...modelRules.providerModelRules, ...modelRules.manualProviderModelRules].filter((m) => m?.providerId === r.providerId);
-      // Only explicitly listed personal models, not rule patterns, create models.
-      for (const id of Array.isArray(p.personalModelIds) ? p.personalModelIds : []) {
-        const entries = exact.filter((m) => m.modelId === id);
-        if (entries.length > 1) continue; // conflicting smart/manual declaration
-        const c = entries[0]?.config || {}, props = c.properties || {}, options = c.optionSpecs || {};
-        if (c.enabled === false) continue;
-        const m = model(id, r.providerId, { context: props.contextWindow, vision: props.inputFormat?.supportsImage,
-          output: options.maxOutputTokens?.max, efforts: options.reasoningLevel?.values }, p.api?.type, secrets);
-        if (m) models.push(m);
+  }
+  for (const r of Array.isArray(rules) ? rules : []) if (has(r?.config?.access?.apiKey)) secrets.push(r.config.access.apiKey);
+  const directory = zcodeCatalog.inspect({ dir, env, override, launcher }, stored.status === "detected" ? config : undefined,
+    read, tokens.map((t) => t.provider));
+  sources.push(...directory.sources);
+  for (const r of directory.providers) if (has(r.config.access?.apiKey)) secrets.push(r.config.access.apiKey);
+  for (const r of directory.providers) {
+    const p = r.config, access = p.access;
+    if (["api-key", "zhipu-coding-plan-api-key"].includes(access?.type) && has(access.apiKey) && official(p.api?.baseUrl, "zcode"))
+      accounts.push(account("zcode", dir, file, r.providerId, r.providerName || "ZCode API", apiAuth,
+        [["provider", "供应商", r.providerName || r.providerId]], secrets));
+    for (const { modelId, config: c } of r.models) {
+      const props = c.properties || {}, options = c.optionSpecs || {};
+      const m = model(modelId, r.providerId, { context: props.contextWindow, vision: props.inputFormat?.supportsImage,
+        output: options.maxOutputTokens?.max, efforts: options.reasoningLevel?.values }, p.api?.type, secrets);
+      if (m) {
+        m.catalogSource = directory.config ? "ZCode 本机内置目录与个人配置" : "本机配置声明";
+        m.declared.tools = typeof props.supportsToolCall === "boolean" ? props.supportsToolCall : null;
+        models.push(m);
       }
     }
   }

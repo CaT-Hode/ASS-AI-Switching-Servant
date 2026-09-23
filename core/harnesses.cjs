@@ -553,9 +553,9 @@ class HarnessManager {
       ),
       clients: SPECS.map((s) => {
         if (s.nativeLoginOnly) {
-          const native = additional.inspect(s.id, { home: this.nativeHome, env: this.nativeEnv,
-            override: this.state.credentialHomes[s.id] });
           const launcher = this.launcher(s.id);
+          const native = additional.inspect(s.id, { home: this.nativeHome, env: this.nativeEnv,
+            override: this.state.credentialHomes[s.id], launcher });
           const ownedCache = new Map();
           const owned = (file, provider) => {
             const key = JSON.stringify([file, provider]);
