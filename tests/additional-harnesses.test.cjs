@@ -44,8 +44,9 @@ test("missing native clients stay absent from the detected overview and do not c
   await manager.refreshOAuth();
   const { detectedClients } = await import("../src/usage-view.mjs");
   const state = manager.snapshot();
-  assert.equal(state.clients.length, 8);
+  assert.equal(state.clients.length, 7);
   assert.equal(state.clients.filter((c) => !c.nativeLoginOnly).length, 5);
+  assert.equal(state.clients.some((c) => c.id === "antigravity"), false);
   assert.equal(detectedClients({ harnesses: state }).length, 0);
   assert.deepEqual(fs.readdirSync(f.home), []);
 });
@@ -151,7 +152,9 @@ test("ZCode encrypted OAuth reads allowlisted cached identity without returning 
     assert.ok(!JSON.stringify(result).includes(sensitive));
 });
 test("ZCode fallback encryption uses OS identity, not the overridden data directory", (t) => {
-  const f = fixture(t), secret = `zcode-credential-fallback:${os.platform()}:${os.homedir()}:${os.userInfo().username}`;
+  let username = "unknown";
+  try { username = os.userInfo().username; } catch {}
+  const f = fixture(t), secret = `zcode-credential-fallback:${os.platform()}:${os.homedir()}:${username}`;
   f.put("custom/.zcode/v2/credentials.json", { "oauth:bigmodel:access_token": encrypt("identity-token", secret),
     "oauth:bigmodel:user_info": encrypt(JSON.stringify({ id: "big-42", displayName: "Local User" }), secret) });
   const result = f.check("zcode", { env: { ZCODE_DATA_BASE_DIR: path.join(f.home, "custom") } });
@@ -211,14 +214,16 @@ test("malformed and oversized native files remain intact and never disclose cont
   assert.equal(fs.readFileSync(bad, "utf8"), 'api_key = "secret-with-invalid-syntax');
   assert.ok(!JSON.stringify(f.check("kimi")).includes("secret-with-invalid"));
 });
-test("native-login clients reject account mutations while Kimi and ZCode support separate provider injection", (t) => {
+test("native-login clients reject account mutations while retired clients stay outside the product surface", (t) => {
   const f = fixture(t), manager = f.manager();
-  for (const id of ["kimi", "zcode", "antigravity"]) {
+  for (const id of ["kimi", "zcode"]) {
     for (const action of [() => manager.add(id, "test"), () => manager.select(id, "native:x"),
       () => manager.bindApi(id, "x", false),
       () => manager.plan(id, "native:x"), () => manager.modelPlan(id, "x")]) assert.throws(action, /仅支持原生识别/);
     assert.equal(manager.oauthHistoryAllows(id, "test"), false);
   }
+  assert.equal(manager.snapshot().clients.some((c) => c.id === "antigravity"), false);
+  assert.equal(manager.oauthHistoryAllows("antigravity", "google-antigravity"), false);
   assert.doesNotThrow(() => manager.setInjection("kimi", { excludedProviders: [] }));
   assert.doesNotThrow(() => manager.setInjection("zcode", { excludedProviders: [] }));
   for (const id of ["antigravity"])
@@ -239,14 +244,12 @@ test("model catalogs aggregate without inflating official account counts and cli
   preferences.update({ client: "kimi", usage: { client: "zcode" } });
   const restored = new Preferences(f.home); assert.equal(restored.state.client, "kimi"); assert.equal(restored.state.usage.client, "zcode");
 });
-test("native CLI discovery recognizes kimi/zcode PATH and agy local install without launching anything", (t) => {
-  const f = fixture(t), bin = path.join(f.home, "bin"), local = path.join(f.home, "local");
+test("native CLI discovery recognizes kimi/zcode PATH without launching anything", (t) => {
+  const f = fixture(t), bin = path.join(f.home, "bin");
   for (const name of ["kimi", "zcode"]) f.put("bin/" + name + ".cmd", "synthetic, never execute");
-  const agy = f.put("local/agy/bin/agy.exe", "synthetic, never execute");
-  const env = { PATH: bin, USERPROFILE: f.home, LOCALAPPDATA: local };
+  const env = { PATH: bin, USERPROFILE: f.home };
   assert.equal(discoverLaunchers("kimi", env)[0].ready, true);
   assert.equal(discoverLaunchers("zcode", env)[0].ready, true);
-  assert.equal(discoverLaunchers("antigravity", env)[0].executable, agy);
   f.put("bin/node.exe", "synthetic node");
   f.put("package/package.json", { name: "@moonshot-ai/kimi-code", bin: { kimi: "dist/main.mjs" } });
   const entry = f.put("package/dist/main.mjs", "// synthetic");

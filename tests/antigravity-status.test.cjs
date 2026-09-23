@@ -125,20 +125,14 @@ test("cached keyring expiry is updated on snapshots and corrupt files never disc
   assert.ok(!parseStoredToken(fakeIssuer, now).account.profile.fields.some((f) => f.id === "email"));
 });
 
-test("multiple desktop installs are detected but require an explicit desktop choice", (t) => {
+test("retired Antigravity installs are not exposed in the active client snapshot", (t) => {
   const f = fixture(t), hub = "local/Programs/Antigravity", ide = "local/Programs/Antigravity IDE";
-  const hubExe = f.put(hub + "/Antigravity.exe", "fixture-not-an-executable");
+  f.put(hub + "/Antigravity.exe", "fixture-not-an-executable");
   f.put(hub + "/resources/app.asar/package.json", { name: "antigravity", productName: "Antigravity" });
   f.put(ide + "/Antigravity IDE.exe", "fixture-not-an-executable");
   f.put(ide + "/resources/app/product.json", { nameShort: "Antigravity IDE", applicationName: "antigravity-ide" });
   const manager = new HarnessManager(f.home, () => ({ providers: [] }), [], path.join(f.home, ".codex"),
     { home: f.home, env: {}, launchEnv: { PATH: "", USERPROFILE: f.home, LOCALAPPDATA: path.join(f.home, "local") } });
-  manager.detect("antigravity");
-  const row = manager.snapshot().clients.find((c) => c.id === "antigravity");
-  assert.equal(row.detected, true); assert.equal(row.desktop, null);
-  manager.setExecutable("antigravity", hubExe);
-  assert.equal(manager.desktop("antigravity"), hubExe);
-  const cli = f.put("local/agy/bin/agy.exe", "fixture-not-an-executable");
-  manager.detect("antigravity"); manager.setExecutable("antigravity", cli);
-  assert.equal(manager.desktop("antigravity"), null);
+  assert.equal(manager.snapshot().clients.some((c) => c.id === "antigravity"), false);
+  assert.equal(manager.oauthHistorySources().some((s) => s.harness === "antigravity"), false);
 });

@@ -30,7 +30,7 @@ import { ConnectionStatus, ConnectionPill, ConnectionService } from "./connectio
 import { ClientInjection } from "./client-injection.jsx";
 import { detectedClients } from "./usage-view.mjs";
 const api = window.ass;
-const clientBrands = { codex: "openai", claude: "anthropic", opencode: "opencode", dsh: "deepseek", kimi: "kimi", zcode: "zai", antigravity: "gemini" };
+const clientBrands = { codex: "openai", claude: "anthropic", opencode: "opencode", dsh: "deepseek", kimi: "kimi", zcode: "zai" };
 function ClientEntry({ client: c, activeClient, onSelect }) {
   return <div className={"client-entry" + (c.id === activeClient ? " active" : "")}>
     <button className="client-select" aria-label={c.name} aria-pressed={c.id === activeClient} onClick={() => onSelect(c.id)}>

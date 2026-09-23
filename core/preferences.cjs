@@ -25,7 +25,7 @@ class Preferences {
     if (input.usage && typeof input.usage === "object") {
       next.usage = { ...defaults.usage, ...next.usage };
       for (const [key, values] of Object.entries({
-        client: ["all", "codex", "claude", "opencode", "pi", "dsh", "kimi", "zcode", "antigravity"],
+        client: ["all", "codex", "claude", "opencode", "pi", "dsh", "kimi", "zcode"],
         range: ["week", "month", "year"],
         tab: ["activity", "tokens", "quota"],
         group: ["client", "model"],
@@ -55,7 +55,7 @@ class Preferences {
         continue;
       if (
         key === "client" &&
-        !["codex", "claude", "opencode", "pi", "dsh", "cursor", "kimi", "zcode", "antigravity"].includes(value)
+        !["codex", "claude", "opencode", "pi", "dsh", "cursor", "kimi", "zcode"].includes(value)
       )
         continue;
       next[key] = key === "view" && value === "accounts" ? "clients" : value;

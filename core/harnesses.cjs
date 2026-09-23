@@ -10,7 +10,6 @@ const { makeCatalog } = require("./models.cjs");
 const { apiProfile } = require("./account-info.cjs");
 const additional = require("./additional-harnesses.cjs");
 const additionalOAuth = require("./additional-oauth.cjs");
-const antigravityStatus = require("./antigravity-status.cjs");
 const kimiConfig = require("./kimi-config.cjs");
 const { officialAccountPlan } = require("./official-account-plan.cjs");
 const { assertClaudeAccount } = require("./claude-launch-policy.cjs");
@@ -72,6 +71,7 @@ const SPECS = [
   },
   ...additional.SPECS,
 ];
+const ACTIVE_SPECS = SPECS.filter((spec) => !spec.retired);
 const APIS = {
   "openai-responses": "openai-responses",
   "openai-chat": "openai-completions",
@@ -397,22 +397,18 @@ class HarnessManager {
     if (providerMigration && fs.existsSync(this.file)) this.save();
   }
   async refreshOAuth() {
-    for (const { id } of SPECS) {
+    for (const { id } of ACTIVE_SPECS) {
       if (!this.state.executables[id] || id === "opencode") this.detect(id);
     }
     const pi = this.launcher("pi");
-    const [piProviders] = await Promise.all([
-      piOAuthProviders(pi.ready ? pi.entryPoint : ""),
-      this.refreshOAuthSecrets(),
-    ]);
+    const [piProviders] = await Promise.all([piOAuthProviders(pi.ready ? pi.entryPoint : "")]);
     this.piProviders = piProviders;
   }
   async refreshOAuthSecrets() {
-    const context = { home: this.nativeHome, override: this.state.credentialHomes.antigravity,
-      launcher: this.launcher("antigravity") };
-    this.antigravityKeyring = antigravityStatus.shouldReadKeyring(context)
-      ? await antigravityStatus.readKeyring({ includeGrant: true }) : null;
-    return this.antigravityKeyring;
+    // Retired adapters do not scan native stores. This method remains as a
+    // stable OAuthHistory callback for upgrades from older ASS versions.
+    this.antigravityKeyring = null;
+    return null;
   }
   oauthHistorySources() {
     const native = ["kimi", "zcode"].flatMap((id) => additional.locations(id, {
@@ -423,9 +419,7 @@ class HarnessManager {
       catch { return [{ ...location, harness: id, authFile: path.join(location.dir, "config.toml"),
         issue: "Kimi OAuth 配置无法读取" }]; }
     }));
-    const antigravity = antigravityStatus.historySources({ home: this.nativeHome,
-      override: this.state.credentialHomes.antigravity, keyring: this.antigravityKeyring });
-    return [...native, ...antigravity, ...SPECS.filter((s) => s.oauth && !s.nativeLoginOnly).flatMap(({ id }) => [
+    return [...native, ...ACTIVE_SPECS.filter((s) => s.oauth && !s.nativeLoginOnly).flatMap(({ id }) => [
       ...nativeLocations(id, this.nativeHome, this.nativeEnv, this.state.credentialHomes[id], this.codexDir)
         .map((dir) => ({ harness: id, dir, native: true })),
       ...this.state.profiles.filter((p) => p.harness === id)
@@ -435,7 +429,7 @@ class HarnessManager {
   oauthHistoryAllows(id, provider) {
     if (id === "kimi") return /^kimi:[a-f0-9]{20}$/.test(provider);
     if (id === "zcode") return ["zai", "bigmodel"].includes(provider);
-    if (id === "antigravity") return provider === "google-antigravity";
+    if (id === "antigravity") return false;
     return this.spec(id).oauth && (id === "pi" ? this.piProviders.some((p) => p.id === provider)
       : ACCOUNT_SERVICES[id].includes(provider));
   }
@@ -575,7 +569,7 @@ class HarnessManager {
       oauthSources: this.oauthSources().map(
         ({ file, sourceProvider, ...s }) => s,
       ),
-      clients: SPECS.map((s) => {
+      clients: ACTIVE_SPECS.map((s) => {
         if (s.nativeLoginOnly) {
           const launcher = this.launcher(s.id);
           const native = additional.inspect(s.id, { home: this.nativeHome, env: this.nativeEnv,

@@ -15,10 +15,12 @@ const { decryptZCode, kimiReference, publicGrant, status: authorization } = requ
 const SPECS = [
   { id: "kimi", name: "Kimi Code", command: "kimi" },
   { id: "zcode", name: "ZCode", command: "zcode" },
-  { id: "antigravity", name: "Antigravity", command: "agy" },
+  // Kept only so older persisted state and encrypted OAuth history remain
+  // readable. Retired clients are never scanned or exposed by Harnesses.
+  { id: "antigravity", name: "Antigravity", command: "agy", retired: true },
 ].map((s) => ({ ...s, oauth: ["kimi", "zcode", "antigravity"].includes(s.id), nativeLoginOnly: true,
   injectionUnsupported: ["kimi", "zcode"].includes(s.id) ? undefined : s.id === "antigravity"
-    ? "支持原生账户识别；Antigravity 的第三方供应商接入与账户切换暂未适配。"
+    ? "此客户端已停止支持。"
     : "此版本仅识别原生账户与模型；账户切换与配置接入尚未适配。" }));
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const has = (v) => typeof v === "string" && !!v.trim();

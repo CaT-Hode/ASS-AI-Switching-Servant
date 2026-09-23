@@ -5,7 +5,6 @@ const TOML = require("@iarna/toml");
 const { OAuthHistory } = require("../core/oauth-history.cjs");
 const { HarnessManager } = require("../core/harnesses.cjs");
 const { encryptZCode, decryptZCode, kimiSources, lock } = require("../core/additional-oauth.cjs");
-const { parseStoredToken, historyFile } = require("../core/antigravity-status.cjs");
 const jwt = (v) => "header." + Buffer.from(JSON.stringify(v)).toString("base64url") + ".signature";
 const future = 2100000000;
 function fixture(t) {
@@ -38,13 +37,6 @@ const kimiConfig = (slot = "oauth/kimi-code", base = "https://api.kimi.com/codin
 const kimiGrant = (name, refresh = name) => ({ access_token: "synthetic-access-" + name, refresh_token: "synthetic-refresh-" + refresh,
   expires_at: future, expires_in: 3600, token_type: "Bearer", scope: "code", preference: "keep" });
 const kfile = ".kimi-code/credentials/kimi-code.json", zfile = ".zcode/v2/credentials.json";
-const antigravityGrant = (name, extra = {}) => ({
-  token: { access_token: "synthetic-antigravity-access-" + name,
-    refresh_token: "synthetic-antigravity-refresh-" + name,
-    expiry: "2036-01-01T00:00:00.000Z", token_type: "Bearer" },
-  id_token: jwt({ iss: "https://accounts.google.com", sub: name, email: name + "@example.test", name }),
-  project_id: "project-" + name, region: "us-central1", tier_display_name: "Example Plan", ...extra,
-});
 function zgrant(f, name, provider = "zai", extra = {}) {
   const user = provider === "zai" ? { user_id: name, email: name + "@example.test", name }
     : { id: name, username: name, displayName: name };
@@ -157,70 +149,4 @@ test("ZCode: multiple data directories never choose an arbitrary OAuth switch ta
   assert.throws(() => f.history.preview("zcode", f.history.entries[0].id), /多个 ZCode 登录目录/);
   f.manager.state.credentialHomes.zcode = path.join(custom, ".zcode/v2");
   assert.equal(f.client("zcode").accounts.filter((a) => a.oauthCurrent).length, 1);
-});
-
-test("Antigravity: file fallback login changes are encrypted, displayed once and switchable", (t) => {
-  const f = fixture(t), relative = ".gemini/jetski-standalone-oauth-token";
-  f.put(".gemini/antigravity/app.json", {});
-  f.put(relative, antigravityGrant("alice", { future_field: { keep: "alice" } })); f.scan();
-  const alice = f.history.entries[0].id;
-  f.put(relative, antigravityGrant("bob", { future_field: { keep: "bob" } })); f.tick(); f.scan();
-  assert.equal(f.history.entries.length, 2);
-  let client = f.client("antigravity");
-  assert.equal(client.accounts.length, 2); assert.equal(client.accounts.filter((a) => a.oauthCurrent).length, 1);
-  assert.equal(client.accounts.find((a) => a.oauthCurrent).profile.fields.find((v) => v.id === "email").value, "bob@example.test");
-  f.history.apply(f.history.preview("antigravity", alice).ticket, true);
-  const stored = JSON.parse(fs.readFileSync(path.join(f.home, relative)));
-  assert.equal(stored.project_id, "project-alice"); assert.deepEqual(stored.future_field, { keep: "alice" });
-  client = f.client("antigravity"); assert.equal(client.accounts.find((a) => a.oauthCurrent).oauthRecordId, alice);
-  assert.doesNotMatch(JSON.stringify(client), /synthetic-antigravity-(access|refresh)/);
-  assert.doesNotMatch(fs.readFileSync(f.history.file, "utf8"), /synthetic-antigravity|alice@example/);
-});
-
-test("Antigravity: keyring switching uses the fixed external transaction and crash recovery", (t) => {
-  const f = fixture(t); f.put(".gemini/antigravity/app.json", {});
-  let stored = JSON.stringify(antigravityGrant("alice"));
-  const adapter = { read: () => stored, write: (value) => { stored = value; } };
-  const cache = (raw) => { const parsed = parseStoredToken(JSON.parse(raw));
-    f.manager.antigravityKeyring = { status: "detected", file: "Windows 凭据管理器 · gemini:antigravity",
-      raw, grant: parsed.grant, account: parsed.account, checkedAt: Date.now(), adapter }; };
-  cache(stored); f.history.external["antigravity-keyring"] = adapter; f.options.external = { "antigravity-keyring": adapter };
-  f.scan(); const alice = f.history.entries[0].id;
-  stored = JSON.stringify(antigravityGrant("bob")); cache(stored); f.tick(); f.scan();
-  assert.equal(f.history.entries.length, 2);
-  const bob = f.history.entries.find((entry) => entry.id !== alice).id;
-  assert.equal(f.client("antigravity").accounts.filter((a) => a.oauthCurrent).length, 1);
-  const preview = f.history.preview("antigravity", alice);
-  assert.equal(preview.target, "Windows 凭据管理器 · gemini:antigravity");
-  f.history.apply(preview.ticket, true);
-  assert.equal(JSON.parse(stored).project_id, "project-alice");
-  assert.equal(f.manager.antigravityKeyring.raw, stored);
-  stored = null;
-  f.manager.antigravityKeyring = { status: "missing", raw: null, checkedAt: Date.now(), adapter };
-  f.history.apply(f.history.preview("antigravity", bob).ticket, true);
-  assert.equal(JSON.parse(stored).project_id, "project-bob");
-  const before = stored, after = JSON.stringify(antigravityGrant("carol"));
-  const source = f.manager.oauthHistorySources().find((s) => s.harness === "antigravity");
-  f.history.persist(f.history.entries, [{ file: historyFile(source), before, after, external: "antigravity-keyring" }]);
-  stored = after;
-  const loaded = new OAuthHistory(f.options);
-  assert.equal(stored, before); assert.equal(loaded.error, "");
-  assert.doesNotMatch(fs.readFileSync(f.history.file, "utf8"), /synthetic-antigravity|example\.test/);
-});
-
-test("Antigravity: native keyring fallback changes the active storage without duplicating one identity", (t) => {
-  const f = fixture(t); f.put(".gemini/antigravity/app.json", {});
-  const keyring = antigravityGrant("alice"), adapter = { read: () => JSON.stringify(keyring), write: () => {} };
-  const parsed = parseStoredToken(keyring);
-  f.manager.antigravityKeyring = { status: "detected", raw: JSON.stringify(keyring), grant: parsed.grant,
-    account: parsed.account, checkedAt: Date.now() + 60000, adapter };
-  f.history.external["antigravity-keyring"] = adapter;
-  f.scan(); const id = f.history.entries[0].id;
-  const fallback = antigravityGrant("alice"); fallback.token.refresh_token = "synthetic-file-refresh";
-  f.put(".gemini/jetski-standalone-oauth-token", fallback);
-  f.put(".gemini/cache/antigravity-keyring-unavailable", "");
-  f.tick(); f.scan();
-  assert.equal(f.history.entries.length, 1); assert.equal(f.history.entries[0].id, id);
-  assert.equal(f.history.entries[0].grant.token.refresh_token, "synthetic-file-refresh");
-  assert.match(f.history.preview("antigravity", id).target, /jetski-standalone-oauth-token$/);
 });
