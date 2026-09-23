@@ -54,7 +54,7 @@ function connectionFixture(t, overrides = {}) {
 
 test("initial all-false connection state is persisted and restart stays closed without starting router", async (t) => {
   const f = connectionFixture(t);
-  const expected = { codex: false, claude: false, opencode: false, pi: false, dsh: false, kimi: false };
+  const expected = { codex: false, claude: false, opencode: false, pi: false, dsh: false, kimi: false, zcode: false };
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.dataDir, "connections.json"), "utf8")), expected);
 
   const restarted = new Connections({

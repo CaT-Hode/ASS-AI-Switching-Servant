@@ -5,6 +5,7 @@ const { createHash, randomUUID } = require("node:crypto");
 const JSONC = require("jsonc-parser");
 const YAML = require("yaml");
 const managedToml = require("./toml-managed.cjs");
+const zcode = require("./zcode-config.cjs");
 const hash = (s) =>
   createHash("sha256")
     .update(s || "")
@@ -13,7 +14,8 @@ const absent = () => ({ exists: false });
 const present = (value) => ({ exists: true, value });
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const identity = (e) =>
-  JSON.stringify([path.resolve(e.file).toLowerCase(), e.path]);
+  JSON.stringify([path.resolve(e.file).toLowerCase(), e.path,
+    e.selector ? Object.entries(e.selector).sort(([a], [b]) => a.localeCompare(b)) : null]);
 
 function atomic(file, value) {
   safePath(file);
@@ -107,10 +109,21 @@ function valueAt(data, keys) {
   }
   return present(current);
 }
-function edit(text, format, keys, value) {
+function fieldAt(data, keys, selector) {
+  const field = valueAt(data, keys);
+  if (!selector) return { current: field, keys };
+  if (!field.exists) return { current: absent(), keys: [...keys, 0] };
+  if (!Array.isArray(field.value)) throw Error("原生规则字段不是列表，未覆盖");
+  const matches = field.value.flatMap((v, i) => object(v) &&
+    Object.entries(selector).every(([k, expected]) => v[k] === expected) ? [i] : []);
+  if (matches.length > 1) throw Error("原生规则存在重复 ID，未覆盖");
+  return matches.length ? { current: present(field.value[matches[0]]), keys: [...keys, matches[0]] }
+    : { current: absent(), keys: [...keys, field.value.length] };
+}
+function edit(text, format, keys, value, selector) {
   if (format === "toml") return managedToml.edit(text, keys, value);
   const doc = document(text, format);
-  valueAt(doc.data, keys); // refuse replacing a scalar parent
+  const field = fieldAt(doc.data, keys, selector); // refuse replacing a scalar parent
   if (format === "yaml") {
     if (value.exists) doc.yaml.setIn(keys, value.value);
     else doc.yaml.deleteIn(keys);
@@ -118,7 +131,7 @@ function edit(text, format, keys, value) {
   }
   return JSONC.applyEdits(
     doc.source,
-    JSONC.modify(doc.source, keys, value.exists ? value.value : undefined, {
+    JSONC.modify(doc.source, field.keys, value.exists ? value.value : undefined, {
       formattingOptions: {
         insertSpaces: true,
         tabSize: 2,
@@ -130,9 +143,10 @@ function edit(text, format, keys, value) {
 function validField(e) {
   if (
     !e ||
-    !["dsh", "opencode", "pi", "kimi"].includes(e.harness) ||
+    !["dsh", "opencode", "pi", "kimi", "zcode"].includes(e.harness) ||
     !path.isAbsolute(e.file || "") ||
-    !(e.harness === "kimi" ? e.format === "toml" && managedToml.validPath(e.path) && !e.replace : ["json", "jsonc", "yaml"].includes(e.format)) ||
+    !(e.harness === "zcode" ? zcode.validField(e) : !e.selector && (e.harness === "kimi"
+      ? e.format === "toml" && managedToml.validPath(e.path) && !e.replace : ["json", "jsonc", "yaml"].includes(e.format))) ||
     !Array.isArray(e.path) ||
     !e.path.length ||
     e.path.some(
@@ -245,9 +259,13 @@ class NativeFields {
       if (!file) {
         const text = read(e.file);
         file = { file: e.file, before: text, after: text, format: e.format };
+        if (harness === "zcode") {
+          if (text === null) file.after = JSON.stringify(zcode.empty(), null, 2) + "\n";
+          else zcode.validate(document(text, "json").data);
+        }
         files.set(e.file, file);
       }
-      const current = valueAt(document(file.after, e.format).data, e.path);
+      const { current } = fieldAt(document(file.after, e.format).data, e.path, e.selector);
       if (old && !equal(current, old.after))
         throw Error(
           `原生配置的 ASS 字段已被外部修改：${path.basename(e.file)} · ${e.path.join(" / ")}`,
@@ -258,7 +276,7 @@ class NativeFields {
         );
       const target = next ? present(next.value) : old.before;
       if (!equal(current, target))
-        file.after = edit(file.after, e.format, e.path, target);
+        file.after = edit(file.after, e.format, e.path, target, e.selector);
       else if (old && e.format === "toml")
         managedToml.assertOwned(file.after, e.path);
       if (next) {
@@ -269,6 +287,11 @@ class NativeFields {
           after: target,
         });
       }
+    }
+    if (harness === "zcode") for (const file of files.values()) {
+      const next = document(file.after, "json").data;
+      zcode.validate(next);
+      if (file.before !== null) zcode.assertDefaultPreserved(document(file.before, "json").data, next);
     }
     if (harness === "kimi") for (const file of files.values()) {
       const current = document(file.before, "toml").data, next = document(file.after, "toml").data;
@@ -326,7 +349,7 @@ class NativeFields {
         return false;
       try {
         return equal(
-          valueAt(document(read(e.file), e.format).data, e.path),
+          fieldAt(document(read(e.file), e.format).data, e.path, e.selector).current,
           e.after,
         );
       } catch {

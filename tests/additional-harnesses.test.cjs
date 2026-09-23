@@ -211,7 +211,7 @@ test("malformed and oversized native files remain intact and never disclose cont
   assert.equal(fs.readFileSync(bad, "utf8"), 'api_key = "secret-with-invalid-syntax');
   assert.ok(!JSON.stringify(f.check("kimi")).includes("secret-with-invalid"));
 });
-test("native-login clients reject account mutations while Kimi supports separate provider injection", (t) => {
+test("native-login clients reject account mutations while Kimi and ZCode support separate provider injection", (t) => {
   const f = fixture(t), manager = f.manager();
   for (const id of ["kimi", "zcode", "antigravity"]) {
     for (const action of [() => manager.add(id, "test"), () => manager.select(id, "native:x"),
@@ -220,7 +220,8 @@ test("native-login clients reject account mutations while Kimi supports separate
     assert.equal(manager.oauthHistoryAllows(id, "test"), false);
   }
   assert.doesNotThrow(() => manager.setInjection("kimi", { excludedProviders: [] }));
-  for (const id of ["zcode", "antigravity"])
+  assert.doesNotThrow(() => manager.setInjection("zcode", { excludedProviders: [] }));
+  for (const id of ["antigravity"])
     assert.throws(() => manager.setInjection(id, { excludedProviders: [] }), /尚未支持供应商接入/);
   assert.deepEqual(new Set(manager.oauthHistorySources().map((s) => s.harness)), new Set(["codex", "claude", "pi"]));
   assert.deepEqual(fs.readdirSync(f.home), ["clients.json"]);

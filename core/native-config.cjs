@@ -6,7 +6,8 @@ const { nativeLocations } = require("./credential-status.cjs");
 const { endpoint } = require("./models.cjs");
 const { injectionCatalog, modelRef } = require("./client-policy.cjs");
 const { target: kimiTarget } = require("./kimi-config.cjs");
-const DIRECT = ["opencode", "pi", "dsh", "kimi"];
+const zcode = require("./zcode-config.cjs");
+const DIRECT = ["opencode", "pi", "dsh", "kimi", "zcode"];
 const APIS = {
   "openai-responses": "openai-responses",
   "openai-chat": "openai-completions",
@@ -35,6 +36,11 @@ const piLiteral = (value) =>
 
 function locations(harness, manager) {
   if (harness === "kimi") return kimiTarget(manager);
+  if (harness === "zcode") return zcode.target(manager, (file) => {
+    const text = read(file);
+    if (text === null) return {};
+    try { return document(text, "json").data; } catch { return {}; }
+  });
   const env = manager.nativeEnv,
     home = manager.nativeHome;
   const dir = nativeLocations(
@@ -85,7 +91,7 @@ function baseUrl(harness, p, wire) {
     "",
   );
   // Anthropic's own SDK appends /v1/messages; the AI SDK appends /messages.
-  return wire === "anthropic" && harness !== "opencode"
+  return wire === "anthropic" && !["opencode", "zcode"].includes(harness)
     ? url.replace(/\/v1$/, "")
     : url;
 }
@@ -100,6 +106,10 @@ function reasoning(model) {
 function compose(harness, manager, selection, targetOverride) {
   const target = targetOverride || locations(harness, manager),
     fields = [];
+  if (harness === "zcode") {
+    const text = read(target.config);
+    if (text !== null) zcode.validate(document(text, "json").data);
+  }
   const field = (file, format, keys, value, extra = {}) =>
     fields.push({ harness, file, format, path: keys, value, ...extra });
   const providers = manager.getState().providers;
@@ -185,6 +195,15 @@ function compose(harness, manager, selection, targetOverride) {
           { type: "api_key", key: piLiteral(p.apiKey) },
           { credentialProvider: id },
         );
+      } else if (harness === "zcode") {
+        const apiType = wire === "openai-chat" ? "openai-chat-completions" : APIS[wire];
+        field(target.config, "json", zcode.PROVIDERS, { providerId: id, providerName: p.name, enabled: true,
+          config: { group: "standard-personal", visibility: "visible", access: { type: "api-key", apiKey: p.apiKey },
+            api: { type: apiType, baseUrl: base, headers }, personalModelIds: models.map((m) => m.model) } },
+        { selector: { providerId: id }, credentialProvider: id });
+        for (const m of models) field(target.config, "json", zcode.MODELS,
+          { providerId: id, modelId: m.model, config: zcode.modelConfig(m) },
+          { selector: { providerId: id, modelId: m.model } });
       } else if (harness === "kimi") {
         const legacy = target.variant === "legacy";
         field(target.config, "toml", ["providers", id], {
@@ -310,11 +329,11 @@ class NativeConfig {
     return this.fields.owns(id, file, provider);
   }
   desired(id, selection) {
-    if (id === "kimi" && selection) throw Error("请在 Kimi 内选择模型；ASS 不修改默认模型");
+    if (["kimi", "zcode"].includes(id) && selection) throw Error("请在原生客户端内选择模型；ASS 不修改默认模型");
     const plan = compose(id, this.manager, selection);
-    if (id === "kimi" && this.fields.entries.some((e) => e.harness === id &&
+    if (["kimi", "zcode"].includes(id) && this.fields.entries.some((e) => e.harness === id &&
         path.resolve(e.file).toLowerCase() !== path.resolve(plan.target.config).toLowerCase()))
-      throw Error("Kimi 目标目录已变化，请先断开接入，再切换目录或版本");
+      throw Error(`${id === "kimi" ? "Kimi" : "ZCode"} 目标目录已变化，请先断开接入，再切换目录或版本`);
     for (const dir of this.manager.state.nativeProfileTargets?.[id] || []) {
       this.validateProfile(id, dir);
       const profile = compose(id, this.manager, undefined, profileLocations(id, dir));

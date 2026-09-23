@@ -8,13 +8,14 @@ const TOML = require("@iarna/toml");
 const { safePath } = require("./native-fields.cjs");
 const { text, claims } = require("./account-info.cjs");
 const { EFFORTS } = require("./models.cjs");
+const zcode = require("./zcode-config.cjs");
 
 const SPECS = [
   { id: "kimi", name: "Kimi Code", command: "kimi" },
   { id: "zcode", name: "ZCode", command: "zcode" },
   { id: "antigravity", name: "Antigravity", command: "agy" },
 ].map((s) => ({ ...s, oauth: false, nativeLoginOnly: true,
-  injectionUnsupported: s.id === "kimi" ? undefined : s.id === "antigravity"
+  injectionUnsupported: ["kimi", "zcode"].includes(s.id) ? undefined : s.id === "antigravity"
     ? "此版本识别 agy CLI 配置。OAuth 由系统密钥库管理；IDE 账户与配置接入尚未适配。"
     : "此版本仅识别原生账户与模型；账户切换与配置接入尚未适配。" }));
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
@@ -51,7 +52,7 @@ function locations(id, { home, env = {}, override }) {
     { dir: resolved(env.KIMI_CODE_HOME || path.join(home, ".kimi-code"), home), legacy: false },
     { dir: resolved(env.KIMI_SHARE_DIR || path.join(home, ".kimi"), home), legacy: true },
   ].filter((v, i, a) => a.findIndex((w) => w.dir.toLowerCase() === v.dir.toLowerCase()) === i);
-  if (id === "zcode") return [{ dir: path.join(resolved(env.ZCODE_DATA_BASE_DIR || home, home), ".zcode", "v2") }];
+  if (id === "zcode") return zcode.locations({ home, env }, (file) => read(file).data);
   if (id === "antigravity") return [{ dir: path.join(home, ".gemini", "antigravity-cli") }];
   throw Error("未知原生客户端");
 }
@@ -170,8 +171,9 @@ function decryptZCode(value, env) {
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
 }
-function inspectZCode({ dir }, { env, now, override }) {
+function inspectZCode({ dir, bootstrap, issue }, { env, now, override }) {
   const credentials = read(path.join(dir, "credentials.json")), accounts = [], models = [], sources = [credentials];
+  if (bootstrap) sources.push({ file: bootstrap, status: issue ? "unreadable" : "detected", message: issue || "" });
   if (credentials.data && Object.values(credentials.data).some((v) => typeof v !== "string")) {
     credentials.status = "unreadable"; credentials.message = "ZCode 凭据格式无法识别";
     delete credentials.data;
@@ -213,9 +215,10 @@ function inspectZCode({ dir }, { env, now, override }) {
       for (const id of Array.isArray(p.personalModelIds) ? p.personalModelIds : []) {
         const entries = exact.filter((m) => m.modelId === id);
         if (entries.length > 1) continue; // conflicting smart/manual declaration
-        const c = entries[0]?.config || {}, props = c.properties || {};
+        const c = entries[0]?.config || {}, props = c.properties || {}, options = c.optionSpecs || {};
         if (c.enabled === false) continue;
-        const m = model(id, r.providerId, { context: props.contextWindow, vision: props.inputFormat?.supportsImage }, p.api?.type, secrets);
+        const m = model(id, r.providerId, { context: props.contextWindow, vision: props.inputFormat?.supportsImage,
+          output: options.maxOutputTokens?.max, efforts: options.reasoningLevel?.values }, p.api?.type, secrets);
         if (m) models.push(m);
       }
     }

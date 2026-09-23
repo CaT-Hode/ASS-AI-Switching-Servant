@@ -2,22 +2,22 @@
 
 本页记录实际实现的能力，不把发现配置文件视为在线授权或模型调用成功。完整接入目标尚未完成。
 
-| 客户端 | 当前读取范围 | 尚未完成 |
+| 客户端 | 当前能力 | 尚未完成 |
 | --- | --- | --- |
 | Kimi Code | 新旧版目录与原生账户识别；按供应商直写 TOML，支持 Chat / Responses / Anthropic；同步及撤回 | 登录操作、OAuth 历史与切换、原生请求测试、用量与额度 |
-| ZCode | `.zcode/v2`、`ZCODE_DATA_BASE_DIR`；原生 AES-256-GCM 凭据及旧明文记录；Z.ai / BigModel 账户；个人配置显式模型 | 桌面安装发现、供应商规则注入 / 撤回、OAuth 切换、完整内置目录合并、原生请求测试、用量与额度 |
+| ZCode | CLI / Windows 桌面安装识别；默认、环境变量和桌面自定义数据目录；官方账户及显式模型；按供应商直写规则、同步及撤回 | OAuth 切换、完整内置目录合并、原生请求测试、用量与额度 |
 | Antigravity | `agy` 命令、Windows LocalAppData 下的 CLI；`.gemini/antigravity-cli/settings.json`；Gemini API 模式 | IDE 适配、系统密钥库 OAuth 读取 / 切换、模型配置写入、请求测试、用量与额度 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
 
 ## 读取约束
 
-- 检测不启动客户端，不执行密钥辅助程序、不刷新授权、不发送模型请求。只读识别单文件最多读取 2 MiB，拒绝链接路径；解析失败保留原文件。只有明确开启或同步 Kimi 接入时才写入其配置。
+- 检测不启动客户端，不执行密钥辅助程序、不刷新授权、不发送模型请求。只读识别单文件最多读取 2 MiB，拒绝链接路径；解析失败保留原文件。只有明确开启或同步 Kimi / ZCode 接入时才写入其配置。
 - Kimi 新旧数据目录分开识别，不互相借用 token；自定义目录不猜测版本。只读取配置引用的同目录 OAuth 文件；拒绝路径穿越、非文件存储、冲突凭据配置。撤销 tombstone 不产生账户，过期 / 待刷新明确保留状态。
 - ZCode 解密遵循原生实现：自定义 `ZCODE_CREDENTIAL_SECRET` 或 OS 平台 / 真实 home / 用户名派生密钥，覆写数据根目录不改变密钥身份。只读取官方命名空间，忽略 MCP 授权及无关凭据；解密失败不伪造账户。用户资料仅展示同一命名空间缓存中的白名单字段，不推断套餐。
 - 只有精确官方 HTTPS 端点的 API 才成为客户端账户。第三方配置模型单独聚合；模型声明不增加账户计数。未声明的上下文、协议、思维能力保持未知，不套用猜测值。
 - Antigravity 的 `GEMINI_API_KEY` 只有在 `modelProvider = "gemini"` 时生效；`GOOGLE_API_KEY` 不算登录。官方 OAuth 使用系统密钥库，不读取 Gemini CLI 的 `oauth_creds.json` 代替。
-- 前端及后端共同限制尚未实现的账户选择 / 启动操作；ZCode 与 Antigravity 仍只读。旧版五客户端接入状态可直接读取，新增 Kimi 默认关闭，不触发自动写入原生配置。
+- 前端及后端共同限制尚未实现的账户选择 / 启动操作；Antigravity 仍只读。旧版五 / 六客户端接入状态可直接读取，新增客户端默认关闭，不触发自动写入原生配置。
 
 ## Kimi 供应商接入
 
@@ -27,12 +27,21 @@
 - 不改 `default_model`、现有供应商和 OAuth 文件。新增 `ass-…` 表由加密日志记录；同步/撤回只处理这些表。未被客户端重排时保留原文件字节；原生客户端去除注释并重排 TOML 后仍按日志确认所有权，不重写其他表。外部修改了 ASS 字段值时停止覆盖。
 - 如果用户已把默认模型切到即将撤回的 ASS 模型，先在 Kimi 中切换模型后再关闭，避免留下无效默认模型。
 
+## ZCode 供应商接入
+
+- 在客户端页按供应商纳入模型，开启 / 同步后直写个人 `provider_config.json`。Chat Completions、Responses、Anthropic 分组为独立的 `ass-…` Provider，不开启 ASS 路由，不修改 `credentials.json` 或官方 Account Provider。
+- 遵循 `ZCODE_DATA_BASE_DIR`、`ZCODE_PERSONAL_PROVIDER_CONFIG_FILE` 及手动指定目录。桌面版还读取默认 `~/.zcode/v2/setting.json` 的 `dataBaseDir`，自动发现迁移后的账户和配置。CLI 与桌面出现不同的有效位置时要求指定目录，不猜测写入目标；接入后目标固定，切换须先断开。
+- 写入模型上下文、输出上限及可选思维档位，保留 ZCode 原生模型 / 协议的请求参数映射；不伪造工具、视觉等能力。ZCode 没有模型级显示名称和默认思维档位的对应字段，因此模型选择与默认档位留在原生客户端。
+- 按 `providerId` 和 `providerId + modelId` 确认条目所有权，不以列表下标或整张列表作为恢复单位。原生重排列表、添加供应商后可继续同步和撤回；重复 / 冲突条目、未知结构、外部修改 ASS 条目会停止覆盖。原有排序、默认模型及非 ASS 规则保留。
+- 初次创建文件时补全 `schemaVersion: 1` 和必要的空规则列表，关闭后留下合法空结构；密钥和模型规则全部撤回。当前默认模型属于待移除供应商时，要求先在 ZCode 中切换模型。
+- Windows 自动发现常见安装目录下的 ZCode / ZCode Preview；通过 Electron 资源区分桌面版和 CLI，不尝试向桌面程序传递 CLI 登录参数或自动重启进程。
+
 ## 官方依据
 
 2026-09-23 核对：
 
 - [Kimi Code 数据位置](https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html)、[配置文件](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html)。源码 `MoonshotAI/kimi-code` 提交 `6451f1e056e90037bbf832f3578955cf8e55db64`：`packages/oauth/src/storage.ts`、`toolkit.ts`（逻辑 key 到存储 slot 的映射）、`types.ts`、`token-state.ts`、`packages/agent-core-v2/src/app/kosongConfig/configSection.ts`。旧 CLI 提交 `9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82`，`src/kimi_cli/config.py`、`auth/oauth.py`。
-- [ZCode 原生凭据](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts)、同目录 `credential-cipher.ts`；配置结构参照同提交 `packages/provider-node/src/provider-config-file-codec.ts` 与 `packages/provider/src/config/rule-data-schema.ts`。
+- [ZCode 原生凭据](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts)、同目录 `credential-cipher.ts`；[供应商 / 模型规则](https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/provider/src/config/rule-data-schema.ts)。同提交的 `provider-config-file-codec.ts`、`provider-data-schema.ts`、`shared/src/model-config.ts` 定义写入格式；`model-execution.ts` 使用 Vercel AI SDK，Anthropic Base URL 保留 `/v1`。桌面目录与安装身份参照 `desktopDataBaseDirBootstrap.ts` 和 `desktop-product-identity.mjs`。
 - [Antigravity CLI 安装与授权](https://antigravity.google/docs/cli/install)。文档中的 Gemini API 模式不是通用 OpenAI / Anthropic 协议接入。
 
 当前验证使用合成凭据及隔离 Electron 窗口。本机默认位置未发现三者的实际账户，不宣称真实用户登录、订阅额度或完整 Agent 任务已验证。

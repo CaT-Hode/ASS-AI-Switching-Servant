@@ -7,6 +7,7 @@ const ACCOUNT_SERVICES = {
   opencode: ["opencode-go", "opencode"],
   pi: [],
   kimi: [],
+  zcode: [],
 };
 function officialApiService(provider) {
   try {

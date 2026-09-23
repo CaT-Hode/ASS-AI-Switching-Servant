@@ -88,6 +88,15 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
   // Electron Desktop is not the CLI: it ignores auth/model arguments and uses
   // a shared application profile. Detect it without launching it or injecting
   // account-specific settings into the user's existing desktop instance.
+  if (harness === "zcode") {
+    const desktop = info.isDirectory() ? ["ZCode.exe", "ZCode Preview.exe"].map((name) => path.join(location, name))
+      .find((file) => stat(file)?.isFile()) : location;
+    if (desktop && /^zcode(?: preview)?\.exe$/i.test(path.basename(desktop)) &&
+        (stat(path.join(path.dirname(desktop), "resources/app.asar"))?.isFile() ||
+          json(path.join(path.dirname(desktop), "resources/app.asar/package.json")).name === "@zcode/desktop" ||
+          json(path.join(path.dirname(desktop), "resources/app/package.json")).name === "@zcode/desktop"))
+      return { ...fail("已安装 ZCode Desktop · 使用原生账户与配置"), installed: true, kind: "desktop", desktopExecutable: desktop };
+  }
   if (harness === "opencode") {
     const desktop = info.isDirectory()
       ? path.join(location, "OpenCode.exe")
@@ -182,6 +191,11 @@ function searchLocations(harness, env = process.env) {
   const locations = [findExecutable(COMMANDS[harness] || harness, env)];
   if (harness === "antigravity" && env.LOCALAPPDATA)
     locations.push(path.join(env.LOCALAPPDATA, "agy", "bin", "agy.exe"));
+  if (harness === "zcode") {
+    for (const base of [env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "Programs"), env.ProgramFiles, env["ProgramFiles(x86)"]].filter(Boolean))
+      for (const name of ["ZCode", "ZCode Preview"])
+        locations.push(path.join(base, name, name + ".exe"));
+  }
   if (harness === "opencode") {
     // Windows Desktop installers do not necessarily register a PATH command.
     // Keep this bounded to known install locations; never recursively scan disks.

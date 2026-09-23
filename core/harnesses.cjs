@@ -769,7 +769,7 @@ class HarnessManager {
   }
   setCredentialHome(harness, dir) {
     this.spec(harness);
-    if (DIRECT.includes(harness) && this.options.isConnected?.(harness))
+    if (DIRECT.includes(harness) && (this.options.isConnected?.(harness) || this.options.nativeConfig?.list([harness]).length))
       throw Error("请先断开此客户端接入，再切换原生配置目录");
     if (
       dir &&
