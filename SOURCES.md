@@ -25,7 +25,7 @@ ASS 是独立实现，不是原产品的官方版本。界面不沿用旧产品�
 
 - [OpenRouter PKCE](https://openrouter.ai/docs/guides/overview/auth/oauth)：S256、localhost 回调、`/api/v1/auth/keys` 换取 API Key。实现不是订阅 OAuth 通用移植器。
 - [Cursor CLI authentication](https://cursor.com/docs/cli/reference/authentication)：原生浏览器登录与 API Key；本版只做原生 Key 保管，不推断 OAuth 文件格式或多账户隔离。
-- [Kimi Code](https://www.kimi.com/code/docs/en/)：Kimi 原生登录、Code API / Moonshot 区域入口；本版保留 OAuth 外部管理边界。
+- [Kimi Code](https://www.kimi.com/code/docs/en/)：Kimi 原生登录、Code API / Moonshot 区域入口；ASS 只跟踪原生文件 OAuth 的变化并加密保存可切换历史，不自行刷新或撤销授权。
 - [Z.ai API](https://docs.z.ai/api-reference/introduction)、[OpenCode Go](https://opencode.ai/docs/go/)：套餐与一般 API 入口区分。
 - [Anthropic API](https://platform.claude.com/docs/en/api/overview)：API Key 与原生订阅授权分开。
 - [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai)、[Groq](https://console.groq.com/docs/openai)、[Mistral](https://docs.mistral.ai/api)、[xAI](https://docs.x.ai/developers/rest-api-reference/inference/chat)、[SiliconFlow](https://docs.siliconflow.cn/docs/api/chat-completions-post)、[Qwen / DashScope](https://www.alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope)：兼容 API 基址与协议。
