@@ -82,7 +82,7 @@ class OpenRouterAuth {
       }
       job.used = true;
       res.end(
-        "<!doctype html><meta charset=utf-8><title>ASS</title><h1>AI Switch Servant</h1><p>Authorization received. Return to ASS to check the result. You can close this tab.</p>",
+        "<!doctype html><meta charset=utf-8><title>ASS</title><h1>Agent-Switching-Servant</h1><p>Authorization received. Return to ASS to check the result. You can close this tab.</p>",
       );
       this.update({ status: "exchanging", message: "正在安全换取 API Key…" });
       try {

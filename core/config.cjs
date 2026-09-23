@@ -33,7 +33,7 @@ function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/
     parsed.model_providers?.aimai1
   )
     throw new Error(
-      "存在非 AI Switch Servant 管理的 openai / aimai1 provider，请先恢复原配置，避免覆盖",
+      "存在非 ASS 管理的 openai / aimai1 provider，请先恢复原配置，避免覆盖",
     );
   let first = clean.search(/^\[/m);
   if (first < 0) first = clean.length;

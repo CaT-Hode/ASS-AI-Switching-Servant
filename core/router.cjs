@@ -43,7 +43,7 @@ function routeFor(body, state, suffix = "") {
   );
   if (!m)
     throw Object.assign(
-      new Error("供应商或模型未启用；请在 AI Switch Servant 检查配置"),
+      new Error("供应商或模型未启用；请在 ASS 检查配置"),
       { status: 404 },
     );
   if (!p.apiKey)

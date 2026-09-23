@@ -29,7 +29,7 @@ function run(
     "-c",
     `model_catalog_json=${JSON.stringify(path.join(data, "catalog.json"))}`,
     "-c",
-    'model_providers.ass_router.name="AI Switch Servant"',
+    'model_providers.ass_router.name="ASS"',
     "-c",
     'model_providers.ass_router.base_url="http://127.0.0.1:25819/v1"',
     "-c",

@@ -32,6 +32,7 @@ fs.mkdirSync(codex);
     const page = await app.firstWindow();
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
+    page.on("console", (m) => { if (["error", "warning"].includes(m.type())) errors.push(m.text()); });
     await page.waitForSelector("h1");
     assert.equal(await page.title(), "ASS");
     const state = await app.evaluate(() => global.assTest.snapshot());
@@ -46,6 +47,12 @@ fs.mkdirSync(codex);
     assert.equal(state.updates.status, "idle");
     await page.getByRole("button", { name: "关于 ASS", exact: true }).click();
     await page.locator(".ass-wordmark").waitFor();
+    assert.equal(await page.locator(".ass-brand-hero p").textContent(), "Agent-Switching-Servant");
+    assert.equal(await app.evaluate(({ app }) => app.getName()), "ASS");
+    assert.equal(await app.evaluate(({ app }) => app.getPath("userData")), data);
+    assert.equal(await page.locator("vite-error-overlay").count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+    await page.screenshot({ path: path.join(output, "agent-switching-servant-about.png"), animations: "disabled" });
     assert.equal(await page.getByRole("switch", { name: "自动检查更新", exact: true }).isChecked(), true);
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
@@ -84,6 +91,7 @@ fs.mkdirSync(codex);
         emptyProfile: true,
         nativeWindow: true,
         oauthUI: true,
+        fullName: "Agent-Switching-Servant",
         pageErrors: 0,
       }),
     );

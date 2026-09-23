@@ -81,7 +81,7 @@ export function Updates({ state, act, busy }) {
           <div className="ass-wordmark">
             ASS<span>v{state.version}</span>
           </div>
-          <p>AI Switch Servant</p>
+          <p>Agent-Switching-Servant</p>
         </div>
       </section>
       <section className="update-card" aria-label="软件更新">

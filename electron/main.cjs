@@ -64,6 +64,7 @@ const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
 if (testMode && customData) app.setPath("userData", customData);
 else
+  // Stable pre-rename data location: keep existing DPAPI credentials and settings.
   app.setPath(
     "userData",
     path.join(app.getPath("appData"), "AI Switch Servant"),
