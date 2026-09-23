@@ -5,8 +5,8 @@
 | 客户端 | 当前能力 | 尚未完成 |
 | --- | --- | --- |
 | Kimi Code | 新旧版目录与原生账户识别；原生登录发起；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML、同步及撤回；本地 Wire Token 记录与首页统计；原生 API / 文件型 OAuth 逐模型直连检测 | 不落盘 Wire 的实验性会话存储；真实账户与完整 Agent 请求尚未验证 |
-| ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；Start Plan、个人 / Team Coding Plan、MCP 额度；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计；API / Start / 已缓存 Coding Plan Key 的逐模型直连检测 | CLI 的 Start Plan 版本适配、账户运行时权益模型；真实账户与完整 Agent 请求尚未验证 |
-| Antigravity | CLI、2.0 Desktop / IDE 安装入口识别；Gemini API 模式；Windows 指定凭据条目与原生文件回退的共享 OAuth 读取；OAuth 变化加密留存与确认切换；已有用户、套餐、项目、区域与令牌到期信息 | 原生登录发起、旧 IDE 专有存储、模型配置写入、请求测试、用量与额度；尚未在真实安装及账户上联调 |
+| ZCode | CLI / Windows 桌面安装识别；原生登录发起；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；Start Plan、个人 / Team Coding Plan、MCP 额度；按供应商直写规则、同步及撤回；本机内置 / 模板 / 个人模型聚合；原生逐请求 SQLite 账本与首页统计；API / Start / 已缓存 Coding Plan Key 的逐模型直连检测 | 账户运行时权益模型；真实账户与完整 Agent 请求尚未验证 |
+| Antigravity | CLI、2.0 Desktop / IDE 安装入口识别；Gemini API 模式；Windows 指定凭据条目与原生文件回退的共享 OAuth 读取；OAuth 变化加密留存与确认切换；已有用户、套餐、项目、区域与令牌到期信息 | 适配已冻结，不再继续扩展 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
 

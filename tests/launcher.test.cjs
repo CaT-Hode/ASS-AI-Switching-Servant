@@ -77,6 +77,21 @@ test("npm directories, executable paths and script entries remain compatible", (
   );
   assert.equal(resolveLauncher("pi", "relative-path", env).ready, false);
 });
+test("ZCode npm launcher preserves only a trusted package version", (t) => {
+  const { root, write, env } = fixture(t);
+  write(
+    "zcode/package.json",
+    '{"name":"@zcode/cli","version":"3.14.0","bin":{"zcode":"dist/cli.js"}}',
+  );
+  write("zcode/dist/cli.js");
+  const directory = path.join(root, "zcode");
+  assert.equal(resolveLauncher("zcode", directory, env).version, "3.14.0");
+  write(
+    "zcode/package.json",
+    '{"name":"@zcode/cli","version":"not-a-version","bin":{"zcode":"dist/cli.js"}}',
+  );
+  assert.equal(resolveLauncher("zcode", directory, env).version, undefined);
+});
 test("ambiguous installations are returned separately and package bin cannot escape directory", (t) => {
   const { root, write, env } = fixture(t);
   write("one/dsh.cmd");

@@ -17,7 +17,9 @@ const time = (v) => {
 function zcodeVersion(manager) {
   // Electron transparently reads ASAR paths. Do not run an executable to obtain
   // its version or invent an app_version to change the server's entitlement path.
-  const launcher = manager.launcher("zcode"), exe = launcher.desktopExecutable;
+  const launcher = manager.launcher("zcode") || {};
+  if (version(launcher.version)) return launcher.version;
+  const exe = launcher.desktopExecutable;
   if (!exe) return null;
   for (const relative of ["resources/app.asar/out/metadata/build-meta.json", "resources/app/out/metadata/build-meta.json"]) {
     const file = path.join(path.dirname(exe), relative);

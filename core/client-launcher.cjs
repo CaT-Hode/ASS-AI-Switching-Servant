@@ -15,6 +15,11 @@ const PACKAGES = {
   antigravity: [],
 };
 const COMMANDS = { antigravity: "agy" };
+const trustedVersion = (value) =>
+  typeof value === "string" &&
+  /^\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/.test(value)
+    ? value
+    : null;
 function stat(file) {
   try {
     return fs.statSync(file);
@@ -190,8 +195,11 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
     if (
       [".js", ".mjs", ".cjs"].includes(path.extname(entry).toLowerCase()) ||
       !path.extname(entry)
-    )
-      return nodeEntry(entry, "npm-package", "npm 客户端包入口");
+    ) {
+      const result = nodeEntry(entry, "npm-package", "npm 客户端包入口");
+      const packageVersion = trustedVersion(manifest.version);
+      return packageVersion ? { ...result, version: packageVersion } : result;
+    }
     return fail("客户端包的 bin 类型尚不支持，请直接选择启动程序");
   }
   for (const relative of ["", "bin", "node_modules/.bin"])

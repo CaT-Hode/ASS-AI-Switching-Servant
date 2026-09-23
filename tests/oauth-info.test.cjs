@@ -118,7 +118,9 @@ test("saved Codex/Kimi grants query their own token without switching the active
   }
   assert.equal(fs.readFileSync(native, "utf8"), before);
 });
-test("ZCode version is read from native desktop build metadata, never invented from ASS's version", (t) => {
+test("ZCode version is read from a trusted native package or desktop metadata", (t) => {
+  assert.equal(extra.zcodeVersion({ launcher: () => ({ version: "3.13.0" }) }), "3.13.0");
+  assert.equal(extra.zcodeVersion({ launcher: () => ({ version: "bad-version-token" }) }), null);
   const f = fixture(t), exe = f.put("desktop/ZCode.exe", "synthetic-executable");
   const manager = { launcher: () => ({ desktopExecutable: exe }) };
   assert.equal(extra.zcodeVersion(manager), null);
