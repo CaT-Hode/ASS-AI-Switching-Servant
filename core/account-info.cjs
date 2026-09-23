@@ -4,8 +4,11 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { atomic } = require("./config.cjs");
 const { parseSubscription } = require("./subscription-usage.cjs");
+const oauthInfo = require("./oauth-info.cjs");
 
 const ACCOUNT_DOCS = {
+  "kimi-info": { label: "Kimi Code 账户与额度接口", url: "https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/packages/oauth/src/managed-usage.ts" },
+  "zcode-info": { label: "ZCode Start Plan 额度接口", url: "https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/packages/services/src/model-provider/zaiStartPlanBilling.ts" },
   kimi: { label: "Kimi Code 配置目录", url: "https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html" },
   zcode: { label: "ZCode 原生凭据格式", url: "https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts" },
   antigravity: { label: "Antigravity 登录与 API", url: "https://antigravity.google/docs/cli/install" },
@@ -232,6 +235,8 @@ function localProfile(
 
 // Only exact official HTTPS origins are eligible. A provider label/brand alone is not authority.
 function adapter(provider) {
+  const extra = oauthInfo.adapter(provider);
+  if (extra) return extra;
   if (
     provider.subscriptionKind === "openai" &&
     provider.baseUrl === "https://chatgpt.com/backend-api"
@@ -264,6 +269,8 @@ function adapter(provider) {
   return null;
 }
 function apiProfile(provider, nativeConnection = false) {
+  const extra = oauthInfo.profile(provider);
+  if (extra) return extra;
   let host;
   try {
     host = new URL(provider.baseUrl).host;
@@ -409,7 +416,7 @@ const fingerprint = (p) =>
   crypto
     .createHash("sha256")
     .update(
-      JSON.stringify([p.id, p.baseUrl, p.apiKey, p.network, p.extraHeaders]),
+      JSON.stringify([p.id, p.baseUrl, p.apiKey, p.network, p.extraHeaders, p.subscriptionKind, p.appVersion]),
     )
     .digest("hex");
 class AccountInfo {
@@ -482,6 +489,7 @@ class AccountInfo {
     const p = this.getProvider(id),
       kind = p && adapter(p);
     if (!kind || !p.apiKey) throw Error("此账户没有可查询的官方资料接口");
+    if (p.queryBlocked) throw Error(p.queryBlocked);
     const key = fingerprint(p);
     if (this.jobs.has(key)) return this.jobs.get(key);
     const cached =
@@ -501,6 +509,7 @@ class AccountInfo {
     }
   }
   async query(p, kind, key) {
+    if (oauthInfo.adapter(p)) return this.queryOAuth(p, kind, key);
     const route =
       kind === "openai-subscription"
         ? "https://chatgpt.com/backend-api/wham/usage"
@@ -512,47 +521,7 @@ class AccountInfo {
               ? "https://opencode.ai/zen/go/v1/usage"
               : "https://openrouter.ai/api/v1/key";
     try {
-      const r = await this.fetcher(
-        route,
-        {
-          method: "GET",
-          headers: {
-            ...(kind.endsWith("-subscription") ? p.extraHeaders : {}),
-            accept: "application/json",
-            authorization: "Bearer " + p.apiKey,
-          },
-          signal: AbortSignal.timeout(15000),
-          redirect: "error",
-          cache: "no-store",
-        },
-        p.network,
-      );
-      if (!r.ok) {
-        await r.body?.cancel();
-        throw Error("HTTP " + r.status);
-      }
-      // Bound the streamed body before parsing, not after reading an unbounded response.
-      if (Number(r.headers.get("content-length")) > 256 * 1024)
-        throw Error("资料响应过大");
-      const chunks = [];
-      let size = 0;
-      const reader = r.body?.getReader();
-      if (!reader) throw Error("资料响应为空");
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          size += value.length;
-          if (size > 256 * 1024) {
-            await reader.cancel();
-            throw Error("资料响应过大");
-          }
-          chunks.push(Buffer.from(value));
-        }
-      } finally {
-        reader.releaseLock();
-      }
-      const data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      const { data } = await this.fetchJSON(p, route, kind.endsWith("-subscription") ? p.extraHeaders : {});
       const expectedAccount = p.extraHeaders?.["chatgpt-account-id"];
       if (
         kind === "openai-subscription" &&
@@ -598,6 +567,59 @@ class AccountInfo {
       this.errors.set(key, message);
       return { ok: false, message };
     }
+  }
+  async fetchJSON(p, url, extraHeaders = {}) {
+    const r = await this.fetcher(url, { method: "GET", headers: { ...extraHeaders,
+      accept: "application/json", authorization: "Bearer " + p.apiKey },
+      signal: AbortSignal.timeout(15000), redirect: "error", cache: "no-store" }, p.network);
+    if (!r.ok) { await r.body?.cancel(); throw Error("HTTP " + r.status); }
+    if (Number(r.headers.get("content-length")) > 256 * 1024) { await r.body?.cancel(); throw Error("资料响应过大"); }
+    const chunks = [], reader = r.body?.getReader(); let size = 0;
+    if (!reader) throw Error("资料响应为空");
+    try {
+      for (;;) {
+        const { done, value } = await reader.read(); if (done) break;
+        size += value.length;
+        if (size > 256 * 1024) { await reader.cancel(); throw Error("资料响应过大"); }
+        chunks.push(Buffer.from(value));
+      }
+    } finally { reader.releaseLock(); }
+    return { data: JSON.parse(Buffer.concat(chunks).toString("utf8")), responseTime: Date.parse(r.headers.get("date")) };
+  }
+  async queryOAuth(p, kind, key) {
+    const requests = oauthInfo.requests(p);
+    const results = await Promise.all(requests.map(async ({ section, url }) => {
+      try {
+        const response = await this.fetchJSON(p, url);
+        const fields = oauthInfo.parse(kind, section, response.data, {
+          safeText: (v) => text(v, [p.apiKey]), now: this.now(), responseTime: response.responseTime,
+        });
+        return { section, fields, updatedAt: new Date(this.now()).toISOString() };
+      } catch (e) {
+        const label = section === "identity" ? "账户资料" : "额度";
+        const message = ["HTTP 401", "HTTP 403"].includes(e.message)
+          ? `${label}未获授权（${e.message}），请在原生客户端确认登录`
+          : /^HTTP \d{3}$/.test(e.message) ? `${label}查询失败 · ${e.message}` : `${label}查询失败，请检查网络或接口权限`;
+        return { section, error: message };
+      }
+    }));
+    const current = this.getProvider(p.id);
+    if (!current || fingerprint(current) !== key) return { ok: false, message: "账户配置已变化，请重新查询" };
+    const previous = this.cache[p.id]?.fingerprint === key ? this.cache[p.id] : null;
+    const sections = { ...previous?.sections };
+    for (const r of results) if (!r.error) sections[r.section] = { fields: r.fields, updatedAt: r.updatedAt };
+    const errors = results.filter((r) => r.error).map((r) => r.error);
+    if (errors.length) this.errors.set(key, errors.join("；")); else this.errors.delete(key);
+    if (results.some((r) => !r.error)) {
+      // Keep independently fetched identity and usage when one endpoint fails.
+      // The public timestamp is the oldest displayed section, not a false fresh
+      // timestamp on retained quota data. No cache can cross token fingerprints.
+      const items = Object.values(sections);
+      this.cache[p.id] = { fingerprint: key, sections, fields: items.flatMap((s) => s.fields),
+        updatedAt: items.map((s) => s.updatedAt).sort()[0] };
+      try { this.save(); } catch { this.errors.set(key, "已获取资料，但加密缓存保存失败"); }
+    }
+    return { ok: errors.length === 0, partial: errors.length > 0 && results.some((r) => !r.error), message: errors.join("；") || undefined };
   }
 }
 module.exports = {

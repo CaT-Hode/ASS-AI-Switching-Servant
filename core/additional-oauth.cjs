@@ -123,7 +123,11 @@ function readSource(source) {
       // merge distinct opaque rotating refresh grants on a guessed identity.
       row.profile.fields = [{ id: "region", label: "服务区域", value: source.base.includes("api.kimi.ai/") ? "Global" : "中国区" },
         { id: "slot", label: "授权位置", value: source.slot }];
-      grants.push({ row, grant, identity: null, grantKey: stamp(["kimi", source.provider, grant.refresh_token || grant.access_token]) });
+      const env = source.env || {};
+      const official = !env.KIMI_API_KEY && [env.KIMI_CODE_BASE_URL, env.KIMI_BASE_URL].every((v) => !v || endpoint(v) === source.base) &&
+        [env.KIMI_CODE_OAUTH_HOST, env.KIMI_OAUTH_HOST].every((v) => !v || endpoint(v) === source.host);
+      grants.push({ row, grant, identity: null, grantKey: stamp(["kimi", source.provider, grant.refresh_token || grant.access_token]),
+        query: official ? { kind: "kimi-code", baseUrl: source.base } : null });
     }
   } else {
     auth = part(sourceFile(source));
@@ -136,8 +140,12 @@ function readSource(source) {
         session_token: value("zcodejwttoken"), attribution: value("oauth:login_attribution") };
       const row = publicGrant("zcode", provider, grant), user = zcodeUser(grant);
       if (has(grant.access_token) && has(grant.session_token) && zcodeIdentity(provider, user)) {
+        const env = source.env || {};
+        const official = (!env.ZCODE_ENV || env.ZCODE_ENV === "production") &&
+          [env.ZCODE_BASE_URL, env.ZCODE_ENDPOINT_ORIGIN].every((v) => !v || endpoint(v) === "https://zcode.z.ai");
         grants.push({ row, grant, identity: stamp(["zcode", provider, zcodeIdentity(provider, user)]),
-          grantKey: stamp(["zcode", provider, grant.refresh_token || grant.access_token]) });
+          grantKey: stamp(["zcode", provider, grant.refresh_token || grant.access_token]),
+          query: official ? { kind: "zcode-start", baseUrl: "https://zcode.z.ai" } : null });
       }
     }
   }

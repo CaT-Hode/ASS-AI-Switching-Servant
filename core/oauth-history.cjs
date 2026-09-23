@@ -149,13 +149,13 @@ class OAuthHistory {
         (g.identity ? e.identity === g.identity : e.grantKey === g.grantKey));
       const id = previous?.id || crypto.randomBytes(12).toString("hex");
       ids[g.row.provider] = id;
-      const fingerprint = stamp([g.grant, g.metadata, g.lastRefresh]);
+      const fingerprint = stamp([g.grant, g.metadata, g.lastRefresh, g.query]);
       if (previous?.fingerprint === fingerprint) continue;
       // Another native/isolated directory can contain an older copy of this user.
       if (previous && state.modified < previous.sourceModified && previous.sourceFile !== key(state.auth.file)) continue;
       const entry = { id, harness: state.source.harness, provider: g.row.provider,
         identity: g.identity, grantKey: g.grantKey, grant: g.grant,
-        metadata: g.metadata, lastRefresh: g.lastRefresh, profile: g.row.profile,
+        metadata: g.metadata, lastRefresh: g.lastRefresh, profile: g.row.profile, query: g.query,
         fingerprint, firstSeenAt: previous?.firstSeenAt || new Date(this.now()).toISOString(),
         updatedAt: new Date(this.now()).toISOString(), sourceModified: state.modified, sourceFile: key(state.auth.file) };
       entries = entries.filter((e) => e.id !== id).concat(entry);

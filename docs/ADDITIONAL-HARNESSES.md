@@ -4,8 +4,8 @@
 
 | 客户端 | 当前能力 | 尚未完成 |
 | --- | --- | --- |
-| Kimi Code | 新旧版目录与原生账户识别；文件型 OAuth 自动加密记录与确认切换；按供应商直写 TOML，支持 Chat / Responses / Anthropic；同步及撤回 | 登录发起、原生请求测试、用量与额度 |
-| ZCode | CLI / Windows 桌面安装识别；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；按供应商直写规则、同步及撤回 | 登录发起、完整内置目录合并、原生请求测试、用量与额度 |
+| Kimi Code | 新旧版目录与原生账户识别；文件型 OAuth 自动加密记录与确认切换；官方资料、编程额度、加量包余额查询；按供应商直写 TOML，支持 Chat / Responses / Anthropic；同步及撤回 | 登录发起、原生请求测试、本地 Token 账本 |
+| ZCode | CLI / Windows 桌面安装识别；默认、环境变量和桌面自定义数据目录；完整 OAuth 会话自动保存与切换；可识别 Desktop 版本时查询 Start Plan 额度；按供应商直写规则、同步及撤回 | 登录发起、CLI 版本适配、Coding Plan / Team / MCP 额度、完整内置目录合并、原生请求测试、本地 Token 账本 |
 | Antigravity | `agy` 命令、Windows LocalAppData 下的 CLI；`.gemini/antigravity-cli/settings.json`；Gemini API 模式 | IDE 适配、系统密钥库 OAuth 读取 / 切换、模型配置写入、请求测试、用量与额度 |
 
 未检测到安装入口或配置来源的客户端不进入首页汇总；仍可在“更多客户端”选择路径。有效配置也是识别证据，但不证明该客户端已安装或在线。
@@ -26,6 +26,15 @@
 - ZCode 只记录 `oauth:active_provider` 对应的完整会话（用户资料、access / refresh、共享 `zcodejwttoken` 和登录归因），不把残留的另一供应商 token 配上当前用户 JWT。切换遵循原生互斥身份域规则，清除另一 OAuth 命名空间的旧 token / 用户字段，但保留 API、MCP 等无关凭据。写回使用原生 AES-GCM 格式，并遵循同一文件锁；锁占用时提示重试，不删除别人的锁。
 - 完整性、区域、目录或环境覆盖有冲突时停止切换。ZCode 会话 JWT 已到期即拒绝切换，不因为 provider 仍有 refresh token 就认为会话有效。只有孤立 token、缺少当前供应商或完整用户资料的旧记录仍可只读显示，但不开放换号。
 - 两套 Kimi 配置需先选择版本；CLI / Desktop 同时存在不同有效 ZCode 登录目录时需先指定目录。更多恢复与并发约束见 [OAuth 账户历史](OAUTH-HISTORY.md)。
+
+## 账户资料与额度
+
+- Kimi 使用对应中国区 / Global 官方 `/coding/v1/me`、`/coding/v1/usages`。显示返回的用户 ID、邮箱、昵称、会员等级与时间字段，不读取或展示任意资料字段。5h / 7d / 月度总额 / 月度编程额度只显示接口实际返回的窗口；`used_ratio` × 100 为已用百分比，缺失窗口不补零。
+- 加量包按原接口固定精度换算，`amountLeft` 不存在时不假定余额为零；保留原币种，不与 Moonshot 通用 API 余额混淆。
+- ZCode 使用会话 JWT 读取 `/api/v1/zcode-plan/billing/balance`，仅查询 Start Plan。`app_version` 来自已识别 Desktop 的构建元数据或包信息；没有可信版本则不发请求，不借用 ASS 版本或写死一个新版本。CLI 单独查询及 Coding Plan / Team / MCP 额度尚未实现。
+- Start Plan 按可明确归属的有效套餐、额度桶显示剩余 / 总额 / 已用与重置时间，不跨单位求和。剩余使用 `remaining_units`；`available_units` 会扣除进行中请求的预留量，不作为剩余的替代字段。过期与归属不明确的桶不混入当前额度。
+- 当前和已保存的 OAuth 账户使用自己的令牌查询，包括既有 Codex / Claude / pi 订阅，不用当前原生文件代替历史账户，也不为查看额度切换登录。缓存按授权指纹隔离、加密持久化；资料与额度独立保留上次成功结果，局部失败不清空其他数据，不把旧额度的时间更新成当前时间。
+- 查询只读，复用系统 CA / 系统代理、禁止跳转、限制响应大小，不静默刷新令牌。自定义授权端点或无法确认官方作用域的记录不自动向官方服务器发送凭据。实现以官方源码字段为依据；隔离测试不等于真实用户额度已在线核验。
 
 ## Kimi 供应商接入
 

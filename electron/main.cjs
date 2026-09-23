@@ -60,6 +60,7 @@ const {
   nativeSubscriptionProvider,
 } = require("../core/subscription-usage.cjs");
 const { AccountInfo, ACCOUNT_DOCS } = require("../core/account-info.cjs");
+const { historyProvider: oauthInfoProvider } = require("../core/oauth-info.cjs");
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
 if (testMode && customData) app.setPath("userData", customData);
@@ -188,11 +189,24 @@ function accountProvider(id) {
   const configured = store.state.providers.find((p) => p.id === id);
   if (configured || !id.startsWith("native-info:") || !harnesses)
     return configured;
+  const saved = /^native-info:(codex|claude|pi|kimi|zcode):oauth-record:([a-f0-9]{24})$/.exec(id);
+  if (saved) return oauthInfoProvider(oauthHistory, harnesses, saved[1], saved[2]);
   for (const c of harnesses.snapshot().clients)
     for (const a of c.accounts) {
       if (id !== "native-info:" + c.id + ":" + a.id) continue;
       return nativeOfficialProvider(c, a) || nativeSubscriptionProvider(c, a);
     }
+}
+function informationClient(id) {
+  const client = harnesses.snapshot().clients.find((c) => c.id === id);
+  if (client) oauthHistory?.decorate(client);
+  return client;
+}
+function informationProvider(client, account) {
+  if (!client || !account) return null;
+  if (account.kind === "api") return accountProvider(account.providerId);
+  return (account.oauthRecordId && oauthInfoProvider(oauthHistory, harnesses, client.id, account.oauthRecordId)) ||
+    nativeOfficialProvider(client, account) || nativeSubscriptionProvider(client, account);
 }
 async function readNativeModelMetadata(id, signal) {
   const client = harnesses
@@ -296,7 +310,21 @@ function snapshot() {
   const sources = modelSources(publicState, clientState, {
     home: harnesses.nativeHome, env: harnesses.nativeEnv, directories: providerModels,
   });
-  for (const client of clientState.clients) oauthHistory?.decorate(client);
+  for (const client of clientState.clients) {
+    oauthHistory?.decorate(client);
+    for (const account of client.accounts) {
+      if (!account.oauthRecordId) continue;
+      const provider = oauthInfoProvider(oauthHistory, harnesses, client.id, account.oauthRecordId);
+      if (!provider) continue;
+      const remote = accountInfo.public(provider);
+      if (["kimi", "zcode"].includes(client.id)) {
+        const local = account.profile || { fields: [], docs: [] };
+        const ids = new Set(remote.fields.map((f) => f.id));
+        account.profile = { ...local, ...remote, docs: [...new Set([...local.docs, ...remote.docs])],
+          fields: [...local.fields.filter((f) => !ids.has(f.id)), ...remote.fields] };
+      } else account.quota = remote;
+    }
+  }
   return {
     ...publicState,
     sequence: ++snapshotSequence,
@@ -779,16 +807,11 @@ else {
           if (sourceId === "official" || sourceId.startsWith("native-")) {
             const clientId =
               sourceId === "official" ? "codex" : sourceId.slice(7);
-            const client = harnesses
-              .snapshot()
-              .clients.find((c) => c.id === clientId);
+            const client = informationClient(clientId);
             const account = client?.accounts.find(
               (a) => a.id === accountId && a.kind !== "api",
             );
-            const provider =
-              account &&
-              (nativeSubscriptionProvider(client, account) ||
-                nativeOfficialProvider(client, account));
+            const provider = informationProvider(client, account);
             if (!provider) throw Error("此账户没有可查询的额度接口");
             return accountInfo.refresh(provider.id, {
               automatic: automatic === true,
@@ -830,19 +853,10 @@ else {
         return shell.openExternal(service[target]);
       });
       register("account-info", (clientId, accountId) => {
-        const account = harnesses
-          .snapshot()
-          .clients.find((c) => c.id === clientId)
-          ?.accounts.find((a) => a.id === accountId);
+        const client = informationClient(clientId);
+        const account = client?.accounts.find((a) => a.id === accountId);
         if (!account) throw Error("账户不存在");
-        const client = harnesses
-          .snapshot()
-          .clients.find((c) => c.id === clientId);
-        const provider =
-          account.kind === "api"
-            ? accountProvider(account.providerId)
-            : nativeOfficialProvider(client, account) ||
-              nativeSubscriptionProvider(client, account);
+        const provider = informationProvider(client, account);
         if (!provider) throw Error("此账户没有可查询的官方资料接口");
         return accountInfo.refresh(provider.id);
       });

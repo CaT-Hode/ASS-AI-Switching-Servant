@@ -47,6 +47,15 @@ function nativeSubscriptionProvider(client, account) {
           : client.id === "dsh"
             ? data.records?.["llm-pi-ai/" + provider]?.payload
             : data[provider];
+    return subscriptionProvider(client.id, provider, token, "native-info:" + client.id + ":" + account.id);
+  } catch {
+    return null;
+  }
+}
+// Saved OAuth records must use their own grant, never the active native file.
+function subscriptionProvider(harness, provider, token, id) {
+    const kind = ["openai", "openai-codex"].includes(provider) ? "openai" : provider === "anthropic" ? "anthropic" : null;
+    if (!kind) return null;
     const access = token?.access_token || token?.accessToken || token?.access;
     if (typeof access !== "string" || !access || access.length > 65536)
       return null;
@@ -55,7 +64,7 @@ function nativeSubscriptionProvider(client, account) {
       token.accountId ||
       (kind === "openai" ? tokenAccountId(access) : undefined);
     return {
-      id: "native-info:" + client.id + ":" + account.id,
+      id,
       nativeProvider: kind,
       subscriptionKind: kind,
       baseUrl:
@@ -78,9 +87,6 @@ function nativeSubscriptionProvider(client, account) {
             }
           : { "anthropic-beta": "oauth-2025-04-20" },
     };
-  } catch {
-    return null;
-  }
 }
 function resetTime(value) {
   if (typeof value !== "number" && typeof value !== "string") return undefined;
@@ -152,4 +158,4 @@ function parseSubscription(kind, data) {
     })
     .filter(Boolean);
 }
-module.exports = { nativeSubscriptionProvider, parseSubscription };
+module.exports = { nativeSubscriptionProvider, subscriptionProvider, parseSubscription };
