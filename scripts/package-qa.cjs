@@ -37,7 +37,7 @@ fs.mkdirSync(codex);
     assert.equal(await page.title(), "ASS");
     const state = await app.evaluate(() => global.assTest.snapshot());
     assert.equal(state.providers.length, 0);
-    assert.equal(state.harnesses.clients.length, 8);
+    assert.equal(state.harnesses.clients.length, 7);
     assert.equal(state.harnesses.clients.filter((c) => !c.nativeLoginOnly).length, 5);
     assert.equal(state.service.running, false);
     assert.equal(state.encrypted, true);
