@@ -36,7 +36,9 @@ async function start() {
 async function stop() { if (app) { await app.evaluate(() => global.assTest.quit()).catch(() => {}); await app.close().catch(() => {}); app = null; } }
 async function choose(name) {
   await page.getByRole("button", { name: "客户端与账户", exact: true }).click();
-  await page.locator(".client-list").getByRole("button", { name: new RegExp("^" + name + " ") }).click();
+  if (!(await page.locator(".client-list").getByRole("button", {name, exact: true}).isVisible()))
+    await page.locator(".more-clients > summary").click();
+  await page.locator(".client-list").getByRole("button", { name, exact: true }).click();
   assert.equal(await page.locator(".client-injection").count(), 1);
 }
 async function confirm(button) {
@@ -62,8 +64,7 @@ async function request(model, localToken = false, client = "codex") {
     ] });
     await assert.rejects(call("account-bind-api", "codex", id), /官方 API/);
     await choose("Codex");
-    await page.locator(".client-injection summary").click();
-    await page.getByLabel("Codex 默认接入模型").selectOption(JSON.stringify([id, "alpha"]));
+    assert.equal(await page.getByLabel("Codex 默认接入模型").count(), 0);
     await confirm(page.getByRole("switch", { name: "Codex ASS 接入", exact: true }));
     assert.equal((await call("snapshot")).connections.clients.codex.applied, true);
     assert.equal(await request("official-fixture"), 200);
@@ -75,7 +76,7 @@ async function request(model, localToken = false, client = "codex") {
     assert.equal(sent[1].auth, "Bearer synthetic-route-key");
     assert.equal(sent[1].account, undefined);
     const catalog = fs.readFileSync(path.join(data, "catalog.json"));
-    await page.locator(".client-injection-model").filter({ hasText: "beta" }).getByRole("checkbox").uncheck();
+    await page.getByRole("switch", { name: "Route fixture 供应商接入", exact: true }).click();
     assert.equal((await call("snapshot")).connections.clients.codex.pending, true);
     assert.deepEqual(fs.readFileSync(path.join(data, "catalog.json")), catalog);
     await page.screenshot({ path: path.join(out, "account-separation-proxy-pending.png"), animations: "disabled" });
@@ -83,7 +84,8 @@ async function request(model, localToken = false, client = "codex") {
     assert.equal((await call("snapshot")).connections.clients.codex.pending, true);
     assert.deepEqual(fs.readFileSync(path.join(data, "catalog.json")), catalog);
     await confirm(page.getByRole("button", { name: "同步 Codex 接入配置", exact: true }));
-    assert.equal((await call("snapshot")).connections.clients.codex.modelCount, 1);
+    assert.equal((await call("snapshot")).connections.clients.codex.modelCount, 0);
+    assert.equal(await request(id + "::alpha"), 404);
     assert.equal(await request(id + "::beta"), 404);
     assert.ok(!fs.readFileSync(path.join(data, "proxy-applied.json"), "utf8").includes("synthetic-route-key"));
     await choose("Claude Code");

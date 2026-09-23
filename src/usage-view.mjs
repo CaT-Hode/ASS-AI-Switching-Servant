@@ -5,6 +5,8 @@ export const CLIENT_NAMES = {
   pi: "pi",
   dsh: "DSH",
 };
+export const detectedClients = (state) => state.harnesses.clients.filter((c) =>
+  c.detected === true || (c.detected === undefined && !!(c.executable || c.launcher?.installed || c.desktop)));
 export const dayKey = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 export function rangeBounds(range, now = new Date()) {
@@ -132,7 +134,7 @@ export function summarize(rows, options, now = new Date()) {
 }
 export function overviewAccounts(state, clientFilter) {
   const accounts = new Map();
-  for (const client of state.harnesses.clients) {
+  for (const client of detectedClients(state)) {
     if (clientFilter !== "all" && client.id !== clientFilter) continue;
     for (const a of client.accounts) {
       if (

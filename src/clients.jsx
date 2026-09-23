@@ -25,9 +25,19 @@ import {
 } from "./account-dialogs.jsx";
 import { ActionMenu } from "./menus.jsx";
 import { AccountProfile } from "./account-profile.jsx";
-import { ConnectionStatus, ConnectionService } from "./connections.jsx";
+import { ConnectionStatus, ConnectionPill, ConnectionService } from "./connections.jsx";
 import { ClientInjection } from "./client-injection.jsx";
+import { detectedClients } from "./usage-view.mjs";
 const api = window.ass;
+const clientBrands = { codex: "openai", claude: "anthropic", opencode: "opencode", dsh: "deepseek", kimi: "kimi", zcode: "zai", antigravity: "gemini" };
+function ClientEntry({ client: c, activeClient, onSelect }) {
+  return <div className={"client-entry" + (c.id === activeClient ? " active" : "")}>
+    <button className="client-select" aria-label={c.name} aria-pressed={c.id === activeClient} onClick={() => onSelect(c.id)}>
+      <span className="client-glyph" aria-hidden="true">{clientBrands[c.id] ? <img src={"./providers/" + clientBrands[c.id] + ".svg"} alt="" /> : <Terminal size={23} />}</span>
+      <strong>{c.name}</strong><i className={"client-detected-dot" + (c.detected ? " found" : "")} title={c.detected ? "已识别" : "未识别"} /><ChevronRight size={14} />
+    </button>
+  </div>;
+}
 
 export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
   const [label, setLabel] = useState(""),
@@ -258,7 +268,7 @@ function AccountCard({
             className="button"
             title={
               client.launcher?.kind === "desktop"
-                ? "独立账户启动需要 OpenCode CLI；可在右上角打开桌面端"
+                ? `独立账户启动需要 ${client.name} CLI；可在右上角打开桌面端`
                 : undefined
             }
             disabled={
@@ -306,6 +316,14 @@ export function Clients({
     (s) => s.nativeKey && state.nativeAccounts.some((a) => a.vendorId === s.id),
   );
   const activeClient = nativeService?.id || client.id;
+  const panelRef = useRef(null);
+  const recognized = detectedClients(state);
+  const otherClients = state.harnesses.clients.filter((c) => !recognized.some((r) => r.id === c.id));
+  const selectClient = (id) => {
+    setSelected(id); onSelectClient?.(id); setNotice(""); setCandidates(null);
+    if (panelRef.current?.getBoundingClientRect().top < 0)
+      requestAnimationFrame(() => panelRef.current?.scrollIntoView({ block: "start", behavior: "instant" }));
+  };
   const addButton = useRef(null);
   function closeAdding() {
     setAdding(false);
@@ -363,38 +381,13 @@ export function Clients({
       )}
       <div className="clients-layout">
         <nav className="client-list" aria-label="客户端列表">
-          {state.harnesses.clients.map((c) => (
-            <div
-              key={c.id}
-              className={
-                "client-entry" + (c.id === activeClient ? " active" : "")
-              }
-            >
-              <button
-                className="client-select"
-                aria-pressed={c.id === activeClient}
-                onClick={() => {
-                  setSelected(c.id);
-                  onSelectClient?.(c.id);
-                  setNotice("");
-                  setCandidates(null);
-                }}
-              >
-                <Terminal size={19} />
-                <span>
-                  <strong>{c.name}</strong>
-                  <small>
-                    {c.launcher?.kind === "desktop"
-                      ? "已安装桌面端"
-                      : c.executable
-                        ? "已找到客户端"
-                        : "未检测到安装"}
-                  </small>
-                </span>
-                <ChevronRight size={14} />
-              </button>
-            </div>
-          ))}
+          <h3 className="client-rail-title">已识别的客户端</h3>
+          {recognized.map((c) => <ClientEntry key={c.id} client={c} {...{ activeClient }} onSelect={selectClient} />)}
+          {!recognized.length && <p className="client-rail-empty">尚未识别到客户端</p>}
+          {!!otherClients.length && <details className="more-clients" open={otherClients.some((c) => c.id === activeClient) || undefined}>
+            <summary>更多客户端 <ChevronRight size={14} /></summary>
+            {otherClients.map((c) => <ClientEntry key={c.id} client={c} {...{ activeClient }} onSelect={selectClient} />)}
+          </details>}
           {nativeServices.map((s) => (
             <div
               className={"client-entry" + (selected === s.id ? " active" : "")}
@@ -438,20 +431,20 @@ export function Clients({
           />
         ) : (
           <section
+            ref={panelRef}
             className="client-panel"
             aria-label={client.name + " 账户管理"}
           >
             <header className="client-heading">
               <h2>
                 {client.name}
-                <span className="count">{client.accounts.length}</span>
               </h2>
               <div className="actions">
                 {client.desktop && (
                   <button
                     className="icon-button"
-                    title="打开 OpenCode Desktop"
-                    aria-label="打开 OpenCode Desktop"
+                    title={"打开 " + client.name + " 桌面端"}
+                    aria-label={"打开 " + client.name + " 桌面端"}
                     disabled={!!busy}
                     onClick={() =>
                       act("client-open-desktop", async () => {
@@ -467,29 +460,24 @@ export function Clients({
                   </button>
                 )}
                 <button
-                  className="button"
+                  className="icon-button"
+                  aria-label="刷新状态"
+                  title="刷新状态"
                   disabled={!!busy}
                   onClick={() =>
                     act("client-refresh", () => api.call("client-refresh"))
                   }
                 >
                   <RefreshCw size={14} />
-                  刷新状态
                 </button>
-                {
-                  <button
-                    className="button primary"
-                    ref={addButton}
-                    onClick={() => setAdding(true)}
-                  >
-                    <Plus size={14} />
-                    添加账户
-                  </button>
-                }
+                {!client.injectionUnsupported && <ConnectionPill {...{ client, state, busy, onManage }} />}
               </div>
             </header>
             <ConnectionStatus {...{ client, state, busy, onManage }} />
-            <ClientInjection key={"injection:" + client.id} {...{ client, state, act, busy }} />
+            <ClientInjection key={"injection:" + client.id} {...{ client, state, act, busy, onManage }} />
+            <header className="client-accounts-heading"><h3>官方账户 <span className="count">{client.accounts.length}</span></h3>
+              {!client.nativeLoginOnly && <button className="button" ref={addButton} onClick={() => setAdding(true)}><Plus size={14} />添加账户</button>}
+            </header>
             <div className="client-account-grid">
               {client.accounts.map((a) => (
                 <AccountCard
@@ -503,13 +491,13 @@ export function Clients({
                 <div className="empty">
                   <KeyRound size={23} />
                   <p>
-                    尚未添加官方账户。模型接入不要求先添加账户。
+                    {client.nativeLoginOnly ? "在原生客户端中管理登录" : "暂无官方账户"}
                   </p>
                 </div>
               )}
             </div>
             <details className="client-settings" key={"paths:" + client.id}>
-              <summary>客户端路径与凭据目录</summary>
+              <summary><Settings2 size={16} />客户端设置 <ChevronRight size={15} /></summary>
               <div className="client-location-actions" aria-label="客户端位置">
                 <button className="button" disabled={!!busy} onClick={detect}>
                   <Search size={14} />

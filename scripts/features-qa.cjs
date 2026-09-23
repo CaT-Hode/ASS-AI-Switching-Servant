@@ -301,7 +301,7 @@ fs.mkdirSync(codex);
     );
     await page
       .locator(".client-list")
-      .getByRole("button", { name: /^Codex / })
+      .getByRole("button", { name: "Codex", exact: true })
       .click();
     await page.getByRole("button", { name: "添加账户", exact: true }).click();
     await page
@@ -345,7 +345,7 @@ fs.mkdirSync(codex);
     );
     await page
       .getByRole("button", {
-        name: /^DeepSeek Harness (已找到客户端|未检测到安装)$/,
+        name: "DeepSeek Harness", exact: true,
       })
       .click();
     await page.getByText("客户端路径与凭据目录", { exact: true }).click();

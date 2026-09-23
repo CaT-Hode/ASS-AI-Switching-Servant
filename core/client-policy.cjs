@@ -45,11 +45,12 @@ function modelIssue(harness, provider, model) {
 }
 function injectionCatalog(harness, providers, settings = {}) {
   const excluded = new Set(settings.excluded || []);
+  const excludedProviders = new Set(settings.excludedProviders || []);
   return providers.flatMap((p) => p.models.map((m) => {
     const ref = modelRef(p.id, m.model), issue = modelIssue(harness, p, m);
     return { ref, providerId: p.id, providerName: p.name, model: m.model,
       name: m.displayName, protocol: m.wireApi, issue,
-      included: !issue && !excluded.has(ref) };
+      included: !issue && !excludedProviders.has(p.id) && !excluded.has(ref) };
   }));
 }
 module.exports = { ACCOUNT_SERVICES, officialApiService, acceptsApiAccount, acceptsNativeAccount, modelRef, modelIssue, injectionCatalog };

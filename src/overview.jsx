@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   CLIENT_NAMES,
+  detectedClients,
   dayKey,
   overviewAccounts,
   summarize,
@@ -385,23 +386,26 @@ function AccountCard({ row, refresh, busy }) {
   );
 }
 export function Overview({ state, act, setView, setClientTarget }) {
-  const options = state.preferences.usage || {
+  const savedOptions = state.preferences.usage || {
     client: "all",
     range: "month",
     tab: "activity",
     group: "client",
   };
+  const clients = detectedClients(state);
+  const visibleIds = new Set(clients.map((c) => c.id));
+  const options = { ...savedOptions, client: visibleIds.has(savedOptions.client) ? savedOptions.client : "all" };
   const usage = state.usage || { rows: [], sources: [] };
   const [selected, setSelected] = useState(null),
     [refreshing, setRefreshing] = useState("");
   const [today, setToday] = useState(() => new Date());
   const stats = useMemo(
-    () => summarize(usage.rows, options, today),
-    [usage.rows, options.client, options.range, options.group, today],
+    () => summarize(usage.rows.filter((r) => visibleIds.has(r.client)), options, today),
+    [usage.rows, options.client, options.range, options.group, today, clients.map((c) => c.id).join(",")],
   );
   const accounts = overviewAccounts(state, options.client);
   const filteredSources = usage.sources.filter(
-    (s) => options.client === "all" || s.client === options.client,
+    (s) => visibleIds.has(s.client) && (options.client === "all" || s.client === options.client),
   );
   const change = (patch) => {
     setSelected(null);
@@ -446,7 +450,7 @@ export function Overview({ state, act, setView, setClientTarget }) {
           <Layers size={16} />
           汇总
         </button>
-        {state.harnesses.clients.map((c) => (
+        {clients.map((c) => (
           <button
             key={c.id}
             aria-pressed={options.client === c.id}

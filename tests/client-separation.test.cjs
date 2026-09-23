@@ -49,7 +49,7 @@ test("zero-model official API accounts remain ready and launch without model inj
     assert.equal(plan.routed, false);
     assert.equal(plan.nativeSelection, undefined);
     assert.ok(plan.files.some(([file]) => /auth.json|credentials.yaml/.test(file)));
-    assert.equal(f.manager.injection(id).defaultModel, null);
+    assert.equal(f.manager.injection(id).defaultModel, undefined);
   }
 });
 test("native injection uses all compatible models without accounts; selection cannot change its default", (t) => {
@@ -63,21 +63,21 @@ test("native injection uses all compatible models without accounts; selection ca
   assert.equal(f.manager.injection("claude").models.filter((m) => m.included).length, 1);
   f.manager.select("dsh", "api:deep");
   assert.equal(compose("dsh", f.manager).selected, undefined);
-  const ref = modelRef("relay", "one");
-  f.manager.setInjection("dsh", { defaultModel: ref });
+  f.manager.setInjection("dsh", { excludedProviders: ["relay"] });
   f.manager.bindApi("dsh", "deep", false);
-  assert.equal(compose("dsh", f.manager).selected.model.model, "one");
-  f.manager.setInjection("dsh", { defaultModel: null, excluded: [ref] });
-  assert.equal(compose("dsh", f.manager).modelCount, 1);
-  assert.equal(f.make().injection("dsh").models.filter((m) => m.included).length, 1);
+  assert.equal(compose("dsh", f.manager).selected, undefined);
+  assert.equal(compose("dsh", f.manager).modelCount, 0);
+  assert.equal(f.make().injection("dsh").models.filter((m) => m.included).length, 0);
+  f.manager.setInjection("dsh", { excludedProviders: [] });
+  assert.equal(compose("dsh", f.manager).modelCount, 2);
 });
-test("one-time migration backs up metadata, preserves model default, drops foreign account bindings, and never resurrects them", (t) => {
+test("one-time migration backs up metadata, retires model default, drops foreign account bindings, and never resurrects them", (t) => {
   const saved = { selected: { codex: "api:relay" }, apiBindings: { codex: ["relay"] }, modelSelections: { codex: { "api:relay": "one" } } };
   const f = setup(t, saved);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.data, "clients.before-account-separation.json"))), saved);
   assert.equal(f.manager.state.selected.codex, undefined);
-  assert.equal(f.manager.injection("codex").defaultModel, modelRef("relay", "one"));
-  assert.equal(f.manager.state.schemaVersion, 2);
+  assert.equal(f.manager.injection("codex").defaultModel, undefined);
+  assert.equal(f.manager.state.schemaVersion, 3);
   assert.equal(f.manager.state.apiBindings, undefined);
   assert.equal(f.manager.state.modelSelections, undefined);
   assert.deepEqual(f.make().state.accountBindings.codex, []);
@@ -94,6 +94,7 @@ test("foreign native API models survive account-card filtering and empty injecti
   const sources = modelSources({ officialModels: [], providers: f.providers }, snapshot);
   assert.ok(sources.find((p) => p.id === "native-pi").models.some((m) => m.model === "native-only"));
   for (const p of f.providers) p.models = [];
+  f.manager.options.isConnected = () => false;
   assert.throws(() => f.native.sync("pi"), /没有可接入/);
   assert.equal(f.native.status("pi", true).applied, false);
 });
@@ -216,7 +217,7 @@ test("model launch preserves shared defaults and refuses to implicitly apply a p
     const plan = f.manager.modelPlan(id, modelRef("relay", "one"));
     f.manager.materialize(plan);
     assert.deepEqual(fs.readFileSync(target.config), before);
-    assert.equal(f.manager.injection(id).defaultModel, null);
+    assert.equal(f.manager.injection(id).defaultModel, undefined);
     if (id === "dsh") {
       assert.ok(plan.args.includes("--patch"));
       const patch = JSON.parse(fs.readFileSync(plan.args.at(-1)));

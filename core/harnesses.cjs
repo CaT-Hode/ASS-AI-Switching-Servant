@@ -78,7 +78,7 @@ const json = (file) => {
     const value = JSON.parse(fs.readFileSync(file, "utf8"));
     const object = (v) => v && typeof v === "object" && !Array.isArray(v);
     const strings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
-    if (!object(value) || (value.schemaVersion !== undefined && ![1, 2].includes(value.schemaVersion))) throw Error();
+    if (!object(value) || (value.schemaVersion !== undefined && ![1, 2, 3].includes(value.schemaVersion))) throw Error();
     for (const key of ["selected", "credentialHomes", "executables", "accountBindings", "accountExclusions", "apiBindings", "apiExclusions", "injections", "nativeProfileTargets", "modelSelections"])
       if (value[key] !== undefined && !object(value[key])) throw Error();
     for (const key of ["selected", "credentialHomes", "executables"])
@@ -86,7 +86,8 @@ const json = (file) => {
     for (const key of ["accountBindings", "accountExclusions", "apiBindings", "apiExclusions", "nativeProfileTargets"])
       if (Object.values(value[key] || {}).some((v) => !strings(v))) throw Error();
     for (const config of Object.values(value.injections || {}))
-      if (!object(config) || !strings(config.excluded) || (config.defaultModel !== null && typeof config.defaultModel !== "string")) throw Error();
+      if (!object(config) || (value.schemaVersion === 3 ? !strings(config.excludedProviders) :
+          !strings(config.excluded) || (config.defaultModel !== null && typeof config.defaultModel !== "string"))) throw Error();
     if (value.profiles !== undefined && (!Array.isArray(value.profiles) || value.profiles.some((p) => !p || !/^[a-f0-9]{24}$/.test(p.id) || !SPECS.some((s) => s.id === p.harness)))) throw Error();
     return value;
   } catch {
@@ -342,9 +343,14 @@ class HarnessManager {
     this.nativeEnv = options.env || process.env;
     this.launchEnv = options.launchEnv || process.env;
     // One-time metadata migration. Never touch native config or credentials here.
-    const legacy = this.state.schemaVersion !== 2;
+    const legacy = !this.state.schemaVersion || this.state.schemaVersion === 1;
+    const providerMigration = this.state.schemaVersion !== 3;
     if (legacy && fs.existsSync(this.file)) {
       const backup = path.join(dataDir, "clients.before-account-separation.json");
+      if (!fs.existsSync(backup)) atomic(backup, fs.readFileSync(this.file, "utf8"));
+    }
+    if (providerMigration && fs.existsSync(this.file)) {
+      const backup = path.join(dataDir, "clients.before-provider-injection.json");
       if (!fs.existsSync(backup)) atomic(backup, fs.readFileSync(this.file, "utf8"));
     }
     for (const { id } of SPECS) {
@@ -353,7 +359,7 @@ class HarnessManager {
       this.state.accountBindings[id] = bindings.filter((pid) =>
         apiCompatible(id, providers.find((p) => p.id === pid)));
       this.state.accountExclusions[id] ||= (legacy ? this.state.apiExclusions?.[id] : []) || [];
-      this.state.injections[id] ||= { excluded: [], defaultModel: null };
+      this.state.injections[id] ||= { excludedProviders: [] };
       const selected = this.state.selected[id];
       if (legacy && selected?.startsWith("api:")) {
         const p = providers.find((p) => p.id === selected.slice(4));
@@ -366,11 +372,21 @@ class HarnessManager {
         } else delete this.state.selected[id];
       }
     }
-    this.state.schemaVersion = 2;
+    if (providerMigration) for (const { id } of SPECS) {
+      const old = this.state.injections[id];
+      // A partially excluded provider migrates OFF: never broaden access to a
+      // previously excluded model. Applied native/proxy configuration is untouched.
+      const excludedProviders = new Set(old.excludedProviders || []);
+      for (const ref of old.excluded || []) {
+        try { const [provider] = JSON.parse(ref); if (typeof provider === "string") excludedProviders.add(provider); } catch {}
+      }
+      this.state.injections[id] = { excludedProviders: [...excludedProviders] };
+    }
+    this.state.schemaVersion = 3;
     delete this.state.apiBindings;
     delete this.state.apiExclusions;
     delete this.state.modelSelections;
-    if (legacy && fs.existsSync(this.file)) this.save();
+    if (providerMigration && fs.existsSync(this.file)) this.save();
   }
   async refreshOAuth() {
     for (const { id } of SPECS) {
@@ -552,11 +568,18 @@ class HarnessManager {
               : ACCOUNT_SERVICES[s.id].includes(a.oauthProvider)))));
         const saved = this.state.selected[s.id];
         const legacy = visible.filter((a) => a.profileId === saved);
+        const launcher = this.launcher(s.id), desktop = this.desktop(s.id);
         return {
           ...s,
-          executable: this.launcher(s.id).executable,
-          launcher: this.launcher(s.id),
-          desktop: this.desktop(s.id),
+          detected: !!(launcher.ready || launcher.installed ||
+            desktop || this.discovery[s.id]?.some((c) => {
+              const current = resolveLauncher(s.id, c.location, this.launchEnv);
+              return current.ready || current.installed;
+            }) ||
+            native.some((source) => source.status !== "missing")),
+          executable: launcher.executable,
+          launcher,
+          desktop,
           selected: visible.some((a) => a.id === saved)
             ? saved
             : legacy.length === 1
@@ -620,9 +643,7 @@ class HarnessManager {
     this.save();
   }
   selectModel(harness, accountId, model) {
-    // Legacy IPC compatibility: selecting a model never adds/selects an account.
-    const provider = accountId.replace(/^api:/, "");
-    return this.setInjection(harness, { defaultModel: modelRef(provider, model) });
+    throw Error("请在客户端内选择模型；ASS 接入范围已改为供应商开关");
   }
   injection(harness) {
     this.spec(harness);
@@ -631,17 +652,13 @@ class HarnessManager {
   }
   setInjection(harness, changes) {
     this.spec(harness);
-    if (!changes || typeof changes !== "object" || Object.keys(changes).some((k) => !["excluded", "defaultModel"].includes(k)))
-      throw Error("无效模型接入设置");
+    if (!changes || typeof changes !== "object" || Array.isArray(changes) || Object.keys(changes).some((k) => k !== "excludedProviders"))
+      throw Error("接入范围请按供应商设置");
     const next = { ...this.state.injections[harness], ...changes };
-    if (!Array.isArray(next.excluded) || next.excluded.some((r) => typeof r !== "string"))
-      throw Error("无效模型排除列表");
-    const catalog = injectionCatalog(harness, this.getState().providers, next);
-    if (next.excluded.some((ref) => !catalog.some((m) => m.ref === ref)))
-      throw Error("模型目录已变化，请刷新");
-    if (next.defaultModel !== null && !catalog.some((m) => m.ref === next.defaultModel && m.included))
-      throw Error("默认模型必须是已纳入接入的兼容模型");
-    next.excluded = [...new Set(next.excluded)];
+    if (!Array.isArray(next.excludedProviders) || next.excludedProviders.length > 5000 ||
+        next.excludedProviders.some((r) => typeof r !== "string" || !r || r.length > 250 || /[\x00-\x1f]/.test(r)))
+      throw Error("无效供应商排除列表");
+    next.excludedProviders = [...new Set(next.excludedProviders)];
     const previous = this.state.injections[harness];
     this.state.injections[harness] = next;
     try { this.save(); } catch (e) { this.state.injections[harness] = previous; throw e; }
@@ -687,7 +704,7 @@ class HarnessManager {
     const nextRef = nextName ? modelRef(providerId, nextName) : null;
     for (const settings of Object.values(this.state.injections)) {
       if (settings.defaultModel === previousRef) settings.defaultModel = nextRef;
-      settings.excluded = settings.excluded.flatMap((ref) => ref !== previousRef ? [ref] : nextRef ? [nextRef] : []);
+      if (settings.excluded) settings.excluded = settings.excluded.flatMap((ref) => ref !== previousRef ? [ref] : nextRef ? [nextRef] : []);
     }
     try {
       this.save();

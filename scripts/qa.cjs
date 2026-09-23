@@ -198,7 +198,7 @@ fs.mkdirSync(output, { recursive: true });
     );
     await page
       .getByRole("button", {
-        name: /^Claude Code (已找到客户端|未检测到安装)$/,
+        name: "Claude Code", exact: true,
       })
       .click();
     await page.getByRole("button", { name: "添加账户", exact: true }).click();

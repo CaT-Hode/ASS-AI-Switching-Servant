@@ -38,6 +38,10 @@ function Facts({ fields }) {
 export function AccountProfile({ account, client, state, act, busy }) {
   const p = account.profile;
   if (!p) return null;
+  // Subscription usage is cached separately from local identity. Do not drop
+  // the quota cache merely because the identity snapshot is local-only.
+  const quota = account.quota || p;
+  const quotas = (quota.fields || []).filter((f) => f.kind === "quota");
   const get = (id) => p.fields.find((f) => f.id === id)?.value;
   const email = get("email"),
     name = get("name") || get("keyLabel"),
@@ -78,11 +82,9 @@ export function AccountProfile({ account, client, state, act, busy }) {
         </div>
       )}
       <Facts fields={facts.slice(0, 6)} />
-      {p.fields.some((f) => f.kind === "quota") && (
+      {quotas.length > 0 && (
         <div className="account-quotas">
-          {p.fields
-            .filter((f) => f.kind === "quota")
-            .map((f) => (
+          {quotas.map((f) => (
               <div
                 className={
                   "account-quota" +
@@ -127,7 +129,7 @@ export function AccountProfile({ account, client, state, act, busy }) {
         <details>
           <summary>
             资料来源
-            {p.stale ? " · 已过时" : ""}
+            {p.stale || quota.stale ? " · 已过时" : ""}
           </summary>
           {p.updatedAt && (
             <time dateTime={p.updatedAt}>
@@ -137,6 +139,9 @@ export function AccountProfile({ account, client, state, act, busy }) {
               ：
               {new Date(p.updatedAt).toLocaleString("zh-CN", { hour12: false })}
             </time>
+          )}
+          {quota !== p && quota.updatedAt && (
+            <time dateTime={quota.updatedAt}>用量更新：{new Date(quota.updatedAt).toLocaleString("zh-CN", { hour12: false })}</time>
           )}
           {p.credentialUpdatedAt && (
             <time dateTime={p.credentialUpdatedAt}>
@@ -186,12 +191,12 @@ export function AccountProfile({ account, client, state, act, busy }) {
             <ExternalLink size={12} />
           </button>
         )}
-        {p.canRefresh && (
+        {(p.canRefresh || quota.canRefresh) && (
           <button
             className="icon-button"
             title="刷新账户资料（不发送模型请求）"
             aria-label={account.label + " 刷新账户资料"}
-            disabled={!!busy || p.refreshing}
+            disabled={!!busy || p.refreshing || quota.refreshing}
             onClick={() =>
               act("account-info-" + account.id, () =>
                 api.call("account-info", client.id, account.id),
@@ -212,6 +217,9 @@ export function AccountProfile({ account, client, state, act, busy }) {
           {p.error}
           {p.updatedAt ? "；保留上次成功资料" : ""}
         </p>
+      )}
+      {quota !== p && quota.error && quota.error !== p.error && (
+        <p className="account-profile-error" role="alert">{quota.error}{quota.updatedAt ? "；保留上次成功用量" : ""}</p>
       )}
     </section>
   );

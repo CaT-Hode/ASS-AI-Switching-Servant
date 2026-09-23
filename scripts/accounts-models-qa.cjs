@@ -205,9 +205,11 @@ async function stop() {
   }
 }
 const chooseClient = async (name) => {
+  if (!(await page.locator(".client-list").getByRole("button", {name, exact: true}).isVisible()))
+    await page.locator(".more-clients > summary").click();
   await page
     .locator(".client-list")
-    .getByRole("button", { name: new RegExp("^" + name + " ") })
+    .getByRole("button", { name, exact: true })
     .click();
   await page.locator(".client-heading h2").filter({ hasText: name }).waitFor();
 };
@@ -383,10 +385,10 @@ async function run() {
       dsh: "DeepSeek Harness",
     })) {
       await chooseClient(name);
-      assert.equal(await page.getByRole("switch").count(), 1);
+      assert.equal(await page.locator(".client-heading").getByRole("switch").count(), 1);
       assert.equal(
         await page
-          .locator(".client-panel .connection-status")
+          .locator(".client-panel .client-heading")
           .getByRole("switch", { name: name + " ASS 接入", exact: true })
           .count(),
         1,
@@ -417,8 +419,7 @@ async function run() {
       .getByRole("button", { name: "设为启动账户", exact: true })
       .click();
     await work.getByRole("button", { name: "下次启动使用", exact: true }).waitFor();
-    await page.locator(".client-injection summary").click();
-    await page.getByLabel("pi 默认接入模型", { exact: true }).selectOption(JSON.stringify(["work", "alpha"]));
+    await page.getByRole("switch", { name: "工作 API 供应商接入", exact: true }).click();
     assert.equal(
       (await snapshot()).harnesses.clients
         .find((c) => c.id === "codex")
@@ -463,9 +464,9 @@ async function run() {
       [m.model, m.displayName, m.wireApi, m.contextWindow, m.defaultEffort],
       ["alpha-new", "Alpha 新名称", "openai-chat", 196608, "high"],
     );
-    assert.equal(
-      s.harnesses.clients.find((c) => c.id === "pi").injection.defaultModel,
-      JSON.stringify(["work", "alpha-new"]),
+    assert.deepEqual(
+      s.harnesses.clients.find((c) => c.id === "pi").injection.excludedProviders,
+      ["work"],
     );
     await row
       .getByLabel("alpha-new 显示名称", { exact: true })
@@ -870,7 +871,7 @@ async function run() {
         nativeHarnesses: 5,
         bindings: "isolated, automatic, unbind and restart",
         inline:
-          "five fields, save/cancel, duplicate, stale, invalid, delete/cancel, rename selections",
+        "five fields, save/cancel, duplicate, stale, invalid, delete/cancel, provider exclusion survives rename",
         directory: "automatic and one-click add",
         hierarchy:
           "gallery/list/detail dialogs, right-side editor, left yield, restore width, no overlap, nested Escape/focus, direct links, drafts, manual add, readonly, reduced motion",

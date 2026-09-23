@@ -605,8 +605,9 @@ test("account overview reuses real quotas, does not sum percentages or duplicate
   const state = {
     harnesses: {
       clients: [
-        { id: "codex", name: "Codex", accounts: [oauth, api] },
-        { id: "pi", name: "pi", accounts: [api] },
+        { id: "codex", name: "Codex", detected: true, accounts: [oauth, api] },
+        { id: "pi", name: "pi", detected: true, accounts: [api] },
+        { id: "dsh", name: "DeepSeek Harness", detected: false, accounts: [api] },
       ],
     },
   };
@@ -615,6 +616,7 @@ test("account overview reuses real quotas, does not sum percentages or duplicate
   assert.deepEqual(rows[1].clients, ["Codex", "pi"]);
   assert.equal(rows[0].quotas[0].remainingPercent, 42);
   assert.equal(overviewAccounts(state, "pi").length, 1);
+  assert.equal(overviewAccounts(state, "dsh").length, 0);
 });
 test("overview selections persist and invalid view state is ignored", (t) => {
   const d = temp(t),

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Power, Loader2, RefreshCw } from "lucide-react";
+import { Power, Loader2 } from "lucide-react";
 import { Modal } from "./editors.jsx";
 import "./connections.css";
 const api = window.ass;
@@ -32,57 +32,22 @@ export function ConnectionStatus({ client, state, busy, onManage }) {
   const sessions = state.connections.processes.sessions.filter(
     (s) => s.harness === client.id && s.status !== "gone",
   );
+  if (!connection || client.injectionUnsupported) return null;
+  const note = connection.syncError ? `未同步：${connection.syncError}` : connection.pending ? "供应商接入有变更，点击同步后生效。" :
+    connection.enabled ? (connection.mode === "native" ? "已写入原生配置 · 新会话生效" : client.id === "codex" ? "已接入 · 任务结束后重启客户端" : "已接入 · 新窗口生效") : "";
+  if (!note && !sessions.length && !connection.active) return null;
   return (
     <section
       className="connection-status"
       aria-label={client.name + " 接入控制"}
     >
       <div className="connection-overview">
-        <div className="connection-metrics">
-          <span>
-            {connection.mode === "native"
-              ? "原生直连"
-              : `${connection.active} 个请求`}
-          </span>
-          <span>{sessions.length} 个窗口</span>
-          <span>{connection.files} 个配置文件</span>
-          {connection.modelCount !== undefined && <span>{connection.modelCount} 个配置模型</span>}
-        </div>
-        {connection.mode === "native" ? (
-          <small role={connection.syncError ? "alert" : undefined}>
-            {connection.syncError
-              ? `未同步：${connection.syncError}`
-              : connection.pending
-                ? "原生配置待同步，请先结束客户端任务。"
-                : connection.enabled
-                  ? "配置已写入；客户端加载状态待确认，必要时重启客户端。"
-                  : "开启后注入已配置模型，保留原有登录。"}
-          </small>
-        ) : client.launcher?.kind === "desktop" ? (
-          <small>桌面端已安装；独立账户与路由接入需要 OpenCode CLI。</small>
-        ) : connection.syncError ? <small role="alert">未同步：{connection.syncError}</small> : connection.pending ? (
-          <small>模型接入配置待同步；现有路由保持上次应用的配置。</small>
-        ) : connection.enabled ? (
-          <small>
-            {client.id === "codex"
-              ? "App 配置已接入，任务结束后重启生效。"
-              : "API 路由仅影响从 ASS 新启动的窗口。"}
-          </small>
-        ) : null}
+        <small role={connection.syncError ? "alert" : "status"}>{note}</small>
+        {(sessions.length > 0 || connection.active > 0) && <div className="connection-metrics">
+          {connection.active > 0 && <span>{connection.active} 个请求</span>}
+          {sessions.length > 0 && <span>{sessions.length} 个窗口</span>}
+        </div>}
       </div>
-      {connection.enabled && (
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={`同步 ${client.name} ${connection.mode === "native" ? "原生配置" : "接入配置"}`}
-          title="重新同步接入配置"
-          disabled={!!busy || state.connections.busy}
-          onClick={() => onManage({ scope: client.id, enabled: true })}
-        >
-          <RefreshCw size={16} />
-        </button>
-      )}
-      <ConnectionPill {...{ client, state, busy, onManage }} />
     </section>
   );
 }
@@ -123,7 +88,7 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
     : request.scope === "all"
       ? "停止全部接入？"
       : request.enabled
-        ? `开启 ${target} 接入？`
+        ? `${request.sync ? "同步" : "开启"} ${target} 接入？`
         : `断开 ${target} 接入？`;
   let warning = "正在检查接入状态…";
   if (plan) {

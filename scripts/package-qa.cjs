@@ -50,8 +50,10 @@ fs.mkdirSync(codex);
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })
       .click();
+    if (!(await page.getByRole("button", { name: "pi", exact: true }).isVisible()))
+      await page.locator(".more-clients > summary").click();
     await page
-      .getByRole("button", { name: /^pi (已找到客户端|未检测到安装)$/ })
+      .getByRole("button", { name: "pi", exact: true })
       .click();
     await page
       .locator(".pi-import > summary")
@@ -59,7 +61,7 @@ fs.mkdirSync(codex);
     assert.equal(fs.existsSync(path.join(codex, "config.toml")), false);
     assert.equal(await page.getByRole("button", { name: "接入 Codex", exact: true }).count(), 0);
     assert.equal(await page.locator('.client-list').getByRole('switch').count(), 0);
-    assert.equal(await page.locator('.client-panel .connection-status').getByRole('switch').count(), 1);
+    assert.equal(await page.locator('.client-panel .client-heading').getByRole('switch').count(), 1);
     const toggle = page.getByRole("switch", { name: "pi ASS 接入", exact: true });
     assert.equal(await toggle.isChecked(), false);
     await toggle.click();

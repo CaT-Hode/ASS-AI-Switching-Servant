@@ -52,13 +52,9 @@ class ProxyConfig {
       const { balance, ...provider } = p;
       return [{ ...provider, models }];
     });
-    if (injection.defaultModel && !refs.has(injection.defaultModel))
-      throw Error("默认接入模型不可用，请重新选择");
-    const row = injection.models.find((m) => m.ref === injection.defaultModel);
-    const model = row && providers.find((p) => p.id === row.providerId).models.find((m) => m.model === row.model);
     return {
       providers,
-      defaultModel: row ? { model: row.providerId + "::" + row.model, effort: model.defaultEffort } : null,
+      defaultModel: null,
       ...(id === "codex" ? { catalog: makeCatalog(this.store.officialModels, providers, this.store.state.officialOverrides) } : {}),
     };
   }
@@ -81,7 +77,7 @@ class ProxyConfig {
     const files = id === "codex" && this.config.status().managed ? [this.config.file, this.config.catalog].filter(fs.existsSync)
       : this.clients[id] ? [this.file] : [];
     return { mode: "proxy", error, pending, modelCount: count, files,
-      applied: !!enabled && !error && !pending && count > 0,
+      applied: !!enabled && !error && !pending,
       runtimeStatus: enabled ? (id === "codex" ? "reload-required" : "new-window-only") : "inactive" };
   }
   fingerprint(ids, enabled) {
@@ -97,7 +93,7 @@ class ProxyConfig {
       if (this.pending) { this.recoveryCheck(); continue; }
       this.checkFiles(id);
       const plan = this.desired(id);
-      if (!plan.providers.length) throw Error("没有可接入的兼容模型，请先配置供应商与模型");
+      if (!plan.providers.length && !this.clients[id]) throw Error("没有可接入的兼容模型，请先配置供应商与模型");
       if (id === "codex") this.config.prepareAttach(plan.defaultModel);
     }
   }

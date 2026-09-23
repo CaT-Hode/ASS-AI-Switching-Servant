@@ -92,13 +92,13 @@ test("bindings scope accounts to each client; only exact DeepSeek / Go endpoints
 test("manual binding, selection, auto-binding exclusion and rebind survive restart", (t) => {
   const { harnesses: h, reload } = setup(t);
   h.select("dsh", "api:deep");
-  h.selectModel("pi", "api:work", "beta");
+  h.setInjection("pi", { excludedProviders: ["work"] });
   h.bindApi("dsh", "deep", false);
   const next = reload();
   assert.deepEqual(accounts(next, "dsh"), []);
   assert.deepEqual(accounts(next, "pi"), []);
   assert.equal(next.state.selected.dsh, undefined);
-  assert.equal(next.state.injections.pi.defaultModel, modelRef("work", "beta"));
+  assert.deepEqual(next.state.injections.pi.excludedProviders, ["work"]);
   next.bindApi("dsh", "deep");
   assert.deepEqual(accounts(reload(), "dsh"), ["api:deep"]);
 });
@@ -131,9 +131,9 @@ test("legacy foreign accounts are removed from cards without removing model prov
   assert.deepEqual(accounts(reload(), "pi"), []);
   assert.ok(store.state.providers.some((p) => p.id === "work"));
 });
-test("five inline model fields persist; rename updates launch selection and namespaced catalog", (t) => {
+test("five inline model fields persist; rename preserves provider exclusion and updates namespaced catalog", (t) => {
   const { dir, codex, store, harnesses: h, reload } = setup(t);
-  h.selectModel("pi", "api:work", "alpha");
+  h.setInjection("pi", { excludedProviders: ["work"] });
   const old = store.public().providers.find((p) => p.id === "work").models[0];
   tx.saveModel(
     store,
@@ -156,16 +156,16 @@ test("five inline model fields persist; rename updates launch selection and name
     [m.model, m.displayName, m.wireApi, m.contextWindow, m.defaultEffort],
     ["renamed", "Changed", "openai-chat", 96000, "max"],
   );
-  assert.equal(reload().state.injections.pi.defaultModel, modelRef("work", "renamed"));
+  assert.deepEqual(reload().state.injections.pi.excludedProviders, ["work"]);
   const entry = JSON.parse(
     fs.readFileSync(path.join(dir, "catalog-draft.json")),
   ).models.find((m) => m.slug === "work::renamed");
   assert.equal(entry.display_name, "Work / Changed");
   assert.equal(entry.context_window, 96000);
 });
-test("deleting a model persists, clears stale selections and keeps other models and credentials", (t) => {
+test("deleting a model persists, keeps provider exclusion, other models and credentials", (t) => {
   const { dir, codex, store, harnesses: h, reload } = setup(t);
-  h.selectModel("pi", "api:work", "alpha");
+  h.setInjection("pi", { excludedProviders: ["work"] });
   tx.deleteModel(store, h, "work", "alpha");
   const p = new Store(dir, codex, crypto).state.providers.find(
     (p) => p.id === "work",
@@ -175,7 +175,7 @@ test("deleting a model persists, clears stale selections and keeps other models 
     ["beta"],
   );
   assert.equal(p.apiKey, "synthetic-key");
-  assert.equal(reload().state.injections.pi.defaultModel, null);
+  assert.deepEqual(reload().state.injections.pi.excludedProviders, ["work"]);
   assert.deepEqual(accounts(reload(), "pi"), []);
 });
 test("equivalent model snapshots with reordered keys can be edited and deleted after restart", (t) => {
@@ -271,7 +271,7 @@ test("official inline overrides rename display / ID; removal and restore leave n
 });
 test("model and account settings roll back together on a client journal write failure", (t) => {
   const { store, harnesses: h, dir, codex } = setup(t);
-  h.selectModel("pi", "api:work", "alpha");
+  h.setInjection("pi", { excludedProviders: ["work"] });
   const old = structuredClone(
       store.state.providers.find((p) => p.id === "work").models[0],
     ),
@@ -301,7 +301,7 @@ test("model and account settings roll back together on a client journal write fa
       .models[0].model,
     "alpha",
   );
-  assert.equal(h.state.injections.pi.defaultModel, modelRef("work", "alpha"));
+  assert.deepEqual(h.state.injections.pi.excludedProviders, ["work"]);
 });
 test("new API account creation and client binding commit together", (t) => {
   const { store, harnesses: h } = setup(t);

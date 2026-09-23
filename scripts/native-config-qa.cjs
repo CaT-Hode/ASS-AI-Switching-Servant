@@ -85,6 +85,8 @@ async function stop() {
 const call = (name, ...args) =>
   page.evaluate(([name, args]) => window.ass.call(name, ...args), [name, args]);
 async function choose(name) {
+  if (!(await page.locator(".client-list").getByRole("button", {name, exact: true}).isVisible()))
+    await page.locator(".more-clients > summary").click();
   await page
     .locator(".client-list")
     .getByRole("button", { name: new RegExp(name) })
@@ -112,7 +114,7 @@ async function toggle(name) {
     });
     for (const id of ["pi", "opencode", "dsh"]) {
       await assert.rejects(call("account-bind-api", id, provider), /官方 API/);
-      await call("client-injection", id, { defaultModel: JSON.stringify([provider, "qa-model"]) });
+      await call("client-injection", id, { excludedProviders: [] });
     }
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })

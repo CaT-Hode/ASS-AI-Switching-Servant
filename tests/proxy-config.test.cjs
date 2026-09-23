@@ -35,14 +35,14 @@ function fixture(t) {
   const connections = new Connections({ dataDir: data, config, proxyConfig: proxy, injections: new InjectionFiles(data), router, processes });
   return { root, data, codex, original, store, manager, config, proxy, connections, router };
 }
-test("proxy drafts never change attached catalog or routing; explicit sync respects exclusions/default and restart", (t) => {
+test("proxy drafts never change attached catalog or routing; provider sync preserves native default and restart", (t) => {
   const f = fixture(t);
-  f.manager.setInjection("codex", { defaultModel: modelRef("relay", "one"), excluded: [modelRef("relay", "two")] });
+  f.manager.setInjection("codex", { excludedProviders: [] });
   f.proxy.sync("codex");
   const before = fs.readFileSync(f.config.catalog, "utf8");
-  assert.equal(TOML.parse(fs.readFileSync(f.config.file, "utf8")).model, "relay::one");
+  assert.equal(TOML.parse(fs.readFileSync(f.config.file, "utf8")).model, "gpt-original");
   assert.equal(f.proxy.status("codex", true).applied, true);
-  assert.equal(JSON.parse(before).models.some((m) => m.slug === "relay::two"), false);
+  assert.equal(JSON.parse(before).models.some((m) => m.slug === "relay::two"), true);
   const p = f.store.state.providers[0];
   f.store.updateProvider({ ...p, apiKey: "new-synthetic-key", baseUrl: "https://new.example/v1" });
   assert.equal(fs.readFileSync(f.config.catalog, "utf8"), before);
@@ -57,8 +57,10 @@ test("proxy drafts never change attached catalog or routing; explicit sync respe
   assert.equal(restarted.routingState("codex").providers[0].apiKey, "synthetic-relay-key");
   f.proxy.sync("codex");
   assert.equal(f.proxy.routingState("codex").providers[0].apiKey, "new-synthetic-key");
-  f.manager.setInjection("codex", { defaultModel: null });
+  f.manager.setInjection("codex", { excludedProviders: ["relay"] });
   f.proxy.sync("codex");
+  assert.equal(f.proxy.routingState("codex").providers.length, 0);
+  assert.equal(f.proxy.status("codex", true).applied, true);
   assert.equal(TOML.parse(fs.readFileSync(f.config.file, "utf8")).model, "gpt-original");
   atomic(f.config.file, fs.readFileSync(f.config.file, "utf8").replace("keep = true", "keep = false"));
   f.config.detach(); f.proxy.restore(["codex"]);
@@ -72,7 +74,7 @@ test("preview tracks model settings, concurrent changes and active requests fail
   const enable = async () => f.connections.apply({ ticket: (await f.connections.preview("codex", true)).ticket, mode: "safe", acknowledged: true });
   await enable();
   let plan = await f.connections.preview("codex", true);
-  f.manager.setInjection("codex", { excluded: [modelRef("relay", "two")] });
+  f.manager.setInjection("codex", { excludedProviders: ["relay"] });
   await assert.rejects(f.connections.apply({ ticket: plan.ticket, mode: "safe", acknowledged: true }), /已变化/);
   f.router.clientActive = () => 1;
   await assert.rejects(enable(), /请求正在进行/);
@@ -80,13 +82,13 @@ test("preview tracks model settings, concurrent changes and active requests fail
   f.router.clientActive = () => 0;
   await enable();
   assert.equal(f.connections.snapshot().clients.codex.applied, true);
-  assert.equal(f.connections.snapshot().clients.codex.modelCount, 1);
+  assert.equal(f.connections.snapshot().clients.codex.modelCount, 0);
 });
 test("external ownership conflicts and persistence failure never overwrite user edits or claim applied", (t) => {
   const f = fixture(t);
   f.proxy.sync("codex");
   const config = fs.readFileSync(f.config.file, "utf8"), catalog = fs.readFileSync(f.config.catalog, "utf8");
-  f.manager.setInjection("codex", { defaultModel: modelRef("relay", "one") });
+  f.manager.setInjection("codex", { excludedProviders: ["relay"] });
   f.proxy.persist = () => { throw Error("synthetic write failure"); };
   assert.throws(() => f.proxy.sync("codex"), /write failure/);
   assert.equal(fs.readFileSync(f.config.file, "utf8"), config);
@@ -127,7 +129,7 @@ test("Codex isolated OAuth launches receive the applied catalog without changing
   assert.equal(config.model_catalog_json, f.config.catalog);
   assert.equal(config.model_providers.ass_official.requires_openai_auth, true);
   assert.equal(plan.files.some(([name]) => name === "auth.json"), false);
-  f.manager.setInjection("codex", { excluded: [modelRef("relay", "one")] });
+  f.manager.setInjection("codex", { excludedProviders: ["relay"] });
   assert.equal(f.manager.plan("codex", account).files[0][1], plan.files[0][1]);
 });
 
@@ -156,7 +158,7 @@ test("failed final proxy commit rolls back the complete applied config and recor
   const persist = f.proxy.persist.bind(f.proxy);
   let calls = 0;
   f.proxy.persist = (...args) => { if (++calls === 2) throw Error("synthetic final commit failure"); return persist(...args); };
-  f.manager.setInjection("codex", { defaultModel: modelRef("relay", "one") });
+  f.manager.setInjection("codex", { excludedProviders: ["relay"] });
   assert.throws(() => f.proxy.sync("codex"), /final commit failure/);
   for (const [file, content] of files) assert.deepEqual(fs.readFileSync(file), content);
   assert.equal(f.proxy.pending, null);

@@ -106,7 +106,7 @@ function compose(harness, manager, selection, targetOverride) {
   const included = new Set(catalog.filter((m) => m.included).map((m) => m.ref));
   const selectedRef = selection?.model && selection?.account
     ? modelRef(selection.account.replace(/^api:/, ""), selection.model)
-    : settings.defaultModel;
+    : undefined;
   let selected;
   for (const p of providers) {
     const grouped = Map.groupBy(
@@ -350,7 +350,8 @@ class NativeConfig {
         continue;
       }
       const plan = enabled ? this.desired(id) : null;
-      if (plan && !plan.modelCount) throw Error("没有可接入的模型，请先配置兼容模型及供应商凭据");
+      if (plan && !plan.modelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id))
+        throw Error("没有可接入的模型，请先开启供应商及其兼容模型");
       this.fields.plan(id, plan ? plan.fields : this.retained(id));
     }
   }
@@ -364,7 +365,8 @@ class NativeConfig {
     try {
       this.fields.recover();
       const plan = this.desired(id, selection);
-      if (!plan.modelCount) throw Error("没有可接入的模型，请先配置兼容模型及供应商凭据");
+      if (!plan.modelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id))
+        throw Error("没有可接入的模型，请先开启供应商及其兼容模型");
       this.fields.apply(id, plan.fields);
       this.activated.add(id);
       delete this.errors[id];
@@ -415,7 +417,7 @@ class NativeConfig {
         const plan = this.desired(id);
         modelCount = plan.modelCount;
         if (enabled) {
-          if (!modelCount) error = "没有可接入的模型";
+          if (!modelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id)) error = "没有可接入的模型";
           pending = this.fields.plan(id, plan.fields).files.length > 0;
         }
       } catch (e) {
@@ -423,7 +425,7 @@ class NativeConfig {
       }
     }
     return { mode: "native", files, error, pending, modelCount,
-      applied: enabled && !pending && !error && modelCount > 0,
+      applied: enabled && !pending && !error,
       runtimeStatus: enabled ? "reload-required" : "inactive" };
   }
 }

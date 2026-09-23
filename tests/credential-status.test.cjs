@@ -218,14 +218,14 @@ test("native account selection and launch plans never overwrite auth/config; all
       account.id,
     );
   }
-  manager.selectModel("pi", "api:fixture", "b");
+  manager.setInjection("pi", { excludedProviders: ["not-selected-provider"] });
   assert.throws(
     () => manager.setCredentialHome("pi", path.join(home, ".pi/agent")),
     /先断开/,
   );
   manager.options.isConnected = () => false;
   manager.setCredentialHome("pi", path.join(home, ".pi/agent"));
-  assert.equal(create().state.injections.pi.defaultModel, JSON.stringify(["fixture", "b"]));
+  assert.deepEqual(create().state.injections.pi.excludedProviders, ["not-selected-provider"]);
   assert.equal(create().state.credentialHomes.pi, path.join(home, ".pi/agent"));
   assert.deepEqual(create().modelPlan("pi", JSON.stringify(["fixture", "b"])).args, [
     "--provider",

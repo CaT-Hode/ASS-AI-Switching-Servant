@@ -172,7 +172,7 @@ test("sync/disable preserves OAuth refresh, unrelated fields and JSONC/YAML comm
         defaultModel: "original",
         theme: "light",
       });
-    f.manager.setInjection(id, { defaultModel: modelRef("fixture", "chat") });
+    f.manager.setInjection(id, { excludedProviders: [] });
     f.native.sync(id);
     let auth = document(fs.readFileSync(target.auth, "utf8"), format).data;
     const entry =
@@ -229,7 +229,7 @@ test("owned-field edits conflict without overwriting, and exact ownership does n
   );
 });
 
-test("model edits and default selection update only managed keys; disconnect keeps original defaults", (t) => {
+test("provider switches update only managed keys; all-off sync and disconnect keep original defaults", (t) => {
   const f = fixture(t),
     target = locations("pi", f.manager);
   write(target.settings, {
@@ -237,13 +237,13 @@ test("model edits and default selection update only managed keys; disconnect kee
     defaultModel: "original",
     plugins: ["keep"],
   });
-  f.manager.setInjection("pi", { defaultModel: modelRef("fixture", "chat") });
+  f.manager.setInjection("pi", { excludedProviders: [] });
   f.native.sync("pi");
-  f.manager.selectModel("pi", "api:fixture", "responses");
+  f.providers[0].models[0].displayName = "Changed";
   f.native.sync("pi");
   assert.equal(
     JSON.parse(fs.readFileSync(target.settings)).defaultModel,
-    "responses",
+    "original",
   );
   const restarted = new NativeConfig(f.data, crypt, f.manager);
   f.manager.options.nativeConfig = restarted;
@@ -254,8 +254,9 @@ test("model edits and default selection update only managed keys; disconnect kee
     "original",
   );
   restarted.sync("pi");
-  f.manager.setInjection("pi", { defaultModel: null, excluded: f.manager.injection("pi").models.map((m) => m.ref) });
-  assert.throws(() => restarted.sync("pi"), /没有可接入/);
+  f.manager.setInjection("pi", { excludedProviders: ["fixture"] });
+  assert.equal(restarted.sync("pi").modelCount, 0);
+  assert.equal(restarted.status("pi", true).applied, true);
   restarted.restore(["pi"]);
   assert.deepEqual(JSON.parse(fs.readFileSync(target.auth)), {});
   assert.equal(
@@ -328,9 +329,8 @@ test("native limitations are explicit and imported config values cannot become c
       (e) => e.credentialProvider && e.value.key === "$!echo $$TOKEN",
     ),
   );
-  f.manager.setInjection("pi", { defaultModel: modelRef("fixture", "chat") });
   p.models[0].defaultEffort = "ultra";
-  assert.throws(() => f.native.sync("pi"), /最高为 max/);
+  assert.throws(() => f.manager.modelPlan("pi", modelRef("fixture", "chat")), /原生思维强度/);
   p.models[0].defaultEffort = "medium";
   p.extraHeaders = { "X-Test": "{file:secret}" };
   assert.throws(() => compose("opencode", f.manager), /插值/);
