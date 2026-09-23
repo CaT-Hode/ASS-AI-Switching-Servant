@@ -201,7 +201,7 @@ async function readNativeModelMetadata(id, signal) {
   if (!client) throw Error("原生客户端不存在");
   const accounts = {},
     errors = [];
-  for (const a of client.accounts.filter((a) => a.kind !== "api")) {
+  for (const a of (client.modelAccounts || client.accounts).filter((a) => a.kind !== "api")) {
     const local = nativeModels(
       client,
       a,

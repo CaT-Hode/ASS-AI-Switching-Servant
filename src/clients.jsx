@@ -233,7 +233,7 @@ function AccountCard({
       {a.kind === "native" && ["opencode", "dsh"].includes(client.id) && (
         <small className="account-expiry">供应商在原生客户端内选择</small>
       )}
-      <footer>
+      {!client.nativeLoginOnly && <footer>
         {a.oauthRecordId ? <button
           className={"text-button account-choice" + (a.oauthCurrent ? " chosen" : "")}
           disabled={!!busy || a.oauthCurrent || !a.ready}
@@ -295,7 +295,7 @@ function AccountCard({
             启动
           </button>
         </div>}
-      </footer>
+      </footer>}
     </article>
   );
 }

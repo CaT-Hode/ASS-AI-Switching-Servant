@@ -8,6 +8,7 @@ const { legacyBaseline } = require("./injection-files.cjs");
 const { DIRECT, locations, providerId } = require("./native-config.cjs");
 const { makeCatalog } = require("./models.cjs");
 const { apiProfile } = require("./account-info.cjs");
+const additional = require("./additional-harnesses.cjs");
 const { officialAccountPlan } = require("./official-account-plan.cjs");
 const { assertClaudeAccount } = require("./claude-launch-policy.cjs");
 const { safePath, read: readNative, document: nativeDocument } = require("./native-fields.cjs");
@@ -66,6 +67,7 @@ const SPECS = [
     oauth: false,
     description: "DeepSeek 官方 API 账户。",
   },
+  ...additional.SPECS,
 ];
 const APIS = {
   "openai-responses": "openai-responses",
@@ -431,7 +433,7 @@ class HarnessManager {
       harness,
       selected ||
         this.detected[harness] ||
-        findExecutable(harness, this.launchEnv),
+        findExecutable(this.spec(harness).command, this.launchEnv),
       this.launchEnv,
     );
   }
@@ -504,6 +506,10 @@ class HarnessManager {
     if (!spec) throw new Error("未知客户端");
     return spec;
   }
+  assertManaged(id) {
+    if (this.spec(id).nativeLoginOnly)
+      throw Error("此客户端目前仅支持原生识别；请在原生客户端管理账户与模型");
+  }
   root(harness, id) {
     this.spec(harness);
     if (!/^[a-f0-9]{24}$/.test(id)) throw new Error("账户 ID 无效");
@@ -517,6 +523,19 @@ class HarnessManager {
         ({ file, sourceProvider, ...s }) => s,
       ),
       clients: SPECS.map((s) => {
+        if (s.nativeLoginOnly) {
+          const native = additional.inspect(s.id, { home: this.nativeHome, env: this.nativeEnv,
+            override: this.state.credentialHomes[s.id] });
+          const launcher = this.launcher(s.id);
+          return { ...s, detected: !!(launcher.ready || launcher.installed ||
+              this.discovery[s.id]?.some((c) => resolveLauncher(s.id, c.location, this.launchEnv).ready) ||
+              native.sources.some((source) => source.status !== "missing")),
+            executable: launcher.executable, launcher, selected: "", desktop: null,
+            accountServices: [], oauthProviders: [], availableApiAccounts: [],
+            credentialHome: this.state.credentialHomes[s.id] || "", credentialSources: native.sources,
+            accounts: native.accounts, modelAccounts: [...native.accounts, ...native.modelAccounts],
+            injection: { models: [], excludedProviders: [] } };
+        }
         const native = discoverNative(s.id, {
           home: this.nativeHome,
           env: this.nativeEnv,
@@ -631,6 +650,7 @@ class HarnessManager {
   }
   add(harness, label, oauthProvider = "") {
     const s = this.spec(harness);
+    this.assertManaged(harness);
     if (!s.oauth) throw new Error("此客户端只管理对应官方 API 账户");
     if (!label?.trim()) throw new Error("请输入账户名称");
     if (oauthProvider && !/^[a-z0-9-]{1,80}$/.test(oauthProvider))
@@ -652,6 +672,7 @@ class HarnessManager {
     return p.id;
   }
   select(harness, id) {
+    this.assertManaged(harness);
     const row = this.snapshot().clients.find((s) => s.id === harness);
     if (row?.availableApiAccounts.some((a) => a.id === id))
       this.bindApi(harness, id.slice(4));
@@ -672,7 +693,7 @@ class HarnessManager {
     return { ...settings, models: injectionCatalog(harness, this.getState().providers, settings) };
   }
   setInjection(harness, changes) {
-    this.spec(harness);
+    this.assertManaged(harness);
     if (!changes || typeof changes !== "object" || Array.isArray(changes) || Object.keys(changes).some((k) => k !== "excludedProviders"))
       throw Error("接入范围请按供应商设置");
     const next = { ...this.state.injections[harness], ...changes };
@@ -686,7 +707,7 @@ class HarnessManager {
     return this.injection(harness);
   }
   bindApi(harness, providerId, bound = true) {
-    this.spec(harness);
+    this.assertManaged(harness);
     if (
       bound &&
       (!apiCompatible(
@@ -758,7 +779,7 @@ class HarnessManager {
     this.save();
   }
   plan(harness, accountId, action = "launch", modelName, token = "") {
-    this.spec(harness);
+    this.assertManaged(harness);
     if (!["launch", "login", "logout"].includes(action))
       throw new Error("未知操作");
     const client = this.snapshot().clients.find((s) => s.id === harness);
@@ -963,6 +984,7 @@ class HarnessManager {
     return result;
   }
   modelPlan(harness, ref, token = "") {
+    this.assertManaged(harness);
     if (!this.options.isConnected?.(harness)) throw Error("请先开启此客户端的模型接入");
     const row = this.injection(harness).models.find((m) => m.ref === ref && m.included);
     if (!row) throw Error("请选择已纳入接入的兼容模型");

@@ -10,7 +10,11 @@ const PACKAGES = {
   opencode: ["opencode-ai"],
   pi: ["@earendil-works/pi-coding-agent", "@mariozechner/pi-coding-agent"],
   dsh: ["@deepseek-ai/dsh"],
+  kimi: ["@moonshot-ai/kimi-code"],
+  zcode: ["@zcode/cli"],
+  antigravity: [],
 };
+const COMMANDS = { antigravity: "agy" };
 function stat(file) {
   try {
     return fs.statSync(file);
@@ -143,7 +147,7 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
   }
   if (PACKAGES[harness].includes(manifest.name)) {
     const bin =
-      typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[harness];
+      typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[COMMANDS[harness] || harness];
     if (typeof bin !== "string")
       return fail("已识别客户端包，但没有对应的 bin 入口");
     const entry = path.resolve(location, bin);
@@ -160,7 +164,7 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
   }
   for (const relative of ["", "bin", "node_modules/.bin"])
     for (const ext of [".exe", ".cmd", ".ps1"]) {
-      const entry = path.join(location, relative, harness + ext);
+      const entry = path.join(location, relative, (COMMANDS[harness] || harness) + ext);
       if (stat(entry)?.isFile())
         return launch(entry, [], "directory", "安装目录 · 可执行入口");
     }
@@ -175,7 +179,9 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
 }
 function searchLocations(harness, env = process.env) {
   const home = env.USERPROFILE || os.homedir();
-  const locations = [findExecutable(harness, env)];
+  const locations = [findExecutable(COMMANDS[harness] || harness, env)];
+  if (harness === "antigravity" && env.LOCALAPPDATA)
+    locations.push(path.join(env.LOCALAPPDATA, "agy", "bin", "agy.exe"));
   if (harness === "opencode") {
     // Windows Desktop installers do not necessarily register a PATH command.
     // Keep this bounded to known install locations; never recursively scan disks.

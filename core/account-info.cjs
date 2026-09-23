@@ -6,6 +6,9 @@ const { atomic } = require("./config.cjs");
 const { parseSubscription } = require("./subscription-usage.cjs");
 
 const ACCOUNT_DOCS = {
+  kimi: { label: "Kimi Code 配置目录", url: "https://moonshotai.github.io/kimi-code/en/configuration/data-locations.html" },
+  zcode: { label: "ZCode 原生凭据格式", url: "https://github.com/zai-org/ZCode/blob/872ad960de7ec172591f7e1952f7849229f94521/apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts" },
+  antigravity: { label: "Antigravity 登录与 API", url: "https://antigravity.google/docs/cli/install" },
   codex: {
     label: "Codex 账户接口",
     url: "https://learn.chatgpt.com/docs/app-server#auth-endpoints",

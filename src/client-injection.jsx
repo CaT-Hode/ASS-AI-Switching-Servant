@@ -11,7 +11,7 @@ export function ClientInjection({ client, state, act, busy, onManage }) {
   const excluded = new Set(injection.excludedProviders || []);
   const enabled = [...groups].filter(([id, models]) => !excluded.has(id) && models.some((m) => !m.issue)).length;
   return <section className="client-injection" aria-label={client.name + " 模型接入"}>
-    <header><h3>供应商接入 <span className="injection-count" title="已纳入 / 已配置供应商" aria-label={`已纳入 ${enabled} 个供应商，共 ${groups.size} 个`}>{enabled} / {groups.size}</span></h3>
+    <header><h3>供应商接入 {!client.injectionUnsupported && <span className="injection-count" title="已纳入 / 已配置供应商" aria-label={`已纳入 ${enabled} 个供应商，共 ${groups.size} 个`}>{enabled} / {groups.size}</span>}</h3>
       {connection?.enabled && <button className="icon-button" aria-label={`同步 ${client.name} ${connection.mode === "native" ? "原生配置" : "接入配置"}`}
         title="同步供应商接入" disabled={!!busy || state.connections.busy}
         onClick={() => onManage({ scope: client.id, enabled: true, sync: true })}><RefreshCw size={16} /></button>}

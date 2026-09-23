@@ -174,6 +174,8 @@ function opencodeModels(account, dir, provider, home, env) {
   });
 }
 function nativeModels(client, account, home, env) {
+  if (["kimi", "zcode", "antigravity"].includes(client.id))
+    return account.declaredModels || [];
   const dir = account.nativeDir || path.dirname(account.sourcePath || "");
   if (!path.isAbsolute(dir)) return [];
   const provider =
@@ -270,7 +272,7 @@ function modelSources(
       kind: "native",
       readOnly: true,
       enabled: true,
-      accountCount: accounts.length,
+      accountCount: accounts.filter((a) => !a.catalogOnly).length,
       catalogError: directory?.error,
       catalogSource:
         [
