@@ -45,9 +45,26 @@ async function confirm(button) {
   await dialog.getByRole("button", { name: "确定", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
 }
+async function exitDialog() {
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send("ass:manage", { scope: "all", enabled: false, quit: true }));
+  const dialog = page.getByRole("dialog", { name: "退出 ASS？", exact: true });
+  await dialog.getByRole("button", { name: "直接退出", exact: true }).waitFor();
+  await page.getByText("正在检查是否需要安全退出…", { exact: true }).waitFor({ state: "hidden" });
+  return dialog;
+}
+async function exitBy(dialog, name) {
+  const closed = app.waitForEvent("close");
+  await dialog.getByRole("button", { name, exact: true }).click();
+  await closed;
+  app = null;
+}
 (async () => {
   try {
-    await start(); await choose("Codex");
+    await start();
+    const emptyExit = await exitDialog();
+    assert.equal(await emptyExit.getByRole("button", { name: "安全退出", exact: true }).count(), 0);
+    await emptyExit.getByRole("button", { name: "取消", exact: true }).click();
+    await choose("Codex");
     assert.equal(await page.getByRole("switch", { name: "Codex 无账号启动" }).isDisabled(), true);
     await call("save-provider", { id: "fixture", name: "协议测试", baseUrl: "https://fixture.test/v1", apiKey: "synthetic-api", models: [{ model: "dual", wireApi: "openai-chat" }, { model: "chat-only", wireApi: "anthropic" }] });
     // Creation checks run in the background; injection itself must never wait for them.
@@ -110,10 +127,37 @@ async function confirm(button) {
     assert.match(await response.text(), /OK/);
     await page.locator(".client-provider summary").click();
     await page.screenshot({ path: path.join(out, "accountless-claude-protocols.png") });
-    await stop(); await start();
+    // Real direct-exit IPC, not the QA quit hook: all managed settings, keys
+    // and enabled state must remain byte-for-byte identical after process exit.
+    const preservedFiles = [
+      ...await app.evaluate(() => [global.assTest.config.file, global.assTest.config.record, global.assTest.config.catalog]),
+      path.join(codex, "auth.json"), path.join(data, "connections.json"), path.join(data, "proxy-applied.json"),
+      path.join(data, "test-home/.claude/settings.json"), path.join(data, "test-home/.claude.json"),
+      path.join(data, "claude-desktop-gateway.json"), path.join(data, "claude-desktop/claude_desktop_config.json"),
+      path.join(library, "_meta.json"), path.join(library, desktopMeta.appliedId + ".json"),
+    ];
+    const preserved = preservedFiles.map(file => fs.readFileSync(file));
+    await assert.rejects(call("app-exit-direct", false), /确认直接退出/);
+    // Simulate a live request to verify that only safe exit is blocked.
+    await app.evaluate(() => global.assTest.router.requests.set("exit-fixture", { client: "claude" }));
+    await call("ui-preferences", { theme: "dark" });
+    const directExit = await exitDialog();
+    await directExit.getByRole("button", { name: "安全退出", exact: true }).waitFor();
+    assert.equal(await directExit.getByRole("button", { name: "安全退出", exact: true }).isDisabled(), true);
+    assert.equal(await directExit.getByRole("button", { name: "直接退出", exact: true }).isEnabled(), true);
+    assert.match(await directExit.textContent(), /保留所有接入与免登录配置/);
+    assert.equal(await page.title(), "ASS");
+    assert.equal(await page.locator("vite-error-overlay").count(), 0);
+    await page.screenshot({ path: path.join(out, "exit-preserve-or-restore.png") });
+    await exitBy(directExit, "直接退出");
+    for (const [i, file] of preservedFiles.entries()) assert.deepEqual(fs.readFileSync(file), preserved[i]);
+    await start();
     snapshot = await call("snapshot");
     assert.equal(snapshot.connections.clients.codex.accountless, true); assert.equal(snapshot.connections.clients.claude.accountless, true);
     assert.equal(snapshot.claudeDesktop.current, true);
+    assert.equal(snapshot.service.running, true);
+    const resumed = await fetch(gatewayUrl + "/v1/models", { headers: { authorization: "Bearer " + gatewayKey } });
+    assert.equal(resumed.status, 200);
     assert.equal(Object.keys(snapshot.capabilities).length, 2);
     await choose("Codex"); await confirm(page.getByRole("switch", { name: "Codex 无账号启动" }));
     assert.equal((await call("snapshot")).connections.clients.codex.accountless, false);
@@ -126,9 +170,33 @@ async function confirm(button) {
     assert.equal((await call("snapshot")).connections.clients.claude.accountless, false);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude/settings.json"))), {});
     assert.equal(fs.readFileSync(path.join(codex, "auth.json"), "utf8"), auth);
+    // Safe exit must restore Codex + terminal + desktop instead of preserving
+    // their accountless overlays, without touching the original OAuth.
+    await choose("Codex"); await confirm(page.getByRole("switch", { name: "Codex 无账号启动" }));
+    await choose("Claude Code"); await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
+    await call("claude-desktop-configure", true);
+    const safeExit = await exitDialog();
+    // Modal uses the native <dialog> role; click waits for enabled state.
+    await exitBy(safeExit, "安全退出");
+    // Field-level withdrawal preserves harmless whitespace left around the
+    // removed managed block; assert the complete parsed configuration.
+    assert.deepEqual(require("@iarna/toml").parse(fs.readFileSync(path.join(codex, "config.toml"), "utf8")), { model: "official-original" });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude/settings.json"))), {});
+    assert.equal(fs.existsSync(path.join(data, "claude-desktop-gateway.json")), false);
+    assert.equal(fs.existsSync(path.join(data, "claude-desktop/claude_desktop_config.json")), false);
+    assert.equal(fs.readFileSync(path.join(codex, "auth.json"), "utf8"), auth);
+    await start();
+    snapshot = await call("snapshot");
+    assert.equal(snapshot.connections.clients.codex.enabled, false);
+    assert.equal(snapshot.connections.clients.claude.enabled, false);
+    const afterSafeExit = await exitDialog();
+    assert.equal(await afterSafeExit.getByRole("button", { name: "安全退出", exact: true }).count(), 0);
+    await exitBy(afterSafeExit, "直接退出");
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ passed: true, accountlessEligibility: true, productionVersionGate: true, oldVersionRejected: true,
-      claudeLauncher, bothClients: true, automaticProtocols: true, desktopLocalConfig: true, restartPersistence: true, oauthPreserved: true, screenshots: out, errors }));
+      claudeLauncher, bothClients: true, automaticProtocols: true, desktopLocalConfig: true, restartPersistence: true,
+      directExitPreservesConfig: true, routingResumes: true, safeExitRestoresConfig: true, conditionalSafeExit: true,
+      oauthPreserved: true, screenshots: out, errors }));
   } finally {
     await stop();
   }

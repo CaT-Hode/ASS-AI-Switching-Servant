@@ -95,6 +95,25 @@ class Connections {
         !excluding.includes(id) && this.enabled[id] && this.needsRouter(id),
     );
   }
+  exitStatus() {
+    const sessions = this.processes.snapshot().sessions;
+    const ids = IDS.filter(id => this.needsRouter(id) && (
+      this.enabled[id] || this.proxyConfig?.clients[id] ||
+      (id === "codex" && this.config.status().managed) ||
+      this.injections.entries.some(e => e.harness === id) ||
+      sessions.some(s => s.harness === id && s.status !== "gone" && s.transport !== "native")
+    ));
+    return { safeNeeded: ids.length > 0 || !!this.error || !!this.injections.error,
+      names: ids.map(id => NAMES[id]), active: this.router.clientActive() + this.extraActive() };
+  }
+  directExit(acknowledged, quit) {
+    if (acknowledged !== true) throw Error("请先确认直接退出");
+    // Do not quit halfway through an injection transaction. Active requests,
+    // config drift and unavailable process inspection do not block this path.
+    if (this.busy) throw Error("接入配置正在写入，请稍后再退出");
+    quit();
+    return { ok: true, quit: true, preserved: true };
+  }
   snapshot() {
     return {
       busy: this.busy,

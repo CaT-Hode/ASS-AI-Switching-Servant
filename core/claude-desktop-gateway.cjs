@@ -165,8 +165,23 @@ class ClaudeDesktopGateway {
     ], next, "Claude 桌面版本地配置写入失败");
     return { ok: true, message: "Claude 桌面版已配置。重新打开 Claude 后可通过 ASS 使用注入模型。" };
   }
-  disable() {
+  preflightDisable() {
     const owner = this.owner();
+    if (!owner) return null;
+    if (owner.version === 1) {
+      const current = readPolicy(this.policy);
+      if (owner.hash !== hash(Object.fromEntries(names.map(name => [name, current[name]?.value]))))
+        throw Error("Claude 桌面版旧策略已变化，ASS 未删除其他程序的设置");
+    } else {
+      this.local();
+      const profileText = read(this.profileFile(owner.id));
+      if (profileText !== null && localHash(json(profileText)) !== owner.hash)
+        throw Error("Claude 桌面版配置已变化，ASS 未删除其他程序的设置");
+    }
+    return owner;
+  }
+  disable() {
+    const owner = this.preflightDisable();
     if (!owner) return { ok: true, message: "Claude 桌面版没有 ASS 管理的接入" };
     if (owner.version === 1) return this.disableLegacy(owner);
     const local = this.local(), file = this.profileFile(owner.id), profileText = read(file);

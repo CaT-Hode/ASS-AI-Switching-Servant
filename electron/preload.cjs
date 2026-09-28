@@ -22,6 +22,8 @@ const allowed = [
   "model-defaults",
   "connection-preview",
   "connection-apply",
+  "app-exit-preview",
+  "app-exit-direct",
   "connection-repair-preview",
   "connection-repair",
   "diagnose",

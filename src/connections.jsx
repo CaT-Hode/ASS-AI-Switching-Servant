@@ -59,7 +59,71 @@ export function ConnectionStatus({ client, state, busy, onManage }) {
     </section>
   );
 }
-export function ConnectionDialog({ request, onClose, onComplete }) {
+export function ConnectionDialog(props) {
+  return props.request.quit ? <ExitDialog onClose={props.onClose} /> : <ConnectionChangeDialog {...props} />;
+}
+function ExitDialog({ onClose }) {
+  const [status, setStatus] = useState(null), [plan, setPlan] = useState(null);
+  const [error, setError] = useState(""), [busy, setBusy] = useState("");
+  useEffect(() => {
+    let active = true;
+    async function inspect() {
+      try {
+        const value = await api.call("app-exit-preview");
+        if (!active) return;
+        setStatus(value);
+        if (value.error) { setError(value.error); return; }
+        if (value.safeNeeded) {
+          const safePlan = await api.call("connection-preview", "all", false, true);
+          if (active) setPlan(safePlan);
+        }
+      } catch (e) {
+        if (active) {
+          setStatus(previous => previous || { safeNeeded: true });
+          setError(cleanError(e));
+        }
+      }
+    }
+    inspect();
+    return () => { active = false; };
+  }, []);
+  async function exit(mode) {
+    if (busy || (mode === "safe" && !plan)) return;
+    setBusy(mode);
+    setError("");
+    try {
+      if (mode === "direct") await api.call("app-exit-direct", true);
+      else await api.call("connection-apply", { ticket: plan.ticket, mode: "terminate", acknowledged: true });
+    } catch (e) {
+      setError(cleanError(e));
+      if (mode === "safe") setPlan(null);
+      setBusy("");
+    }
+  }
+  return <Modal title="退出 ASS？" className="connection-confirm connection-exit"
+    closeButton={false} dismissible={!busy} onClose={onClose}>
+    <dl className="exit-options">
+      <div><dt>直接退出</dt><dd id="exit-direct-description">保留所有接入与免登录配置，不关闭客户端窗口。路由请求会中断，依赖 ASS 的模型需重新启动 ASS 后才能继续使用。</dd></div>
+      {status?.safeNeeded && <div><dt>安全退出</dt><dd id="exit-safe-description">撤回依赖 ASS 的注入后退出，官方账户、会话与原生直连配置保留。
+        {plan?.sessions.length > 0 && <span>将关闭 {plan.sessions.length} 个由 ASS 启动的路由窗口。</span>}
+        <span>请先结束客户端中的任务。</span></dd></div>}
+    </dl>
+    {status === null && <p className="connection-repair-note" role="status">正在检查是否需要安全退出…</p>}
+    {status?.active > 0 && <p className="connection-repair-note" role="status">当前有 {status.active} 个路由请求；安全退出需等待请求结束。</p>}
+    {error && <p className="connection-confirm-message exit-error" role="alert">{error}</p>}
+    <footer>
+      <button className="button" data-autofocus disabled={!!busy} onClick={onClose}>取消</button>
+      {status?.safeNeeded && <button className="button" disabled={!!busy || !plan || plan.active > 0}
+        aria-describedby="exit-safe-description" onClick={() => exit("safe")}>
+        {busy === "safe" && <Loader2 size={14} className="spin" />}安全退出
+      </button>}
+      <button className="button primary" disabled={!!busy} aria-describedby="exit-direct-description" onClick={() => exit("direct")}>
+        {busy === "direct" && <Loader2 size={14} className="spin" />}直接退出
+      </button>
+    </footer>
+  </Modal>;
+}
+function ConnectionChangeDialog({ request, onClose, onComplete }) {
   const [plan, setPlan] = useState(null),
     [repair, setRepair] = useState(null),
     [repairReason, setRepairReason] = useState(""),
@@ -76,13 +140,13 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
     async function preview() {
       let failed = false;
       try {
-        const value = await api.call("connection-preview", request.scope, request.enabled, !!request.quit, request.accountless);
+        const value = await api.call("connection-preview", request.scope, request.enabled, false, request.accountless);
         if (active) setPlan(value);
       } catch (e) {
         failed = true;
         if (active) setError(cleanError(e));
       }
-      if (active && request.accountless === undefined && (failed || request.issue) && request.scope !== "all" && !request.quit) {
+      if (active && request.accountless === undefined && (failed || request.issue) && request.scope !== "all") {
         try {
           const value = await api.call("connection-repair-preview", request.scope);
           if (active) setRepair(value);
@@ -95,13 +159,11 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
     return () => {
       active = false;
     };
-  }, [request.scope, request.enabled, request.quit, request.issue, request.accountless]);
+  }, [request.scope, request.enabled, request.issue, request.accountless]);
   const target = plan?.names.join("、") || repair?.names.join("、") || request.name || "客户端";
-  const hasIssue = request.accountless === undefined && !request.quit && request.scope !== "all" && (!!request.issue || !!error);
+  const hasIssue = request.accountless === undefined && request.scope !== "all" && (!!request.issue || !!error);
   const restartPlan = hasIssue ? repair?.restart : plan?.restart;
-  const title = request.accountless !== undefined ? `${request.accountless ? "开启" : "关闭"} ${target} 无账号启动？` : hasIssue ? `${target} 接入异常` : request.quit
-    ? "退出 ASS？"
-    : request.scope === "all"
+  const title = request.accountless !== undefined ? `${request.accountless ? "开启" : "关闭"} ${target} 无账号启动？` : hasIssue ? `${target} 接入异常` : request.scope === "all"
       ? "停止全部接入？"
       : request.enabled
         ? `${request.sync ? "同步" : "开启"} ${target} 接入？`
@@ -126,8 +188,6 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
         ? `并关闭 ${plan.sessions.length} 个由 ASS 启动的窗口`
         : "";
       warning = `将恢复接口配置${windows}${plan.stopService ? "，停止路由服务" : ""}。${restart ? "请先结束任务。" : "请先结束任务，并退出自行启动的客户端。"}`;
-      if (plan.quit && plan.retainedNative?.length)
-        warning = `将退出 ASS 并关闭依赖路由的接入${windows}。${plan.retainedNative.join("、")} 的直连配置与窗口保留。`;
     }
   }
   async function commit() {
@@ -183,7 +243,7 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
       {hasIssue && <p className="connection-repair-note">
         {repair ? repair.migration ? "将备份并迁移到 DSH 当前 profile，不重启客户端。" : `将备份并恢复上次接入配置${repair.files ? `（${repair.files} 个文件）` : ""}。${restart ? "" : "不会关闭客户端；请先结束任务。"}` : repairReason || "正在检查可修复内容…"}
       </p>}
-      {restartPlan?.applicable && !request.quit && <div className="connection-restart" data-force={restart || undefined}>
+      {restartPlan?.applicable && <div className="connection-restart" data-force={restart || undefined}>
         <div className="connection-restart-choices" role="radiogroup" aria-label="配置生效方式">
           <label>
             <input type="radio" name="connection-restart" checked={!restart} disabled={busy}
@@ -214,7 +274,7 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
           onClick={commit}
         >
           {busy && <Loader2 size={14} className="spin" />}
-          {request.quit ? "直接退出" : hasIssue ? request.enabled ? "同步" : "断开接入" : "确定"}
+          {hasIssue ? request.enabled ? "同步" : "断开接入" : "确定"}
         </button>}
         {hasIssue && <button className="button primary connection-repair" disabled={!repair || busy} onClick={repairConnection}>
           {busy ? <Loader2 size={14} className="spin" /> : <Wrench size={15} />}

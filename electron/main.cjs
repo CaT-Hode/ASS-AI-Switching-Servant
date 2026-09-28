@@ -794,7 +794,7 @@ function showWindow() {
     window = null;
   });
 }
-function requestSafeExit() {
+function requestExit() {
   showWindow();
   const request = () =>
     window?.webContents.send("ass:manage", {
@@ -1010,13 +1010,43 @@ else {
           await nativeLogin.assertIdle(id);
         return connections.repairApply(input);
       });
+      register("app-exit-preview", () => {
+        const status = connections.exitStatus();
+        try {
+          if (claudeDesktop.owner()) {
+            status.safeNeeded = true;
+            status.names.push("Claude 桌面版");
+            claudeDesktop.preflightDisable();
+          }
+        } catch (error) {
+          status.safeNeeded = true;
+          status.error = error.message;
+        }
+        return status;
+      });
+      register("app-exit-direct", (acknowledged) => connections.directExit(acknowledged, () => {
+        // Intentionally do not run connection-apply or change any persisted
+        // injection, accountless, desktop-gateway or connection-enabled state.
+        quitting = true;
+        setImmediate(() => app.quit());
+      }));
       register("connection-apply", async (input) => {
-        for (const id of connections.tickets.get(input?.ticket)?.ids || [])
+        const plan = connections.tickets.get(input?.ticket);
+        for (const id of plan?.ids || [])
           await nativeLogin.assertIdle(id);
+        if (plan?.quit) claudeDesktop.preflightDisable();
         diagnosticBatch.cancel();
         for (const controller of diagnosticControllers.values())
           controller.abort();
         const result = await connections.apply(input);
+        if (result.quit) {
+          // A safe exit is not successful if the desktop still points at a
+          // route we just stopped. Leave ASS open and report the restore error.
+          claudeDesktop.disable();
+          quitting = true;
+          setImmediate(() => app.quit());
+          return result;
+        }
         const desktop = claudeDesktop.status(proxyConfig.clients.claude?.localToken, servicePort);
         if (desktop.owned) {
           try {
@@ -1026,10 +1056,6 @@ else {
           } catch (error) {
             result.message += "；Claude 桌面版配置未同步：" + error.message;
           }
-        }
-        if (result.quit) {
-          quitting = true;
-          setImmediate(() => app.quit());
         }
         return result;
       });
@@ -1458,9 +1484,9 @@ else {
           },
           { type: "separator" },
           {
-            label: "安全退出…",
+            label: "退出…",
             click: () => {
-              requestSafeExit();
+              requestExit();
             },
           },
         ]),
@@ -1524,7 +1550,7 @@ else {
   app.on("before-quit", (event) => {
     if (!quitting && !testMode && connections) {
       event.preventDefault();
-      requestSafeExit();
+      requestExit();
       return;
     }
     quitting = true;

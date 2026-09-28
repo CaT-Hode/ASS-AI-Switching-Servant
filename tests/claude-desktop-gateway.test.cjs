@@ -80,6 +80,7 @@ test("externally edited ASS profile is never overwritten or deleted", t => {
   profile.inferenceGatewayBaseUrl = "https://other.example";
   atomic(file, JSON.stringify(profile));
   assert.equal(bridge.status(token, 25819).owned, false);
+  assert.throws(() => bridge.preflightDisable(), /配置已变化/);
   assert.throws(() => bridge.enable(token, 25819), /已被其他程序修改/);
   assert.throws(() => bridge.disable(), /配置已变化/);
   assert.equal(parse(file).inferenceGatewayBaseUrl, "https://other.example");

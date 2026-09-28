@@ -82,6 +82,51 @@ function fakeRestarter() {
     async launch(_plan, beforeLaunch) { this.calls.push("launch"); beforeLaunch?.(); return { ok: true }; },
     async restart() { this.calls.push("restart"); return { ok: true }; } };
 }
+
+test("direct exit preserves configuration and sessions even with active requests or broken inspection", t => {
+  const f = connectionFixture(t, { router: { active: { codex: 1 } }, processes: { error: "inspection unavailable" } });
+  f.connections.enabled.codex = f.connections.enabled.claude = true;
+  f.config.attached = f.config.managed = true;
+  f.processes.sessions = [{ id: "keep-window", harness: "claude", status: "running" }];
+  f.injections.entries = [{ harness: "claude", relative: "keep.json" }];
+  fs.writeFileSync(f.connections.file, JSON.stringify(f.connections.enabled));
+  const before = fs.readFileSync(f.connections.file);
+  f.injections.preflight = () => { throw Error("external edit"); };
+  let quits = 0;
+  assert.deepEqual(f.connections.directExit(true, () => { quits++; }), { ok: true, quit: true, preserved: true });
+  assert.equal(quits, 1);
+  assert.deepEqual(fs.readFileSync(f.connections.file), before);
+  assert.equal(f.config.detachCalls, 0); assert.equal(f.router.stops, 0);
+  assert.equal(f.processes.refreshCalls, 0); assert.equal(f.processes.stopCalls.length, 0);
+  assert.equal(f.injections.restored.length, 0); assert.equal(f.connections.enabled.codex, true);
+  assert.equal(f.processes.sessions[0].status, "running");
+});
+
+test("direct exit requires confirmation and never interrupts a configuration transaction", t => {
+  const f = connectionFixture(t);
+  let quits = 0;
+  assert.throws(() => f.connections.directExit(false, () => { quits++; }), /确认直接退出/);
+  f.connections.busy = true;
+  assert.throws(() => f.connections.directExit(true, () => { quits++; }), /配置正在写入/);
+  assert.equal(quits, 0);
+});
+
+test("safe exit is offered only for proxy configuration, proxy windows, or unresolved state", t => {
+  const f = connectionFixture(t, { nativeConfig: { isDirect: id => id === "dsh", list: () => [] } });
+  assert.equal(f.connections.exitStatus().safeNeeded, false);
+  f.connections.enabled.dsh = true;
+  f.processes.sessions = [{ id: "native-window", harness: "dsh", status: "running", transport: "native" }];
+  assert.equal(f.connections.exitStatus().safeNeeded, false);
+  f.connections.enabled.claude = true;
+  assert.deepEqual(f.connections.exitStatus().names, ["Claude Code"]);
+  f.connections.enabled.claude = false;
+  f.injections.entries = [{ harness: "codex", relative: "old-config.json" }];
+  assert.deepEqual(f.connections.exitStatus().names, ["Codex"]);
+  f.injections.entries = [];
+  f.connections.error = "unreadable state";
+  assert.equal(f.connections.exitStatus().safeNeeded, true);
+  assert.equal(f.processes.refreshCalls, 0);
+});
 test("connection enable and disable restart only with explicit per-operation opt-in", async (t) => {
   const r = fakeRestarter(), f = connectionFixture(t, { restarter: r });
   const first = await f.connections.preview("codex", true);

@@ -196,6 +196,13 @@
 .modal.connection-confirm footer .button {
   min-width: 76px;
 }
+.exit-options { margin: 0; display: grid; gap: 16px; }
+.exit-options > div { display: block; padding: 0; border: 0; }
+.exit-options > div + div { border-top: 1px solid var(--border); padding-top: 16px; }
+.exit-options dt { margin-bottom: 5px; color: light-dark(#102344, #e1e8f2); font-size: 14px; font-weight: 600; }
+.exit-options dd { display: block; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.75; }
+.exit-options dd span { display: block; }
+.exit-error { margin-top: 12px; font-size: 12px; }
 .connection-restart { margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .connection-restart-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: 9px; background: var(--surface); }
 .connection-restart label { position: relative; min-width: 0; font-size: 13px; cursor: pointer; }
