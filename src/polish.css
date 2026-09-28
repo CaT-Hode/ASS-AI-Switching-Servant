@@ -136,7 +136,12 @@ main {
   min-height: 100vh;
 }
 .page-header {
-  margin-bottom: 25px;
+  margin-bottom: 20px;
+  min-height: 40px;
+}
+.page-header h1 {
+  font-size: 25px;
+  letter-spacing: -.55px;
 }
 .page-header p {
   font-size: 13px;
@@ -752,18 +757,18 @@ input[readonly]:not([type="range"]) {
   background: light-dark(#1672ea, #1672ea);
 }
 .range-control input[type="range"]::-webkit-slider-thumb {
-  background: light-dark(#fff, #1e2530);
+  background: light-dark(#fff, #dbe8fa);
   border: 0;
   box-shadow:
-    0 0 0 1px light-dark(#91b6e8, #000000),
+    0 0 0 1px light-dark(#91b6e8, #78afff),
     0 2px 4px light-dark(#0c335b25, #00000025);
   width: 17px;
   height: 17px;
 }
 .range-control input[type="range"]:active::-webkit-slider-thumb {
   box-shadow:
-    0 0 0 4px light-dark(#176de51b, #0000001b),
-    0 0 0 1px light-dark(#639bdd, #000000);
+    0 0 0 4px light-dark(#176de51b, #78afff30),
+    0 0 0 1px light-dark(#639bdd, #78afff);
 }
 .effort-stops {
   font-size: 10px;

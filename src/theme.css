@@ -3,11 +3,16 @@
   --panel: light-dark(#fff, #1e2530);
   --raised: light-dark(#edf1f6, #2a3443);
   --accent: light-dark(#0966e8, #78afff);
-  --muted: light-dark(#626e80, #a9b5c7);
+  --muted: light-dark(#5f6b7d, #a9b5c7);
   --border: light-dark(#e2e6ec, #364253);
   --surface: light-dark(#f3f5f8, #161b23);
   --ink: light-dark(#202a38, #e8edf5);
   --subtle: light-dark(#edf1f6, #253040);
+  --success: light-dark(#168157, #70d8ac);
+  --warning: light-dark(#96671e, #f4c17b);
+  --danger: light-dark(#b63546, #ff8f9c);
+  --sidebar-surface: light-dark(#e9edf2, #242e3c);
+  --window-chrome-height: 0px;
   --provider-logo-filter: none;
 }
 :root[data-theme="light"] { color-scheme: light; }
@@ -17,6 +22,25 @@
 img[src^="./providers/"] { filter: var(--provider-logo-filter); }
 :root, body, main { background: var(--surface); color: var(--ink); }
 button, input, select, textarea { color-scheme: inherit; }
+::selection { background: light-dark(#cbe0ff, #345780); color: var(--ink); }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
+option, optgroup { color: var(--ink); background: var(--panel); }
+html { scrollbar-color: light-dark(#a8b3c2, #55647a) var(--surface); }
+.nav-label, .sidebar .version-button, .count, .injection-count, .usage-segments button { color: var(--muted); }
+.connection-switch:not([aria-checked="true"]):not([data-error="true"]) { color: var(--muted); }
+.app-shell[data-window-chrome="true"] { --window-chrome-height: 36px; }
+.window-chrome {
+  position: fixed; inset: 0 0 auto; height: var(--window-chrome-height); z-index: 10;
+  background: linear-gradient(to right, var(--sidebar-surface) 218px, var(--surface) 218px);
+  -webkit-app-region: drag; user-select: none;
+}
+.app-shell[data-window-chrome="true"] > .sidebar { padding-top: calc(var(--window-chrome-height) + 16px); background: var(--sidebar-surface); }
+.app-shell[data-window-chrome="true"] > main { padding-top: calc(var(--window-chrome-height) + 14px); }
+.app-shell[data-window-chrome="true"] .client-list { top: calc(var(--window-chrome-height) + 16px); max-height: calc(100vh - var(--window-chrome-height) - 32px); }
+.page-header .button { background: transparent; box-shadow: none; border-color: var(--border); }
+.page-header .button:hover { background: var(--panel); }
+.app-shell[data-window-chrome="true"] .modal { max-height: calc(100vh - var(--window-chrome-height) - 48px); }
+.app-shell[data-window-chrome="true"] :is(.provider-model-dialog, .provider-side-dialog) { top: calc(var(--window-chrome-height) + 24px); height: calc(100vh - var(--window-chrome-height) - 48px); }
 .button.primary { color: #fff; background: light-dark(#0966e8, #226ee0); }
 .theme-control {
   display: flex; justify-content: center; margin-bottom: 14px;

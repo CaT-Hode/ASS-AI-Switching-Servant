@@ -719,6 +719,16 @@ async function balance(id, automatic = false) {
   push();
   return balances[id];
 }
+function windowChrome() {
+  return { color: nativeTheme.shouldUseDarkColors ? "#161b23" : "#f3f5f8",
+    symbolColor: nativeTheme.shouldUseDarkColors ? "#e8edf5" : "#202a38", height: 36 };
+}
+function syncWindowTheme() {
+  if (!window || window.isDestroyed()) return;
+  window.setBackgroundColor(windowChrome().color);
+  if (process.platform === "win32") window.setTitleBarOverlay(windowChrome());
+}
+nativeTheme.on("updated", syncWindowTheme);
 function showWindow() {
   if (window) {
     window.show();
@@ -734,6 +744,7 @@ function showWindow() {
     icon: iconPath,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#161b23" : "#f3f5f8",
     autoHideMenuBar: true,
+    ...(process.platform === "win32" ? { titleBarStyle: "hidden", titleBarOverlay: windowChrome() } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       nodeIntegration: false,
@@ -917,7 +928,7 @@ else {
       register("ui-preferences", (input) => {
         const result = preferences.update(input);
         nativeTheme.themeSource = result.theme;
-        window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#161b23" : "#f3f5f8");
+        syncWindowTheme();
         return result;
       });
       register("usage-refresh", (automatic) =>

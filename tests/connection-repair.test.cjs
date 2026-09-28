@@ -45,6 +45,95 @@ function fixture(t) {
 async function enable(f, id) { const p = await f.connections.preview(id, true); return f.connections.apply({ ticket: p.ticket, mode: "safe", acknowledged: true }); }
 async function repair(f, id) { const p = await f.connections.repairPreview(id); return f.connections.repairApply({ ticket: p.ticket, acknowledged: true }); }
 
+function upgradedDSH(f, profile = "web") {
+  put(path.join(f.home, ".dsh/desktop-link/web.json"), { coreVersion: "0.1.7-rc.2", profile });
+  return locations("dsh", f.manager);
+}
+test("current DSH writes profile patches, preserves other plugins and credentials, and supports repair/withdrawal", async (t) => {
+  const f = fixture(t), target = upgradedDSH(f);
+  const plugins = '# personal plugins\n- id: keep-plugin\n  disabled: !!js "true"\n';
+  put(target.config, plugins);
+  put(target.auth, { version: 1, refs: { DEEPSEEK_API_KEY: "synthetic-native" } });
+  await enable(f, "dsh");
+  assert.equal(target.format, "dsh-patch");
+  assert.match(text(target.config), /!!js "true"/);
+  assert.equal(fs.existsSync(path.join(target.dir, "settings.yaml")), false);
+  assert.equal(Object.keys(document(text(target.config), "dsh-patch").data["llm-pi-ai"].providers).length, 1);
+  put(target.config, text(target.config).replace("https://original.example/v1", "https://changed.example/v1"));
+  await repair(f, "dsh");
+  assert.match(text(target.config), /original.example/);
+  f.native.restore(["dsh"]);
+  assert.deepEqual(document(text(target.config), "dsh-patch").data["llm-pi-ai"].providers, {});
+  assert.match(text(target.config), /# personal plugins/);
+  assert.equal(document(text(target.auth), "yaml").data.refs.DEEPSEEK_API_KEY, "synthetic-native");
+  assert.equal(f.processes.stops, 0);
+});
+test("DSH upgrade repair relocates only last applied fields, persists ownership and does not apply drafts", async (t) => {
+  const f = fixture(t), legacy = locations("dsh", f.manager);
+  put(legacy.config, 'other-setting:\n  keep: true\n');
+  await enable(f, "dsh");
+  const auth = text(legacy.auth), target = upgradedDSH(f);
+  put(target.config, '- id: existing-plugin\n  config:\n    value: 7\n');
+  f.store.state.providers[0].baseUrl = "https://pending.example/v1";
+  assert.match(f.connections.snapshot().clients.dsh.syncError, /尚未迁移/);
+  await assert.rejects(f.connections.preview("dsh", true), /迁移/);
+  const p = await f.connections.repairPreview("dsh"); assert.equal(p.migration, true);
+  await f.connections.repairApply({ ticket: p.ticket, acknowledged: true });
+  assert.match(text(target.config), /original.example/); assert.doesNotMatch(text(target.config), /pending.example/);
+  assert.match(text(legacy.config), /keep: true/); assert.doesNotMatch(text(legacy.config), /original.example/);
+  assert.equal(text(legacy.auth), auth);
+  assert.equal(f.connections.snapshot().clients.dsh.pending, true);
+  const restarted = new NativeConfig(f.data, crypt, f.manager);
+  assert.ok(restarted.fields.entries.some((e) => e.format === "dsh-patch"));
+  assert.equal(restarted.fields.entries.some((e) => e.file === legacy.config), false);
+  assert.ok(fs.readdirSync(path.join(f.data, "backups")).some((n) => n.startsWith("native-migration-dsh-")));
+  restarted.restore(["dsh"]); assert.doesNotMatch(text(target.config), /original.example/);
+  assert.match(text(target.config), /existing-plugin/); assert.equal(f.processes.stops, 0);
+});
+test("DSH migration supports renamed legacy settings and rejects a changed target after confirmation", async (t) => {
+  const f = fixture(t), legacy = locations("dsh", f.manager);
+  await enable(f, "dsh"); fs.renameSync(legacy.config, legacy.config + ".imported");
+  const archive = text(legacy.config + ".imported"), target = upgradedDSH(f);
+  const p = await f.connections.repairPreview("dsh");
+  put(target.config, '- id: custom-plugin\n');
+  await assert.rejects(f.connections.repairApply({ ticket: p.ticket, acknowledged: true }), /配置已变化/);
+  await repair(f, "dsh"); assert.match(text(target.config), /original.example/);
+  assert.equal(text(legacy.config + ".imported"), archive); assert.equal(fs.existsSync(legacy.config), false);
+});
+
+test("DSH recognizes an already copied profile and transfers ownership for later withdrawal", async (t) => {
+  const f = fixture(t), legacy = locations("dsh", f.manager);
+  await enable(f, "dsh");
+  const target = upgradedDSH(f), settings = document(text(legacy.config), "yaml").data;
+  put(target.config, JSON.stringify([{ id: "llm-pi-ai", config: settings["llm-pi-ai"] }]));
+  const profileBefore = text(target.config);
+  await repair(f, "dsh");
+  assert.equal(text(target.config), profileBefore, "identical active profile must not be rewritten");
+  assert.equal(f.connections.snapshot().clients.dsh.syncError, "");
+  assert.equal(f.connections.snapshot().clients.dsh.pending, false);
+  const dsh = require("../core/dsh-config.cjs");
+  const accountHome = path.join(f.data, "clients/dsh/0123456789abcdef01234567");
+  f.native.syncProfile("dsh", accountHome);
+  assert.equal(dsh.target(accountHome).format, "dsh-patch");
+  assert.equal(Object.keys(dsh.readSettings(accountHome, () => { throw Error("legacy reader must not run"); })["llm-pi-ai"].providers).length, 1);
+  new NativeConfig(f.data, crypt, f.manager).restore(["dsh"]);
+  assert.doesNotMatch(text(target.config), /original.example/);
+  assert.equal(f.processes.stops, 0);
+});
+test("DSH rejects conflicting patch providers, duplicate entries, unsafe profiles and model expressions", async (t) => {
+  const f = fixture(t), legacy = locations("dsh", f.manager);
+  await enable(f, "dsh"); const target = upgradedDSH(f);
+  const providers = document(text(legacy.config), "yaml").data["llm-pi-ai"].providers;
+  put(target.config, JSON.stringify([{ id: "llm-pi-ai", config: { providers: JSON.parse(JSON.stringify(providers).replace("original.example", "foreign.example")) } }]));
+  await assert.rejects(f.connections.repairPreview("dsh"), /已有不同/);
+  put(target.config, '- id: llm-pi-ai\n- id: llm-pi-ai\n');
+  await assert.rejects(f.connections.repairPreview("dsh"), /重复/);
+  put(target.config, '- id: llm-pi-ai\n  config:\n    providers: !!js "process.env"\n');
+  await assert.rejects(f.connections.repairPreview("dsh"), /表达式/);
+  put(path.join(target.dir, "desktop-link/web.json"), { coreVersion: "0.1.7-rc.2", profile: "../escape" });
+  assert.throws(() => locations("dsh", f.manager), /profile 名称/);
+});
+
 for (const id of ["dsh", "opencode", "pi", "kimi", "zcode"]) test(`${id}: one-click repair restores applied fields, keeps OAuth/user settings/drafts and original withdrawal baseline`, async (t) => {
   const f = fixture(t), target = locations(id, f.manager);
   if (id === "dsh") { put(target.config, '# preserved comment\nplugins: [custom]\n'); put(target.auth, 'version: 1\nrefs:\n  DEEPSEEK_API_KEY: synthetic-official\n'); }
@@ -99,6 +188,45 @@ test("Codex repair restores managed config and catalog, preserves OAuth/user set
   assert.equal(f.connections.snapshot().clients.codex.syncError, "");
   f.config.detach(); assert.match(text(f.config.file), /keep = false/); assert.doesNotMatch(text(f.config.file), /ass_router/);
   assert.equal(f.router.stops, 0); assert.equal(f.processes.stops, 0);
+});
+
+test("Codex repair can explicitly force restart, preserving OAuth and never applying pending drafts", async (t) => {
+  const f = fixture(t); await enable(f, "codex");
+  const applied = text(f.config.file), oauth = text(path.join(f.codex, "auth.json")), calls = [];
+  put(f.config.file, applied.replace("25819/clients", "25899/clients"));
+  f.store.state.providers[0].baseUrl = "https://pending.example/v1";
+  f.connections.restarter = {
+    preview: async () => ({ applicable: true, available: true }), public: (p) => p,
+    stop: async () => { calls.push("stop"); assert.match(text(f.config.file), /25899/); },
+    launch: async (_plan, ready) => { calls.push("launch"); assert.equal(text(f.config.file), applied); ready(); assert.equal(f.connections.allow("codex"), true); return { ok: true }; },
+  };
+  f.router.active = 1;
+  f.router.cancelClient = async (id) => { assert.equal(id, "codex"); calls.push("cancel"); f.router.active = 0; };
+  const p = await f.connections.repairPreview("codex");
+  assert.equal(p.restart.available, true);
+  const result = await f.connections.repairApply({ ticket: p.ticket, acknowledged: true, restart: true });
+  assert.equal(result.restart.ok, true); assert.deepEqual(calls, ["stop", "cancel", "launch"]);
+  assert.equal(text(path.join(f.codex, "auth.json")), oauth);
+  assert.equal(f.proxy.routingState("codex").providers[0].baseUrl, "https://original.example/v1");
+  assert.equal(f.processes.stops, 0);
+});
+
+test("repair refuses force restart for DSH and reports Codex relaunch failures without undoing a successful repair", async (t) => {
+  const f = fixture(t); await enable(f, "dsh"); await enable(f, "codex");
+  const target = locations("dsh", f.manager);
+  put(target.config, text(target.config).replace("original.example", "changed.example"));
+  const dsh = await f.connections.repairPreview("dsh");
+  await assert.rejects(f.connections.repairApply({ ticket: dsh.ticket, acknowledged: true, restart: true }), /重启目标/);
+  assert.equal(f.processes.stops, 0);
+  put(f.config.file, text(f.config.file).replace("25819/clients", "25899/clients"));
+  f.connections.restarter = { preview: async () => ({ available: true }), public: (p) => p,
+    stop: async () => {}, launch: async () => { throw Error("launch failed"); } };
+  f.router.cancelClient = async () => {};
+  const p = await f.connections.repairPreview("codex");
+  const result = await f.connections.repairApply({ ticket: p.ticket, acknowledged: true, restart: true });
+  assert.equal(result.ok, true); assert.equal(result.restart.ok, false);
+  assert.equal(f.connections.snapshot().clients.codex.syncError, "");
+  assert.match(result.message, /重启未完成/);
 });
 
 test("Claude Code repair restores its trusted route without overwriting another client or restarting a window", async (t) => {

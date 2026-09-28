@@ -161,7 +161,7 @@ function powershellPath() {
   );
 }
 
-function runPowerShell(script, input) {
+function runPowerShell(script, input, timeoutMs = HELPER_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       powershellPath(),
@@ -188,7 +188,7 @@ function runPowerShell(script, input) {
     const timer = setTimeout(() => {
       child.kill();
       finish(new Error("PowerShell 进程操作超时"));
-    }, HELPER_TIMEOUT_MS);
+    }, timeoutMs);
     timer.unref?.();
     const collect = (name) => (chunk) => {
       if (stdout.length + stderr.length + chunk.length > MAX_ADAPTER_OUTPUT) {

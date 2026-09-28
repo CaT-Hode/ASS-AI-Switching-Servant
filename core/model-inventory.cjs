@@ -4,6 +4,7 @@ const YAML = require("yaml");
 const { parse: parseJSONC } = require("jsonc-parser");
 const { EFFORTS } = require("./models.cjs");
 const { createHash } = require("node:crypto");
+const dsh = require("./dsh-config.cjs");
 const APIs = {
   "openai-completions": "openai-chat",
   "openai-responses": "openai-responses",
@@ -190,7 +191,8 @@ function nativeModels(client, account, home, env) {
   if (client.id === "pi")
     configured = read(path.join(dir, "models.json")).providers || {};
   if (client.id === "dsh") {
-    const settings = read(path.join(dir, "settings.yaml"));
+    let settings;
+    try { settings = dsh.readSettings(dir, read); } catch { return []; }
     configured = settings["llm-pi-ai"]?.providers || {};
     const deep = settings["llm-deepseek"] || {};
     if (

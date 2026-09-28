@@ -21,9 +21,10 @@ function connectionFixture(t, overrides = {}) {
   const dataDir = temp(t), configFile = path.join(dataDir, "config.toml");
   fs.writeFileSync(configFile, "");
   const router = {
-    active: Object.create(null), starts: 0, stops: 0,
+    active: Object.create(null), starts: 0, stops: 0, canceled: [],
     clientActive(id) { return id ? (this.active[id] || 0) : Object.values(this.active).reduce((a, b) => a + b, 0); },
     async start() { this.starts++; }, async stop() { this.stops++; },
+    async cancelClient(id) { this.canceled.push(id); this.active[id] = 0; },
   };
   const config = {
     file: configFile, catalog: path.join(dataDir, "catalog.json"), baseUrl: "http://127.0.0.1:25819/clients/codex/v1",
@@ -77,16 +78,18 @@ test("initial all-false connection state is persisted and restart stays closed w
 });
 function fakeRestarter() {
   return { calls: [], preview: async () => ({ available: true, applicable: true, names: ["Codex 桌面端"] }),
-    public: (p) => p, async validate() { this.calls.push("validate"); }, async restart() { this.calls.push("restart"); return { ok: true }; } };
+    public: (p) => p, async validate() { this.calls.push("validate"); }, async stop() { this.calls.push("stop"); },
+    async launch(_plan, beforeLaunch) { this.calls.push("launch"); beforeLaunch?.(); return { ok: true }; },
+    async restart() { this.calls.push("restart"); return { ok: true }; } };
 }
 test("connection enable and disable restart only with explicit per-operation opt-in", async (t) => {
   const r = fakeRestarter(), f = connectionFixture(t, { restarter: r });
   const first = await f.connections.preview("codex", true);
   await f.connections.apply({ ticket: first.ticket, mode: "safe", acknowledged: true }); assert.deepEqual(r.calls, []);
   const off = await f.connections.preview("codex", false);
-  await f.connections.apply({ ticket: off.ticket, mode: "safe", acknowledged: true, restart: true }); assert.deepEqual(r.calls, ["validate", "restart"]);
+  await f.connections.apply({ ticket: off.ticket, mode: "safe", acknowledged: true, restart: true }); assert.deepEqual(r.calls, ["validate", "stop", "launch"]);
   r.calls = []; const on = await f.connections.preview("codex", true);
-  await f.connections.apply({ ticket: on.ticket, mode: "safe", acknowledged: true, restart: true }); assert.deepEqual(r.calls, ["validate", "restart"]);
+  await f.connections.apply({ ticket: on.ticket, mode: "safe", acknowledged: true, restart: true }); assert.deepEqual(r.calls, ["validate", "stop", "launch"]);
 });
 test("DSH native sync reports the browser catalog refresh boundary", async (t) => {
   const nativeConfig = {
@@ -118,13 +121,56 @@ test("restart rejects unsupported selection and changed processes before configu
   await assert.rejects(g.connections.apply({ ticket: q.ticket, mode: "safe", acknowledged: true, restart: true }), /changed/);
   assert.equal(g.config.attachCalls, 0); assert.equal(g.router.starts, 0);
 });
-test("restart failure reports applied configuration separately; active requests never restart", async (t) => {
-  const r = fakeRestarter(); r.restart = async () => { throw Error("failed"); };
+test("restart failure reports applied configuration separately; default choice never interrupts requests", async (t) => {
+  const r = fakeRestarter(); r.launch = async () => { throw Error("failed"); };
   const f = connectionFixture(t, { restarter: r }), p = await f.connections.preview("codex", true);
   const result = await f.connections.apply({ ticket: p.ticket, mode: "safe", acknowledged: true, restart: true });
   assert.equal(result.restart.ok, false); assert.equal(f.connections.enabled.codex, true); assert.match(result.message, /配置已更新.*重启未完成/);
   f.router.active.codex = 1; const q = await f.connections.preview("codex", false);
-  await assert.rejects(f.connections.apply({ ticket: q.ticket, mode: "safe", acknowledged: true, restart: true }), /请求正在进行/);
+  await assert.rejects(f.connections.apply({ ticket: q.ticket, mode: "safe", acknowledged: true }), /请求正在进行/);
+});
+
+test("Codex force enable/sync/disable stops before writing and cancels only its requests", async (t) => {
+  for (const [initial, enabled] of [[false, true], [true, true], [true, false]]) {
+    const order = [], r = fakeRestarter(), f = connectionFixture(t, { restarter: r });
+    f.connections.enabled.codex = initial; f.connections.enabled.claude = true;
+    f.router.active.codex = 2; f.router.active.claude = 3;
+    r.stop = async () => { order.push("stop"); assert.equal(f.connections.allow("codex"), false); };
+    f.router.cancelClient = async (id) => { order.push("cancel:" + id); f.router.active[id] = 0; };
+    f.config.attach = () => { order.push("write"); };
+    f.config.detach = () => { order.push("write"); };
+    r.launch = async (_plan, ready) => {
+      assert.equal(JSON.parse(fs.readFileSync(f.connections.file)).codex, enabled);
+      ready(); order.push("launch"); assert.equal(f.connections.allow("codex"), enabled); return { ok: true };
+    };
+    const p = await f.connections.preview("codex", enabled);
+    const result = await f.connections.apply({ ticket: p.ticket, mode: enabled ? "safe" : "terminate", acknowledged: true, restart: true });
+    assert.equal(result.restart.ok, true);
+    assert.deepEqual(order, ["stop", "cancel:codex", "write", "launch"]);
+    assert.equal(f.router.active.claude, 3); assert.equal(f.router.stops, 0);
+    assert.deepEqual(f.processes.stopCalls, []);
+  }
+});
+
+test("last-client force disable refuses unrelated diagnostics before stopping Codex", async (t) => {
+  const r = fakeRestarter(), f = connectionFixture(t, { restarter: r, extraActive: () => 1 });
+  f.connections.enabled.codex = true; f.router.active.codex = 2;
+  const p = await f.connections.preview("codex", false);
+  await assert.rejects(f.connections.apply({ ticket: p.ticket, mode: "terminate", acknowledged: true, restart: true }), /其他客户端或连接诊断/);
+  assert.deepEqual(r.calls, ["validate"]); assert.equal(f.config.detachCalls, 0); assert.deepEqual(f.router.canceled, []);
+});
+
+test("failed stop writes nothing; concurrent config edits after stop never get overwritten or relaunched", async (t) => {
+  for (const fail of ["stop", "config", "concurrent"]) {
+    const r = fakeRestarter(), f = connectionFixture(t, { restarter: r });
+    if (fail === "stop") r.stop = async () => { throw Error("stop failed"); };
+    if (fail === "config") f.config.attach = () => { throw Error("write failed"); };
+    if (fail === "concurrent") r.stop = async () => { fs.writeFileSync(f.config.file, "# user changed config\n"); };
+    const p = await f.connections.preview("codex", true);
+    await assert.rejects(f.connections.apply({ ticket: p.ticket, mode: "safe", acknowledged: true, restart: true }), fail === "stop" ? /stop failed/ : /Codex 已关闭.*未完成/);
+    assert.equal(r.calls.includes("launch"), false); assert.equal(f.config.attachCalls, 0);
+    assert.equal(f.connections.busy, false); assert.equal(f.connections.enabled.codex, false);
+  }
 });
 
 test("preview is read-only and tickets are one-use, missing, and expiry checked", async (t) => {
@@ -355,6 +401,37 @@ test("diagnostics routes require the private local probe token", async (t) => {
   const body = JSON.stringify({ model: "chat", messages: [] }), headers = { authorization: `Bearer ${router.clientToken}`, "content-type": "application/json" };
   assert.equal((await request(router.port, "/diagnostics/harness/deep/v1/chat/completions", { method: "POST", headers, body })).status, 401);
   assert.equal((await request(router.port, "/diagnostics/harness/deep/v1/chat/completions", { method: "POST", headers: { ...headers, "x-ass-probe-token": router.clientToken }, body })).status, 200);
+});
+
+test("cancelClient drains Codex uploads and upstreams without touching other clients or diagnostics", async (t) => {
+  const pending = new Map();
+  const router = new Router({ getState: () => ({ providers: [] }), fetchUpstream: (_url, options) => new Promise((resolve, reject) => {
+    pending.set(JSON.parse(options.body).model, { signal: options.signal, resolve });
+    options.signal.addEventListener("abort", () => reject(Error("canceled")), { once: true });
+  }) });
+  await router.start(0); t.after(() => router.stop());
+  const headers = { authorization: "Bearer synthetic-local-test", "content-type": "application/json", "x-ass-probe-token": router.clientToken };
+  const send = (client) => request(router.port, client === "diagnostics" ? "/diagnostics/v1/responses" : `/clients/${client}/v1/responses`, {
+    method: "POST", headers, body: JSON.stringify({ model: client, stream: false }),
+  }).catch((e) => e);
+  const codex = send("codex"), claude = send("claude"), diagnostics = send("diagnostics");
+  let upload;
+  const uploadDone = new Promise((resolve) => {
+    upload = http.request({ hostname: "127.0.0.1", port: router.port, path: "/clients/codex/v1/responses", method: "POST", headers });
+    upload.on("error", resolve); upload.write('{"model":"unfinished');
+  });
+  t.after(() => upload.destroy());
+  for (let i = 0; i < 200 && (pending.size !== 3 || router.clientActive("codex") !== 2); i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(pending.size, 3); assert.equal(router.clientActive("codex"), 2);
+  await router.cancelClient("codex");
+  assert.ok(await codex instanceof Error); assert.ok(await uploadDone instanceof Error);
+  assert.equal(router.clientActive("codex"), 0);
+  assert.equal(router.clientActive("claude"), 1); assert.equal(router.clientActive("diagnostics"), 1);
+  assert.equal(pending.get("claude").signal.aborted, false); assert.equal(pending.get("diagnostics").signal.aborted, false);
+  for (const id of ["claude", "diagnostics"]) pending.get(id).resolve(Response.json({ ok: true }));
+  assert.deepEqual(await (await claude).json(), { ok: true }); assert.deepEqual(await (await diagnostics).json(), { ok: true });
+  await assert.rejects(router.cancelClient(), /无效/);
 });
 
 test("ConfigManager detach rejects changed managed blocks but preserves later user edits", (t) => {

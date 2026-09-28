@@ -132,7 +132,7 @@ class Connections {
     if (!IDS.includes(scope)) throw Error("未知客户端接入");
     return [scope];
   }
-  fingerprint(ids, enabled = false, quit = false) {
+  fingerprint(ids, enabled = false, quit = false, includeSessions = true) {
     return hash(
       JSON.stringify([
         this.enabled,
@@ -143,11 +143,11 @@ class Connections {
         ids.includes("codex") && fs.existsSync(this.config.file)
           ? hash(fs.readFileSync(this.config.file))
           : null,
-        this.processes
+        includeSessions ? this.processes
           .snapshot()
           .sessions.filter((s) => ids.includes(s.harness))
           .map((s) => s.id)
-          .sort(),
+          .sort() : null,
       ]),
     );
   }
@@ -243,6 +243,8 @@ class Connections {
       throw Error("此操作没有已确认的重启目标");
     this.tickets.delete(ticket);
     this.busy = true;
+    const restartFirst = restart && plan.scope === "codex";
+    let desktopStopped = false;
     try {
       await this.processes.refresh();
       if (
@@ -251,9 +253,32 @@ class Connections {
         throw Error("配置或窗口清单已变化，请重新预览后确认");
       this.preflight(plan.ids, plan.enabled, plan.quit);
       if (restart) await this.restarter.validate(plan.restart);
+      if (restartFirst) {
+        this.blocked.add("codex");
+        const stopService = !plan.enabled && !this.routerEnabled(plan.ids);
+        if (stopService) {
+          this.blocked.add("diagnostics");
+          if (this.router.clientActive() - this.router.clientActive("codex") + this.extraActive())
+            throw Error("其他客户端或连接诊断仍有请求正在进行，未关闭 Codex；请稍后重试");
+        }
+        const observed = this.processes.snapshot();
+        if (observed.error || observed.sessions.some((s) => s.harness === "codex" && !["running", "gone"].includes(s.status)))
+          throw Error("部分 Codex 窗口身份无法确认，请手动关闭并刷新后再操作");
+        if (!plan.enabled && mode === "safe" && observed.sessions.some((s) => s.harness === "codex" && s.status === "running"))
+          throw Error("仍有 ASS 启动的客户端窗口；请先自行退出，或明确选择结束这些窗口");
+        const before = this.fingerprint(plan.ids, plan.enabled, plan.quit, false);
+        await this.restarter.stop(plan.restart);
+        desktopStopped = true;
+        await this.router.cancelClient("codex");
+        await this.processes.refresh();
+        if (this.fingerprint(plan.ids, plan.enabled, plan.quit, false) !== before)
+          throw Error("关闭期间配置已变化，请重新预览后确认");
+        this.preflight(plan.ids, plan.enabled, plan.quit);
+      }
       if (plan.enabled) {
         // Model/routing changes affect later requests of the same task too.
-        // Never apply while uploads or in-flight responses still use this scope.
+        // A confirmed force restart has already closed the desktop and drained
+        // only its requests. Otherwise uploads/in-flight responses block writes.
         for (const id of plan.ids) this.blocked.add(id);
         if (plan.ids.some((id) => this.router.clientActive(id)))
           throw Error("仍有请求正在进行，未同步；请等待任务结束后重新确认");
@@ -321,7 +346,7 @@ class Connections {
       this.revision++;
       let restarted;
       if (restart) {
-        try { restarted = await this.restarter.restart(plan.restart, () => {
+        try { restarted = await this.restarter[restartFirst ? "launch" : "restart"](plan.restart, () => {
           // The old desktop is gone and configuration is committed. Let the
           // new instance use the route immediately instead of receiving 503.
           for (const id of plan.ids) this.blocked.delete(id);
@@ -346,6 +371,9 @@ class Connections {
               : "已开启接入，从 ASS 新启动客户端时生效。"
           : "已断开所选客户端、恢复其注入文件；账户与会话数据保留。",
       };
+    } catch (error) {
+      if (desktopStopped) throw Error(`Codex 已关闭，但接入切换未完成：${error.message}。请检查接入状态后从开始菜单打开 Codex。`, { cause: error });
+      throw error;
     } finally {
       this.busy = false;
       this.blocked.clear();
@@ -363,40 +391,64 @@ class Connections {
     this.injections.preflight([id]);
     const plan = adapter.repairPlan(id);
     if (!plan.files.length && !plan.routeOnly) throw Error("受管字段已经一致，无需修复");
+    const restart = id === "codex" && this.restarter ? await this.restarter.preview([id]) : null;
     const ticket = crypto.randomBytes(24).toString("hex");
     for (const [key, p] of this.tickets)
       if (p.expires < Date.now()) this.tickets.delete(key);
     if (this.tickets.size > 20) this.tickets.clear();
-    this.tickets.set(ticket, { kind: "repair", scope, ids: [id],
+    this.tickets.set(ticket, { kind: "repair", scope, ids: [id], restart,
       fingerprint: this.fingerprint([id], false), expires: Date.now() + 180000 });
     // Do not send credential values or encrypted-journal contents to the UI.
-    return { ticket, names: [NAMES[id]], files: plan.files.length };
+    return { ticket, names: [NAMES[id]], files: plan.files.length,
+      restart: this.restarter?.public(restart), ...(plan.migration ? { migration: true } : {}) };
   }
-  async repairApply({ ticket, acknowledged } = {}) {
+  async repairApply({ ticket, acknowledged, restart = false } = {}) {
     const plan = this.tickets.get(ticket);
     if (!plan || plan.kind !== "repair" || plan.expires < Date.now())
       throw Error("修复确认已过期，请重新打开接入菜单");
     if (this.busy) throw Error("已有接入操作正在执行");
     if (acknowledged !== true) throw Error("请先确认修复");
+    if (typeof restart !== "boolean" || (restart && (plan.scope !== "codex" || !plan.restart?.available || !this.restarter)))
+      throw Error("此操作没有已确认的重启目标");
     this.tickets.delete(ticket);
     this.busy = true;
     const id = plan.scope;
+    let desktopStopped = false;
     try {
       if (this.error) throw Error(this.error);
       if (!this.enabled[id] || this.fingerprint([id], false) !== plan.fingerprint)
         throw Error("配置已变化，请重新打开弹窗后修复");
       this.blocked.add(id);
+      if (restart) {
+        const before = this.fingerprint([id], false, false, false);
+        await this.restarter.stop(plan.restart);
+        desktopStopped = true;
+        await this.router.cancelClient(id);
+        if (this.fingerprint([id], false, false, false) !== before)
+          throw Error("关闭期间配置已变化，请重新打开弹窗后修复");
+      }
       if (this.router.clientActive(id)) throw Error("仍有请求正在进行，请等待任务结束后修复");
       this.injections.preflight([id]);
       const adapter = this.proxyConfig?.supports(id) ? this.proxyConfig : this.nativeConfig;
       const result = adapter.repair(id);
       // Ensure a stopped proxy is available again, without stopping or replacing
-      // an existing listener and without terminating any client processes.
+      // an existing listener. Only explicit Codex restart can close a desktop.
       if (this.proxyConfig?.supports(id)) await this.router.start(this.port);
       this.revision++;
+      if (restart) {
+        let restarted;
+        try { restarted = await this.restarter.launch(plan.restart, () => this.blocked.delete(id)); }
+        catch { restarted = { ok: false }; }
+        return { ok: true, files: result.files, restart: restarted,
+          message: restarted.ok ? "已修复 Codex 接入并保存加密备份，Codex 已重启。"
+            : "已修复 Codex 接入并保存加密备份，但重启未完成；请从开始菜单手动打开。" };
+      }
       return { ok: true, files: result.files,
-        message: `已修复 ${NAMES[id]} 接入并保存加密备份。` +
+        message: `已${result.migrated ? "迁移" : "修复"} ${NAMES[id]} 接入并保存加密备份。` +
           (id === "dsh" ? "请刷新 DSH 页面加载模型。" : id === "claude" ? "后续从 ASS 打开的窗口使用修复后的接入。" : "客户端重新加载配置后生效。") };
+    } catch (error) {
+      if (desktopStopped) throw Error(`Codex 已关闭，但修复未完成：${error.message}。请检查接入状态后从开始菜单打开 Codex。`, { cause: error });
+      throw error;
     } finally {
       this.busy = false;
       this.blocked.clear();

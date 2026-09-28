@@ -139,6 +139,7 @@ function zcodeTarget(client, a, m, env) {
   }
   return { baseUrl: p.api?.baseUrl, apiKey: key, protocol, extraHeaders };
 }
+function dshSettings(dir) { return require("./dsh-config.cjs").readSettings(dir, read); }
 function classicTarget(client, a, m, home, env) {
   const id = a.provider || a.oauthProvider || a.providers?.[0], dir = a.nativeDir || path.dirname(a.sourcePath);
   const data = read(a.sourcePath, client.id === "dsh" ? "yaml" : "json");
@@ -151,7 +152,7 @@ function classicTarget(client, a, m, home, env) {
     const openai = subscription.subscriptionKind === "openai";
     const baseUrl = openai ? "https://chatgpt.com/backend-api/codex" : "https://api.anthropic.com";
     const config = client.id === "pi" ? read(path.join(dir, "models.json")).providers?.[id]
-      : client.id === "dsh" ? read(path.join(dir, "settings.yaml"), "yaml")["llm-pi-ai"]?.providers?.[id]
+      : client.id === "dsh" ? dshSettings(dir)["llm-pi-ai"]?.providers?.[id]
       : client.id === "opencode" ? opencodeProvider(a, dir, id, home, env, read).options
       : read(path.join(dir, "settings.json")).env;
     const override = config?.baseURL || config?.baseUrl || config?.ANTHROPIC_BASE_URL;
@@ -176,7 +177,7 @@ function classicTarget(client, a, m, home, env) {
   }
   if (client.id === "pi") { p = read(path.join(dir, "models.json")).providers?.[id] || {}; mode = "pi"; }
   else if (client.id === "dsh") {
-    const settings = read(path.join(dir, "settings.yaml"), "yaml");
+    const settings = dshSettings(dir);
     if (id === "DEEPSEEK_API_KEY") {
       p = settings["llm-deepseek"] || {};
       const keyName = p.apiKeyEnv || "DEEPSEEK_API_KEY";

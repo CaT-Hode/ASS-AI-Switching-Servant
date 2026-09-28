@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Power, Loader2, Wrench } from "lucide-react";
+import { Power, Loader2, Wrench, SlidersHorizontal, RotateCw } from "lucide-react";
 import { Modal } from "./editors.jsx";
 import "./connections.css";
 const api = window.ass;
@@ -98,6 +98,7 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
   }, [request.scope, request.enabled, request.quit, request.issue]);
   const target = plan?.names.join("、") || repair?.names.join("、") || request.name || "客户端";
   const hasIssue = !request.quit && request.scope !== "all" && (!!request.issue || !!error);
+  const restartPlan = hasIssue ? repair?.restart : plan?.restart;
   const title = hasIssue ? `${target} 接入异常` : request.quit
     ? "退出 ASS？"
     : request.scope === "all"
@@ -109,7 +110,7 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
   if (plan) {
     if (plan.enabled) {
       warning = plan.codexConfig
-        ? restart ? "将更新 Codex 的接入配置。请先结束任务。" : "将更新 Codex 的接入配置，请在任务结束后手动重启客户端。"
+        ? "将更新 Codex 接入配置，保留原有登录与会话。"
         : plan.native
           ? request.scope === "dsh"
             ? "将同步模型及凭据。DSH 后端会热加载，已打开页面仍需刷新。"
@@ -150,8 +151,8 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
     if (!repair || busy) return;
     setBusy(true);
     try {
-      const result = await api.call("connection-repair", { ticket: repair.ticket, acknowledged: true });
-      onComplete(result.message);
+      const result = await api.call("connection-repair", { ticket: repair.ticket, acknowledged: true, restart });
+      onComplete(result.message, result.restart?.ok === false);
       onClose();
     } catch (e) {
       setError(cleanError(e));
@@ -175,15 +176,23 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
         {error || request.issue || warning}
       </p>
       {hasIssue && <p className="connection-repair-note">
-        {repair ? `将备份并恢复上次接入配置${repair.files ? `（${repair.files} 个文件）` : ""}。不会关闭客户端；请先结束任务。` : repairReason || "正在检查可修复内容…"}
+        {repair ? repair.migration ? "将备份并迁移到 DSH 当前 profile，不重启客户端。" : `将备份并恢复上次接入配置${repair.files ? `（${repair.files} 个文件）` : ""}。${restart ? "" : "不会关闭客户端；请先结束任务。"}` : repairReason || "正在检查可修复内容…"}
       </p>}
-      {plan?.restart?.applicable && !request.quit && <div className="connection-restart">
-        <label>
-          <input type="checkbox" checked={restart} disabled={busy || !plan.restart.available}
-            onChange={(e) => setRestart(e.target.checked)} />
-          <span>立即重启{plan.restart.names.length ? " " + plan.restart.names.join("、") : "客户端"}</span>
-        </label>
-        <small>{restart ? "会强制关闭所选客户端及其任务，再重新打开。" : plan.restart.available ? "默认不重启，可在任务结束后手动重启。" : plan.restart.reason}</small>
+      {restartPlan?.applicable && !request.quit && <div className="connection-restart" data-force={restart || undefined}>
+        <div className="connection-restart-choices" role="radiogroup" aria-label="配置生效方式">
+          <label>
+            <input type="radio" name="connection-restart" checked={!restart} disabled={busy}
+              onChange={() => setRestart(false)} />
+            <span><SlidersHorizontal size={16} />仅应用配置</span>
+          </label>
+          <label>
+            <input type="radio" name="connection-restart" checked={restart} disabled={busy || !restartPlan.available}
+              onChange={() => setRestart(true)} />
+            <span><RotateCw size={16} />强制重启</span>
+          </label>
+        </div>
+        <small>{restart ? `将强制关闭${restartPlan.names?.join("、") || target}及正在运行的任务，再重新打开。`
+          : restartPlan.available ? "不关闭客户端；任务结束后手动重启生效。" : restartPlan.reason}</small>
       </div>}
       <footer>
         <button
@@ -196,7 +205,7 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
         </button>
         {(plan || !hasIssue) && <button
           className="button primary"
-          disabled={!plan || busy}
+          disabled={!plan || busy || (restart && !plan.restart?.available)}
           onClick={commit}
         >
           {busy && <Loader2 size={14} className="spin" />}

@@ -51,3 +51,27 @@ test("restart reports unconfirmed relaunch instead of claiming success", async (
   const f = setup(), plan = await f.manager.preview(["codex"]);
   f.adapter.launch = async () => ({ launched: true }); await assert.rejects(f.manager.restart(plan), /未确认新进程/);
 });
+
+test("split restart leaves a configuration window and refuses launch without a completed stop", async () => {
+  const f = setup(), plan = await f.manager.preview(["codex"]);
+  await assert.rejects(f.manager.launch(plan), /尚未确认/);
+  await f.manager.stop(plan);
+  assert.equal(f.state.launches.length, 0);
+  assert.deepEqual(f.state.rows.map((r) => r.pid), [900]);
+  let configured = false;
+  const result = await f.manager.launch(plan, () => { configured = true; });
+  assert.equal(configured, true); assert.equal(result.ok, true);
+  await assert.rejects(f.manager.launch(plan), /尚未确认/);
+});
+
+test("split restart refuses a desktop that re-enters or updates during the configuration window", async () => {
+  for (const change of [
+    (s) => s.rows.push({ pid: 400, parentPid: 10, exe, created: "2026-09-23T04:00:00.000Z" }),
+    (s) => { s.file = [500, 600]; },
+  ]) {
+    const f = setup(), plan = await f.manager.preview(["codex"]);
+    await f.manager.stop(plan); change(f.state);
+    await assert.rejects(f.manager.launch(plan), /仍检测到|安装已更新/);
+    assert.equal(f.state.launches.length, 0);
+  }
+});

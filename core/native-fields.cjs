@@ -6,6 +6,7 @@ const JSONC = require("jsonc-parser");
 const YAML = require("yaml");
 const managedToml = require("./toml-managed.cjs");
 const zcode = require("./zcode-config.cjs");
+const dsh = require("./dsh-config.cjs");
 const hash = (s) =>
   createHash("sha256")
     .update(s || "")
@@ -63,6 +64,7 @@ function read(file) {
   }
 }
 function document(text, format) {
+  if (format === "dsh-patch") return dsh.document(text);
   if (format === "toml") return { data: managedToml.parse(text), source: text || "" };
   const source = text === null ? "{}\n" : text.replace(/^\uFEFF/, "");
   let data, yaml;
@@ -121,6 +123,7 @@ function fieldAt(data, keys, selector) {
     : { current: absent(), keys: [...keys, field.value.length] };
 }
 function edit(text, format, keys, value, selector) {
+  if (format === "dsh-patch") return dsh.edit(text, keys, value);
   if (format === "toml") return managedToml.edit(text, keys, value);
   const doc = document(text, format);
   const field = fieldAt(doc.data, keys, selector); // refuse replacing a scalar parent
@@ -145,7 +148,7 @@ function validField(e) {
     !e ||
     !["dsh", "opencode", "pi", "kimi", "zcode"].includes(e.harness) ||
     !path.isAbsolute(e.file || "") ||
-    !(e.harness === "zcode" ? zcode.validField(e) : !e.selector && (e.harness === "kimi"
+    !(e.format === "dsh-patch" ? dsh.validField(e) : e.harness === "zcode" ? zcode.validField(e) : !e.selector && (e.harness === "kimi"
       ? e.format === "toml" && managedToml.validPath(e.path) && !e.replace : ["json", "jsonc", "yaml"].includes(e.format))) ||
     !Array.isArray(e.path) ||
     !e.path.length ||
@@ -331,18 +334,60 @@ class NativeFields {
       .map((e) => ({ ...e, value: e.after.value }));
     return this.plan(harness, desired, { repair: true });
   }
-  repair(harness) {
-    const plan = this.repairPlan(harness);
-    if (!plan.files.length) throw Error("受管字段已经一致，无需修复");
+  relocationPlan(harness, relocations) {
+    this.recoveryCheck();
+    if (this.state.pending) throw Error("原生接入事务待恢复，请先重新同步");
+    const files = new Map(), entries = [...this.entries];
+    const fileAt = (file, format) => {
+      if (!files.has(file)) { const text = read(file); files.set(file, { file, format, before: text, after: text }); }
+      return files.get(file);
+    };
+    for (const { from, to } of relocations) {
+      const index = entries.findIndex((e) => identity(e) === identity(from));
+      if (index < 0 || entries[index].harness !== harness || !equal(entries[index], from)) throw Error("迁移的原接入记录已变化");
+      validField(to);
+      if (to.harness !== harness || identity(from) === identity(to) || entries.some((e) => identity(e) === identity(to)))
+        throw Error("迁移目标重复或不属于当前客户端");
+      const source = fileAt(from.file, from.format), target = fileAt(to.file, to.format);
+      const current = fieldAt(document(source.after, from.format).data, from.path, from.selector).current;
+      if (current.exists && !equal(current, from.after)) throw Error("旧版 DSH 的受管字段已改变，请先确认旧配置");
+      // DSH may already have renamed the legacy file at boot. The encrypted
+      // ownership record remains authoritative; never restore or rewrite its archive.
+      if (!current.exists && source.before !== null) {
+        const archived = read(from.file + ".imported");
+        if (archived === null || !equal(fieldAt(document(archived, from.format).data, from.path).current, from.after))
+          throw Error("旧版 DSH 字段缺失且没有一致的导入记录，未迁移");
+      }
+      const next = fieldAt(document(target.after, to.format).data, to.path, to.selector).current;
+      if (next.exists && !equal(next, from.after)) throw Error("新版 DSH 中已有不同的同名供应商，未覆盖");
+      if (!equal(next, from.after)) target.after = edit(target.after, to.format, to.path, from.after, to.selector);
+      if (current.exists) source.after = edit(source.after, from.format, from.path, from.before, from.selector);
+      entries[index] = { ...from, file: to.file, format: to.format, path: to.path };
+    }
+    return { entries, files: [...files.values()].filter((f) => f.before !== f.after) };
+  }
+  relocate(harness, relocations) {
+    const plan = this.relocationPlan(harness, relocations);
+    this.backup(harness, plan, "migration");
+    this.commit(plan);
+    return { files: plan.files.length, migrated: true };
+  }
+  backup(harness, plan, kind = "repair") {
     if (!this.crypto.isEncryptionAvailable()) throw Error("系统凭据加密不可用，未修复配置");
-    const backup = path.join(path.dirname(this.file), "backups", `native-repair-${harness}-${Date.now()}-${randomUUID()}.enc.json`);
-    const payload = JSON.stringify({ kind: "native-repair", harness, createdAt: new Date().toISOString(),
+    const backup = path.join(path.dirname(this.file), "backups", `native-${kind}-${harness}-${Date.now()}-${randomUUID()}.enc.json`);
+    const payload = JSON.stringify({ kind: "native-" + kind, harness, createdAt: new Date().toISOString(),
       entries: this.entries.filter((e) => e.harness === harness),
       files: plan.files.map((f) => ({ file: f.file, before: f.before })) });
     const encoded = JSON.stringify({ version: 1, encrypted: this.crypto.encryptString(payload).toString("base64") });
     if (Buffer.byteLength(encoded) > 32 * 1024 * 1024) throw Error("修复备份超过 32 MiB，未改动配置");
-    // Save the externally edited version before touching any client file.
     atomic(backup, encoded);
+    return backup;
+  }
+  repair(harness) {
+    const plan = this.repairPlan(harness);
+    if (!plan.files.length) throw Error("受管字段已经一致，无需修复");
+    // Save the externally edited version before touching any client file.
+    const backup = this.backup(harness, plan);
     this.commit(plan);
     return { backup, files: plan.files.length };
   }

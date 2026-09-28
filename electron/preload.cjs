@@ -60,6 +60,7 @@ const allowed = [
   "update-open",
 ];
 contextBridge.exposeInMainWorld("ass", {
+  windowChrome: process.platform === "win32",
   onManage: (callback) => {
     const handler = (_, value) => callback(value);
     ipcRenderer.on("ass:manage", handler);

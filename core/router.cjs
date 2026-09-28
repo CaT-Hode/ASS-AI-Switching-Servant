@@ -1,5 +1,4 @@
 const http = require("node:http");
-const { once } = require("node:events");
 const { endpoint, normalizeEffort } = require("./models.cjs");
 const { convertRequest, translateStream } = require("./adapters.cjs");
 const { SseMonitor } = require("./sse-monitor.cjs");
@@ -21,7 +20,14 @@ const forwarded = [
 const pickHeaders = (h) =>
   Object.fromEntries(forwarded.filter((k) => h[k]).map((k) => [k, h[k]]));
 async function write(res, data) {
-  if (!res.write(data)) await once(res, "drain");
+  if (res.destroyed) throw Error("客户端已断开");
+  if (!res.write(data)) await new Promise((resolve, reject) => {
+    const cleanup = () => { res.off("drain", done); res.off("close", closed); res.off("error", failed); };
+    const done = () => { cleanup(); resolve(); };
+    const failed = (error) => { cleanup(); reject(error); };
+    const closed = () => failed(Error("客户端已断开"));
+    res.once("drain", done); res.once("close", closed); res.once("error", failed);
+  });
 }
 function routeFor(body, state, suffix = "") {
   if (typeof body.model !== "string" || !body.model)
@@ -131,6 +137,20 @@ class Router {
     return [...this.requests.values()].filter((r) => !id || r.client === id)
       .length;
   }
+  async cancelClient(id) {
+    if (!["codex", "claude", "opencode", "pi", "dsh"].includes(id)) throw Error("无效的请求终止范围");
+    // The caller blocks new admissions first. Never abort another client's or
+    // a diagnostic request when restarting one desktop.
+    for (const [req, pending] of this.requests) if (pending.client === id) {
+      pending.controller.abort();
+      pending.res.destroy();
+      req.destroy();
+    }
+    const deadline = Date.now() + 2000;
+    while (this.clientActive(id) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    if (this.clientActive(id)) throw Error("客户端请求尚未结束，未继续切换配置");
+  }
   async handle(req, res) {
     const began = Date.now();
     let route;
@@ -171,7 +191,7 @@ class Router {
           );
         }
         // Count at admission, including uploads: a stop must not race a request body.
-        this.requests.set(req, { client, res });
+        this.requests.set(req, { client, res, controller });
         this.onActivity();
       }
       if (req.url.startsWith("/harness/") || req.url.startsWith("/models/")) {

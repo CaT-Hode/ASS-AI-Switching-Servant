@@ -1057,10 +1057,15 @@ class HarnessManager {
         // per-launch snapshot, rather than editing the shared default live.
         const runtime = this.root(harness, crypto.randomBytes(12).toString("hex"));
         const settingsFile = path.join(runtime, "launch-settings.yaml"), patchFile = path.join(runtime, "launch.patch.yml");
-        const settings = nativeDocument(readNative(locations(harness, this).config), "yaml").data;
-        settings["agent-default-model"] = { provider: id, model: m.model, reasoningEffort: m.defaultEffort };
-        launchFiles.push([settingsFile, JSON.stringify(settings, null, 2)],
-          [patchFile, JSON.stringify([{ id: "settings", config: { path: settingsFile, watch: false } }])]);
+        const target = locations(harness, this), selected = { provider: id, model: m.model, reasoningEffort: m.defaultEffort };
+        if (target.format === "dsh-patch") {
+          launchFiles.push([patchFile, JSON.stringify([{ id: "agent-default-model", config: selected }])]);
+        } else {
+          const settings = nativeDocument(readNative(target.config), "yaml").data;
+          settings["agent-default-model"] = selected;
+          launchFiles.push([settingsFile, JSON.stringify(settings, null, 2)],
+            [patchFile, JSON.stringify([{ id: "settings", config: { path: settingsFile, watch: false } }])]);
+        }
         dshArgs.push("--patch", patchFile);
       }
       return { harness, dir, env, files: [], launchFiles, routed: false, accountKind: "model",

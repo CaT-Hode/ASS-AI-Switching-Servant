@@ -7,6 +7,7 @@ const { endpoint } = require("./models.cjs");
 const { injectionCatalog, modelRef } = require("./client-policy.cjs");
 const { target: kimiTarget } = require("./kimi-config.cjs");
 const zcode = require("./zcode-config.cjs");
+const dsh = require("./dsh-config.cjs");
 const DIRECT = ["opencode", "pi", "dsh", "kimi", "zcode"];
 const APIS = {
   "openai-responses": "openai-responses",
@@ -69,20 +70,15 @@ function locations(harness, manager) {
       auth: path.join(dir, "auth.json"),
       settings: path.join(dir, "settings.json"),
     };
-  if (harness === "dsh")
-    return {
-      dir,
-      config: path.join(dir, "settings.yaml"),
-      auth: path.join(dir, ".credentials.yaml"),
-    };
+  if (harness === "dsh") return dsh.target(dir, manager);
   throw Error("此客户端不使用原生 API 配置接入");
 }
-function profileLocations(harness, dir) {
+function profileLocations(harness, dir, base) {
   if (harness === "opencode") return { dir: path.join(dir, "data/opencode"),
     config: path.join(dir, "config/opencode/opencode.jsonc"), auth: path.join(dir, "data/opencode/auth.json") };
   if (harness === "pi") return { dir, config: path.join(dir, "models.json"),
     auth: path.join(dir, "auth.json"), settings: path.join(dir, "settings.json") };
-  if (harness === "dsh") return { dir, config: path.join(dir, "settings.yaml"), auth: path.join(dir, ".credentials.yaml") };
+  if (harness === "dsh") return dsh.profileTarget(dir, base || { format: "yaml" });
   throw Error("不支持的原生配置目录");
 }
 function baseUrl(harness, p, wire) {
@@ -223,7 +219,7 @@ function compose(harness, manager, selection, targetOverride) {
           });
         }
       } else {
-        field(target.config, "yaml", ["llm-pi-ai", "providers", id], {
+        field(target.config, target.format || "yaml", ["llm-pi-ai", "providers", id], {
           displayName: p.name,
           baseURL: base,
           api: APIS[wire],
@@ -297,7 +293,7 @@ function compose(harness, manager, selection, targetOverride) {
         model: m.model,
         reasoningEffort: m.defaultEffort,
       }))
-        field(target.config, "yaml", ["agent-default-model", key], value, {
+        field(target.config, target.format || "yaml", ["agent-default-model", key], value, {
           replace: true,
         });
     }
@@ -336,7 +332,7 @@ class NativeConfig {
       throw Error(`${id === "kimi" ? "Kimi" : "ZCode"} 目标目录已变化，请先断开接入，再切换目录或版本`);
     for (const dir of this.manager.state.nativeProfileTargets?.[id] || []) {
       this.validateProfile(id, dir);
-      const profile = compose(id, this.manager, undefined, profileLocations(id, dir));
+      const profile = compose(id, this.manager, undefined, profileLocations(id, dir, plan.target));
       plan.fields.push(...profile.fields);
     }
     // Keep a structural marker owned across subsequent syncs.
@@ -371,7 +367,7 @@ class NativeConfig {
     const targets = this.manager.state.nativeProfileTargets ||= {};
     targets[id] ||= [];
     if (targets[id].includes(dir)) return;
-    const source = locations(id, this.manager), target = profileLocations(id, dir);
+    const source = locations(id, this.manager), target = profileLocations(id, dir, source);
     const fields = existing.flatMap((e) => {
       const key = ["config", "auth", "settings"].find((k) => source[k] === e.file);
       if (!key) return [];
@@ -388,6 +384,7 @@ class NativeConfig {
   }
   preflight(ids, enabled) {
     for (const id of ids.filter((id) => this.isDirect(id))) {
+      if (id === "dsh" && this.dshRelocations().length) throw Error("DSH 已升级配置格式，请使用一键修复迁移到当前 profile");
       if (this.fields.state.pending) {
         this.fields.recoveryCheck();
         continue;
@@ -406,6 +403,7 @@ class NativeConfig {
   sync(id, selection) {
     if (!this.isDirect(id)) return;
     try {
+      if (id === "dsh" && this.dshRelocations().length) throw Error("DSH 已升级配置格式，请使用一键修复迁移到当前 profile");
       this.fields.recover();
       const plan = this.desired(id, selection);
       if (!plan.modelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id))
@@ -437,15 +435,33 @@ class NativeConfig {
   }
   repairPlan(id) {
     if (!this.isDirect(id)) throw Error("此客户端暂不支持受管字段修复");
+    const changes = id === "dsh" ? this.dshRelocations() : [];
+    if (changes.length) {
+      const plan = this.fields.relocationPlan(id, changes);
+      return { files: plan.files.map((f) => f.file), migration: true, routeOnly: !plan.files.length };
+    }
     const plan = this.fields.repairPlan(id);
     return { files: plan.files.map((f) => f.file) };
   }
   repair(id) {
     if (!this.isDirect(id)) throw Error("此客户端暂不支持受管字段修复");
-    const result = this.fields.repair(id);
+    const changes = id === "dsh" ? this.dshRelocations() : [];
+    const result = changes.length ? this.fields.relocate(id, changes) : this.fields.repair(id);
     delete this.errors[id];
     this.activated.add(id);
     return result;
+  }
+  dshRelocations() {
+    const base = locations("dsh", this.manager);
+    if (base.format !== "dsh-patch") return [];
+    return this.fields.entries.filter((e) => e.harness === "dsh" && e.format === "yaml" &&
+      path.basename(e.file) === "settings.yaml" && ["llm-pi-ai", "agent-default-model"].includes(e.path[0]))
+      .map((from) => {
+        const dir = path.dirname(from.file);
+        if (path.resolve(dir).toLowerCase() !== path.resolve(base.dir).toLowerCase()) this.validateProfile("dsh", dir);
+        const target = path.resolve(dir).toLowerCase() === path.resolve(base.dir).toLowerCase() ? base : dsh.profileTarget(dir, base);
+        return { from, to: { ...from, file: target.config, format: "dsh-patch" } };
+      });
   }
   fingerprint(ids, enabled) {
     return hash(
@@ -454,6 +470,7 @@ class NativeConfig {
           .filter((id) => this.isDirect(id))
           .map((id) => [
             this.fields.fingerprint(id),
+            id === "dsh" ? this.dshRelocations().map(({ from, to }) => [to.file, read(to.file), read(from.file + ".imported")]) : null,
             enabled
               ? this.desired(id).fields.map((e) => [e, read(e.file)])
               : null,
@@ -469,6 +486,8 @@ class NativeConfig {
       pending = !!this.fields.state.pending;
     if (!pending && !error) {
       try {
+        if (enabled && id === "dsh" && this.dshRelocations().length)
+          throw Error("DSH 当前版本读取 profile 补丁，旧接入尚未迁移；请点击一键修复");
         const plan = this.desired(id);
         modelCount = plan.modelCount;
         if (enabled) {
@@ -481,7 +500,7 @@ class NativeConfig {
     }
     return { mode: "native", files, error, pending, modelCount,
       applied: enabled && !pending && !error,
-      // DSH watches settings.yaml and updates the Host registry live, but its
+      // DSH watches its native config and updates the Host registry live, but its
       // browser model catalog is cached for the current Host generation. The
       // backend therefore needs no restart; an already-open page must reload.
       runtimeStatus: enabled

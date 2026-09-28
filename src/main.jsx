@@ -400,6 +400,7 @@ function App() {
   return (
     <div
       className="app-shell"
+      data-window-chrome={api.windowChrome || undefined}
       data-input="keyboard"
       onClickCapture={iconClick}
       onPointerDownCapture={(e) => {
@@ -413,6 +414,7 @@ function App() {
         e.currentTarget.dataset.input = "keyboard";
       }}
     >
+      {api.windowChrome && <div className="window-chrome" aria-hidden="true" />}
       <aside className="sidebar">
         <div className="brand">
           <img src="./ass-logo.png" alt="ASS 菊花标志" />

@@ -81,7 +81,9 @@ foreach ($app in @($request.apps)) {
 `;
 class DesktopRestartAdapter {
   async inventory(ids, opencode) { return (await runPowerShell(PS_INVENTORY, { ids, opencode }))[0]; }
-  async stop(targets) { return (await runPowerShell(PS_STOP, { targets, ownerPid: process.pid }))[0]; }
+  // Desktop trees can contain many helpers; allow bounded identity-checked
+  // shutdown without inheriting the short read-only inventory timeout.
+  async stop(targets) { return (await runPowerShell(PS_STOP, { targets, ownerPid: process.pid }, 45000))[0]; }
   async launch(apps) { return (await runPowerShell(PS_LAUNCH, { apps }))[0]; }
 }
 class ClientRestart {
@@ -89,6 +91,7 @@ class ClientRestart {
     fileInfo = (file) => { const s = fs.statSync(file); if (!s.isFile()) throw Error(); return [s.size, s.mtimeMs]; },
     wait = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
     Object.assign(this, { adapter, desktop, ownerPid, fileInfo, wait });
+    this.stoppedPlans = new WeakSet();
   }
   async capture(ids) {
     const eligible = ids.filter((id) => ["codex", "opencode"].includes(id));
@@ -131,13 +134,24 @@ class ClientRestart {
   async validate(plan) {
     if (!plan?.available || fingerprint(await this.capture(plan.ids)) !== plan.fingerprint) throw Error("客户端进程或安装入口已变化，请重新确认重启");
   }
-  async restart(plan, beforeLaunch = () => {}) {
-    await this.validate(plan);
-    const stopped = await this.adapter.stop(plan.value.targets);
-    if (stopped?.stopped !== true) throw Error("客户端未完整关闭，请手动重启");
+  async assertStopped(plan) {
     const remaining = await this.capture(plan.ids);
     if (remaining.targets.length) throw Error("仍检测到客户端进程，请手动确认后重启");
     for (const app of plan.value.apps) if (fingerprint(this.fileInfo(app.exe)) !== fingerprint(app.file)) throw Error("客户端安装已更新，请从开始菜单重启");
+  }
+  async stop(plan) {
+    await this.validate(plan);
+    let stopped;
+    try { stopped = await this.adapter.stop(plan.value.targets); }
+    catch (error) { throw Error("强制关闭未完成，部分窗口可能已关闭；未继续应用配置，请检查客户端后重试。", { cause: error }); }
+    if (stopped?.stopped !== true) throw Error("客户端未完整关闭，请手动重启");
+    await this.assertStopped(plan);
+    this.stoppedPlans.add(plan);
+  }
+  async launch(plan, beforeLaunch = () => {}) {
+    if (!this.stoppedPlans.has(plan)) throw Error("尚未确认客户端已关闭，不能重新启动");
+    this.stoppedPlans.delete(plan);
+    await this.assertStopped(plan);
     beforeLaunch();
     const launched = await this.adapter.launch(plan.value.apps);
     if (launched?.launched !== true) throw Error("客户端启动失败，请手动打开");
@@ -147,6 +161,10 @@ class ClientRestart {
       if (plan.value.apps.every((a) => fresh.apps.some((b) => a.id === b.id))) return { ok: true, names: plan.names };
     }
     throw Error("已发出启动请求，但未确认新进程，请检查客户端");
+  }
+  async restart(plan, beforeLaunch = () => {}) {
+    await this.stop(plan);
+    return this.launch(plan, beforeLaunch);
   }
 }
 module.exports = { ClientRestart, DesktopRestartAdapter };
