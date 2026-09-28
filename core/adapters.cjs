@@ -175,13 +175,17 @@ function convertRequest(body, model, protocol) {
   }
   return request;
 }
-async function* sseMessages(stream) {
+async function* sseMessages(stream, signal) {
   const reader = stream.getReader(),
     decoder = new TextDecoder();
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener("abort", cancel, { once: true });
   let buffer = "";
   try {
     while (true) {
+      signal?.throwIfAborted();
       const { value, done } = await reader.read();
+      signal?.throwIfAborted();
       buffer += done
         ? decoder.decode()
         : decoder.decode(value, { stream: true });
@@ -203,6 +207,8 @@ async function* sseMessages(stream) {
       if (done) break;
     }
   } finally {
+    signal?.removeEventListener("abort", cancel);
+    cancel();
     reader.releaseLock();
   }
 }

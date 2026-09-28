@@ -177,7 +177,7 @@ fs.mkdirSync(output, { recursive: true });
     assert.ok(
       !fs
         .readFileSync(path.join(codex, "config.toml"), "utf8")
-        .includes("/clients/codex"),
+        .includes("/clients/ASS"),
     );
     await page
       .getByRole("button", { name: "客户端与账户", exact: true })

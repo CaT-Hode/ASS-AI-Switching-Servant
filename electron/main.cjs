@@ -19,6 +19,7 @@ const { Router } = require("../core/router.cjs");
 const { Store } = require("../core/store.cjs");
 const { ConfigManager, atomic } = require("../core/config.cjs");
 const { normalizeModel } = require("../core/models.cjs");
+const { exportConfig } = require("../core/config-export.cjs");
 const { BALANCE_PRESETS, queryBalance } = require("../core/balance.cjs");
 const { PROVIDER_PRESETS } = require("../core/presets.cjs");
 const { HarnessManager } = require("../core/harnesses.cjs");
@@ -456,6 +457,8 @@ function snapshot() {
     modelDirectoryJobs: modelDirectory.jobs(),
     modelDirectoryRevisions: modelDirectory.revisions,
     capabilities: { ...protocols?.public(), ...capabilities },
+    protocolResults: protocols?.public(),
+    protocolJobs: protocols?.progress(),
     protocolError: protocols?.error,
     capabilityJobs,
     balances,
@@ -984,14 +987,11 @@ else {
             : balance(sourceId, automatic === true);
         },
       );
-      register("connection-preview", async (scope, enabled, quit, accountless) => {
-        if (enabled && !quit && accountless !== false) await prepareProtocols(scope);
-        return connections.preview(scope, enabled, quit, accountless);
-      });
-      register("connection-repair-preview", async (scope) => {
-        await prepareProtocols(scope);
-        return connections.repairPreview(scope);
-      });
+      // Injection consumes durable observations only. It must never await a
+      // provider request; testing belongs to model creation/the lightning button.
+      register("connection-preview", (scope, enabled, quit, accountless) =>
+        connections.preview(scope, enabled, quit, accountless));
+      register("connection-repair-preview", (scope) => connections.repairPreview(scope));
       register("connection-repair", async (input) => {
         for (const id of connections.tickets.get(input?.ticket)?.ids || [])
           await nativeLogin.assertIdle(id);
@@ -1375,6 +1375,7 @@ else {
           ...(d.maxOutputTokens ? { maxOutputTokens: d.maxOutputTokens } : {}),
           ...(efforts.length ? { efforts } : {}),
         });
+        queueProtocolChecks(id, name);
       });
       register("balance", balance);
       register("autostart", (enabled) => {
@@ -1387,29 +1388,17 @@ else {
         store.save();
       });
       register("open-data", () => shell.openPath(dataDir));
-      register("export", async () => {
+      register("export", async (options) => {
+        const config = exportConfig(store.state.providers, options);
+        const includeSecrets = options?.includeSecrets === true;
         const result = await dialog.showSaveDialog(window, {
-          title: "导出配置（不含密钥）",
-          defaultPath: "ass-config.json",
+          title: includeSecrets ? "导出配置（包含明文密钥）" : "导出配置（不含密钥）",
+          defaultPath: includeSecrets ? "ass-config-with-keys.json" : "ass-config.json",
+          filters: [{ name: "JSON 配置", extensions: ["json"] }],
         });
-        if (result.canceled) return;
-        atomic(
-          result.filePath,
-          JSON.stringify(
-            {
-              schemaVersion: 1,
-              providers: store.state.providers.map(
-                ({ apiKey, extraHeaders, ...p }) => ({
-                  ...p,
-                  apiKey: "",
-                  extraHeaders: {},
-                }),
-              ),
-            },
-            null,
-            2,
-          ),
-        );
+        if (result.canceled || !result.filePath) return { saved: false };
+        atomic(result.filePath, JSON.stringify(config, null, 2));
+        return { saved: true, includeSecrets };
       });
       const image = nativeImage.createFromPath(iconPath);
       tray = new Tray(image.resize({ width: 24, height: 24 }));

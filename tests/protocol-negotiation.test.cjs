@@ -71,12 +71,15 @@ test("aborted probes and results from replaced credentials never get persisted",
   const old = structuredClone(f.p); f.p.apiKey = "changed";
   assert.equal(f.protocols.record(old, f.m, { time: new Date().toISOString(), protocols: { anthropic: { status: "passed" } } }), false);
 });
-test("auth and rate limits stop extra chargeable probes; expiry checks again", async t => {
+test("even rate-limit/unknown observations persist indefinitely; only manual force retries", async t => {
   const f = fixture(t, () => Response.json({}, { status: 429 }));
   await f.protocols.ensure(f.p, f.m); assert.equal(f.calls.length, 1);
   f.protocols.fetcher = async url => success(url.endsWith("messages") ? "anthropic" : "openai-responses");
-  f.protocols.now = () => Date.now() + 25 * 3600000;
-  await f.protocols.ensure(f.p, f.m); assert.equal(f.protocols.select(f.p, f.m, "codex"), "openai-responses");
+  f.protocols.now = () => Date.now() + 365 * 24 * 3600000;
+  await f.protocols.ensure(f.p, f.m); assert.equal(f.calls.length, 1);
+  const reloaded = new ProtocolNegotiation({ ...f.options, now: f.protocols.now });
+  await reloaded.ensure(f.p, f.m); assert.equal(f.calls.length, 1);
+  await f.protocols.ensure(f.p, f.m, { force: true }); assert.equal(f.protocols.select(f.p, f.m, "codex"), "openai-responses");
 });
 test("DeepSeek probe and native injection share its actual Messages endpoint", async t => {
   const f = fixture(t); f.p.baseUrl = "https://api.deepseek.com/v1";

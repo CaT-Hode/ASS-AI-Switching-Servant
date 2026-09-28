@@ -20,7 +20,7 @@ function withoutOwn(text) {
     "",
   );
 }
-function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/codex/v1", defaultModel = null, localToken = "") {
+function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/ASS/v1", defaultModel = null, localToken = "") {
   if (text.includes("aimami-relay codex-router top start"))
     throw new Error(
       "检测到其他路由工具仍接管 Codex。请先关闭旧路由，再点击接入。",
@@ -58,7 +58,7 @@ class ConfigManager {
     this.dataDir = dataDir;
     this.catalog = path.join(dataDir, "catalog.json");
     this.record = path.join(dataDir, "codex-attachment.json");
-    this.baseUrl = `http://127.0.0.1:${port}/clients/codex/v1`;
+    this.baseUrl = `http://127.0.0.1:${port}/clients/ASS/v1`;
   }
   status() {
     try {
@@ -68,7 +68,7 @@ class ConfigManager {
           c.model_provider === "ass_router" &&
           c.model_catalog_json === this.catalog &&
           c.model_providers?.ass_router?.supports_websockets === false &&
-          [this.baseUrl, "http://127.0.0.1:25819/v1"].includes(c.model_providers?.ass_router?.base_url),
+          [this.baseUrl, this.baseUrl.replace("/clients/ASS/", "/clients/codex/"), "http://127.0.0.1:25819/v1"].includes(c.model_providers?.ass_router?.base_url),
         managed: text.includes(START),
         provider: c.model_provider || "openai",
       };

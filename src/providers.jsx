@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Plus,
+  Download,
   Search,
   ChevronRight,
   Settings2,
@@ -19,6 +20,7 @@ import {
   modelKey,
   ModelCheckButton,
   ModelCapabilities,
+  ModelProtocolBadges,
   ProviderModelCatalog,
 } from "./model-inspection.jsx";
 import "./providers.css";
@@ -27,6 +29,7 @@ import { SupplierQuota } from "./supplier-quota.jsx";
 import { providerBrand } from "./provider-brand.mjs";
 import { orderProviders } from "./provider-order.mjs";
 import { useProviderDrag } from "./provider-drag.jsx";
+import { ExportConfigDialog } from "./config-export.jsx";
 const api = window.ass;
 const protocols = {
   "openai-responses": "Responses",
@@ -134,8 +137,6 @@ function SourceCard({
               draggable={false}
               onError={() => setFailedBrand(brand)}
             />
-          ) : p.id === "native-pi" ? (
-            "π"
           ) : (
             p.name.slice(0, 1).toUpperCase()
           )}
@@ -358,6 +359,7 @@ function InlineModel({
             启用
           </label>
           <span>{value.efforts.join(" · ")}</span>
+          <ModelProtocolBadges provider={p} model={model} state={state} />
           <span
             className={
               diagnostic ? (diagnostic.ok ? "success" : "danger") : "muted"
@@ -494,6 +496,7 @@ export function Providers({
     [modelSearch, setModelSearch] = useState(""),
     [editor, setEditor] = useState(null),
     [providerEditor, setProviderEditor] = useState(null),
+    [exportOpen, setExportOpen] = useState(false),
     [directory, setDirectory] = useState(null),
     [drafts, setDrafts] = useState({});
   const gallerySearch = useRef(null),
@@ -587,6 +590,9 @@ export function Providers({
             {all.reduce((n, p) => n + p.models.length, 0)} 个模型 · {all.length}{" "}
             个来源
           </span>
+          <button className="button export-config-button" onClick={() => setExportOpen(true)}>
+            <Download size={15} />导出配置
+          </button>
           <button
             className="button primary"
             onClick={() => setProviderEditor({})}
@@ -631,6 +637,7 @@ export function Providers({
           </div>
         )}
       </section>
+      {exportOpen && <ExportConfigDialog onClose={() => setExportOpen(false)} />}
       {p && (
         <Modal
           title={p.name + " · 模型"}

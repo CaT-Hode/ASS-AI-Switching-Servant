@@ -127,6 +127,7 @@ export function SupplierQuota({ p, state }) {
           <RefreshCw size={14} className={loading ? "spin" : undefined} />
         </button>
       </div>
+      <div className="supplier-quota-content">
       {!!quotas.length && (
         <div className="supplier-quota-windows">
           {quotas.map((q) => (
@@ -174,6 +175,7 @@ export function SupplierQuota({ p, state }) {
                 : "尚未查询"}
         </span>
       )}
+      </div>
       <div className="supplier-quota-time">
         {time && <ElapsedTime value={time} />}
         {warning && (

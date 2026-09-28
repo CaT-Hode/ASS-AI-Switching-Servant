@@ -106,7 +106,7 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
       : request.enabled
         ? `${request.sync ? "同步" : "开启"} ${target} 接入？`
         : `断开 ${target} 接入？`;
-  let warning = request.enabled && request.accountless !== false ? "正在检查模型协议与接入状态…" : "正在检查接入状态…";
+  let warning = "正在检查接入状态…";
   if (plan) {
     if (request.accountless !== undefined) {
       warning = request.accountless ? "仅使用已注入模型，按供应商 API 计费。原有官方登录保留。"

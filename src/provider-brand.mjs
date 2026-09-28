@@ -40,6 +40,7 @@ export function providerBrand(p, service) {
     "native-claude": "claude",
     "native-dsh": "deepseek",
     "native-opencode": "opencode",
+    "native-pi": "pi",
   }[p.id];
   if (native) return native;
   const match = aliases[service] || service;

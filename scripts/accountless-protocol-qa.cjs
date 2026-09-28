@@ -43,6 +43,8 @@ async function confirm(button) {
     await start(); await choose("Codex");
     assert.equal(await page.getByRole("switch", { name: "Codex 无账号启动" }).isDisabled(), true);
     await call("save-provider", { id: "fixture", name: "协议测试", baseUrl: "https://fixture.test/v1", apiKey: "synthetic-api", models: [{ model: "dual", wireApi: "openai-chat" }, { model: "chat-only", wireApi: "anthropic" }] });
+    // Creation checks run in the background; injection itself must never wait for them.
+    await app.evaluate(() => global.assTest.prepareProtocols("codex"));
     await confirm(page.getByRole("switch", { name: "Codex ASS 接入", exact: true }));
     await confirm(page.getByRole("switch", { name: "Codex 无账号启动" }));
     let snapshot = await call("snapshot"); assert.equal(snapshot.connections.clients.codex.accountless, true);

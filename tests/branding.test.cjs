@@ -22,3 +22,15 @@ test("brand rename retains persisted data location, app identity and update comp
   assert.ok(updates.includes('AI-Switch-Servant-v${v.text}-win32-x64.zip'));
   assert.ok(read("core/config.cjs").includes(".replaceAll('name = \"ASS', 'name = \"AI Switch Servant')"));
 });
+
+test("Pi uses the official compact monochrome mark, black in light and white in dark", async () => {
+  const { providerBrand } = await import("../src/provider-brand.mjs");
+  assert.equal(providerBrand({ id: "native-pi" }), "pi");
+  const svg = read("public/providers/pi.svg");
+  assert.ok(svg.includes('fill="#000"'));
+  assert.doesNotMatch(svg, /#F09082|#4D9ABF|#F1BE58/);
+  assert.equal((svg.match(/<path /g) || []).length, 3);
+  assert.ok(read("src/clients.jsx").includes('pi: "pi"'));
+  assert.ok(read("src/theme.css").includes('img[src="./providers/pi.svg"] { filter: var(--pi-logo-filter); }'));
+  assert.ok(read("src/theme.css").includes(':root[data-theme="dark"] { --pi-logo-filter: invert(1); }'));
+});

@@ -168,11 +168,12 @@ class Router {
       )
         throw Object.assign(new Error("仅允许本机应用请求"), { status: 403 });
       if (req.url !== "/health") {
-        const scoped = /^\/clients\/(codex|claude|opencode|pi|dsh)(\/.*)$/.exec(
+        const scoped = /^\/clients\/(ASS|codex|claude|opencode|pi|dsh)(\/.*)$/.exec(
           req.url,
         );
         let client =
           scoped?.[1] || (req.url.startsWith("/harness/") ? "legacy" : "codex");
+        if (client === "ASS") client = "codex"; // Public route name; same auth, isolation and lifecycle.
         if (scoped) req.url = scoped[2];
         if (req.url.startsWith("/diagnostics/")) {
           if (req.headers["x-ass-probe-token"] !== this.clientToken)

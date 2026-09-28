@@ -187,7 +187,7 @@ function authSummary(harness, dir) {
   };
 }
 function routeConfig(harness, p, m, dir, token, catalog, port = 25819) {
-  const clientBase = `http://127.0.0.1:${port}/clients/${harness}`;
+  const clientBase = `http://127.0.0.1:${port}/clients/${harness === "codex" ? "ASS" : harness}`;
   const base = clientBase + "/harness/" + p.id;
   const env = { ASS_LOCAL_TOKEN: token },
     files = [],
@@ -909,7 +909,7 @@ class HarnessManager {
           const defaultModel = applied?.defaultModel ? `model = ${JSON.stringify(applied.defaultModel.model)}\nmodel_reasoning_effort = ${JSON.stringify(applied.defaultModel.effort)}\n` : "";
           files.push([
             "config.toml",
-            `cli_auth_credentials_store = "file"\n${catalog}${defaultModel}model_provider = "ass_official"\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = "http://127.0.0.1:${this.options.port || 25819}/clients/codex/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n`,
+            `cli_auth_credentials_store = "file"\n${catalog}${defaultModel}model_provider = "ass_official"\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = "http://127.0.0.1:${this.options.port || 25819}/clients/ASS/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n`,
           ]);
         } else if (!fs.existsSync(path.join(dir, "config.toml"))) {
           files.push(["config.toml", 'cli_auth_credentials_store = "file"\n']);

@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const { endpoint, EFFORTS, PROTOCOLS } = require("./models.cjs");
 const { convertRequest, sseMessages } = require("./adapters.cjs");
 const { protocolEndpoint, providerSessionHeaders } = require("./provider-transport.cjs");
+const { abortable } = require("./abortable.cjs");
 const modelKey = (provider, model) => JSON.stringify([provider, model]);
 const strings = (value) =>
   Array.isArray(value)
@@ -60,12 +61,15 @@ function headersFor(provider, protocol) {
       : { authorization: "Bearer " + provider.apiKey }),
   };
 }
-async function limitedText(response, limit = 2 * 1024 * 1024) {
+async function limitedText(response, limit = 2 * 1024 * 1024, signal) {
   const reader = response.body.getReader(),
     chunks = [];
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener("abort", cancel, { once: true });
   let size = 0;
   try {
     while (true) {
+      signal?.throwIfAborted();
       const { value, done } = await reader.read();
       if (done) return Buffer.concat(chunks).toString("utf8");
       size += value.length;
@@ -73,7 +77,8 @@ async function limitedText(response, limit = 2 * 1024 * 1024) {
       chunks.push(Buffer.from(value));
     }
   } finally {
-    await reader.cancel().catch(() => {});
+    signal?.removeEventListener("abort", cancel);
+    cancel();
     reader.releaseLock();
   }
 }
@@ -143,7 +148,7 @@ async function discoverModels(provider, fetchUpstream, signal) {
     truncated: list.length > 2000 || !!body.has_more,
   };
 }
-async function inspectStream(stream, protocol, nonce, observe = () => {}) {
+async function inspectStream(stream, protocol, nonce, observe = () => {}, signal) {
   let terminal = false,
     incomplete = false,
     text = false,
@@ -170,7 +175,7 @@ async function inspectStream(stream, protocol, nonce, observe = () => {}) {
         });
     }
   };
-  for await (const event of sseMessages(stream)) {
+  for await (const event of sseMessages(stream, signal)) {
     observe(event);
     bytes += JSON.stringify(event).length;
     if (bytes > 2 * 1024 * 1024) throw Error("检测响应过大");
@@ -226,6 +231,9 @@ async function inspectStream(stream, protocol, nonce, observe = () => {}) {
         incomplete = c.finish_reason === "length";
       }
     }
+    // Protocol completion is sufficient. A keep-alive socket is not an
+    // unfinished generation, and must not hold the injection dialog open.
+    if (terminal) break;
   }
   const toolObserved = [...calls.values()].some((c) => {
     try {
@@ -248,7 +256,7 @@ async function nativeProbe(
   model,
   protocol,
   fetchUpstream,
-  { effort, tool = false, signal } = {},
+  { effort, tool = false, signal, timeoutMs = 20000 } = {},
 ) {
   const nonce = crypto.randomBytes(8).toString("hex"),
     started = Date.now();
@@ -283,7 +291,12 @@ async function nativeProbe(
         }
       : {}),
   };
+  const controller = new AbortController();
+  const requestSignal = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]);
+  const timer = setTimeout(() => controller.abort(new DOMException("Probe timeout", "TimeoutError")), timeoutMs);
   try {
+    return await abortable((async () => {
+    requestSignal.throwIfAborted();
     const request =
       protocol === "openai-responses"
         ? body
@@ -301,15 +314,14 @@ async function nativeProbe(
         body: JSON.stringify(request),
         redirect: "error",
         credentials: "omit",
-        signal: AbortSignal.any([
-          ...(signal ? [signal] : []),
-          AbortSignal.timeout(20000),
-        ]),
+        signal: requestSignal,
       },
       provider.network,
     );
+    if (requestSignal.aborted) { void response.body?.cancel().catch(() => {}); requestSignal.throwIfAborted(); }
     if (!response.ok) {
-      const raw = await limitedText(response, 128 * 1024).catch(() => "");
+      const raw = await limitedText(response, 128 * 1024, requestSignal).catch(() => "");
+      requestSignal.throwIfAborted();
       return {
         status: "rejected",
         unsupported: [404, 405, 415].includes(response.status) ||
@@ -322,7 +334,7 @@ async function nativeProbe(
         ms: Date.now() - started,
       };
     }
-    const observed = await inspectStream(response.body, protocol, nonce);
+    const observed = await inspectStream(response.body, protocol, nonce, undefined, requestSignal);
     return {
       ...observed,
       status:
@@ -332,6 +344,7 @@ async function nativeProbe(
       httpStatus: response.status,
       ms: Date.now() - started,
     };
+    })(), requestSignal);
   } catch {
     return {
       status: "unknown",
@@ -340,7 +353,7 @@ async function nativeProbe(
         : "超时、网络失败或不完整流；不能据此判定能力",
       ms: Date.now() - started,
     };
-  }
+  } finally { clearTimeout(timer); controller.abort(); }
 }
 async function probeCapabilities(
   provider,

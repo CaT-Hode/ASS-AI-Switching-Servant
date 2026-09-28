@@ -3,6 +3,7 @@ const path = require("node:path");
 const { createHash } = require("node:crypto");
 const { atomic } = require("./config.cjs");
 const { nativeProbe, modelKey } = require("./model-inspection.cjs");
+const { abortable } = require("./abortable.cjs");
 const ORDER = ["openai-responses", "anthropic", "openai-chat"];
 function identity(p, m) {
   return createHash("sha256").update(JSON.stringify([p.id, p.baseUrl, p.apiKey,
@@ -14,7 +15,7 @@ class ProtocolNegotiation {
   constructor({ dataDir, crypto, getProviders, fetcher, onChange = () => {}, now = Date.now }) {
     Object.assign(this, { crypto, getProviders, fetcher, onChange, now });
     this.file = path.join(dataDir, "protocols.enc.json");
-    this.records = {}; this.jobs = new Map(); this.error = "";
+    this.records = {}; this.jobs = new Map(); this.jobDetails = new Map(); this.error = "";
     try {
       if (fs.existsSync(this.file)) {
         if (fs.statSync(this.file).size > 8 * 1024 * 1024) throw Error();
@@ -66,21 +67,26 @@ class ProtocolNegotiation {
       return r ? [[modelKey(p.id, m.model), { time: r.time, protocols: r.protocols, efforts: {}, tools: { status: "unknown" } }]] : [];
     })));
   }
-  async ensure(p, m, { force = false, signal } = {}) {
+  progress() { return Object.fromEntries(this.jobDetails); }
+  async ensure(p, m, { force = false, signal, progress = () => {} } = {}) {
+    signal?.throwIfAborted();
     if (!p.enabled || !p.apiKey || !m.enabled) return;
     const key = modelKey(p.id, m.model), fp = identity(p, m), jobKey = key + fp;
-    if (this.jobs.has(jobKey)) return this.jobs.get(jobKey);
+    if (this.jobs.has(jobKey)) return abortable(this.jobs.get(jobKey), signal);
+    // A check is user-owned history, not a time-expiring network cache. This
+    // also honors v0.1.28 records; unknown/denied results need a manual retry.
+    if (!force && this.get(p, m)) return this.get(p, m);
     const job = (async () => {
       const report = { time: new Date(this.now()).toISOString(), protocols: {} };
       // Both native protocols are always checked. Chat is a compatibility
       // fallback, not a reason to skip the Responses / Messages probes.
       for (const protocol of ORDER) {
         signal?.throwIfAborted();
-        const r = this.get(p, m), last = r?.protocols[protocol];
+        const r = this.get(p, m);
         if (protocol === "openai-chat" && ["openai-responses", "anthropic"].some(k =>
           (report.protocols[k] || r?.protocols[k])?.status === "passed")) break;
-        const ttl = last?.lastStatus === "unknown" ? 5 * 60000 : 24 * 3600000;
-        if (!force && last && this.now() - Date.parse(last.time) < ttl) continue;
+        this.jobDetails.set(key, protocol); this.onChange();
+        progress(protocol);
         const result = await nativeProbe(p, m, protocol, this.fetcher, { signal });
         signal?.throwIfAborted();
         report.protocols[protocol] = result;
@@ -92,15 +98,26 @@ class ProtocolNegotiation {
       return this.get(p, m);
     })();
     this.jobs.set(jobKey, job);
-    try { return await job; } finally { this.jobs.delete(jobKey); this.onChange(); }
+    try { return await job; } finally { this.jobs.delete(jobKey); this.jobDetails.delete(key); this.onChange(); }
   }
-  async ensureProviders(providers, options) {
-    const rows = providers.flatMap(p => p.models.map(m => [p, m]));
+  async ensureProviders(providers, { onProgress = () => {}, signal, ...options } = {}) {
+    const rows = providers.filter(p => p.enabled && p.apiKey).flatMap(p => p.models.filter(m => m.enabled).map(m => [p, m]));
+    const controller = new AbortController();
+    const batchSignal = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]);
     // Small bounded requests, no context-limit stress tests or burst fan-out.
-    let next = 0;
-    await Promise.all([0, 1].map(async () => { while (next < rows.length) {
-      const [p, m] = rows[next++]; await this.ensure(p, m, options);
-    } }));
+    let next = 0, completed = 0;
+    const active = new Map();
+    const report = () => onProgress({ total: rows.length, completed, active: [...active.values()] });
+    report();
+    const workers = [0, 1].map(async () => { try { while (next < rows.length) {
+      batchSignal.throwIfAborted();
+      const [p, m] = rows[next++], key = modelKey(p.id, m.model);
+      active.set(key, { provider: p.name, model: m.model }); report();
+      await this.ensure(p, m, { ...options, signal: batchSignal, progress: protocol => { active.set(key, { provider: p.name, model: m.model, protocol }); report(); } });
+      completed++; active.delete(key); report();
+    } } catch (error) { controller.abort(error); throw error; } });
+    try { await abortable(Promise.all(workers), batchSignal); }
+    finally { controller.abort(); }
   }
 }
 module.exports = { ProtocolNegotiation, identity };

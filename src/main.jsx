@@ -238,7 +238,7 @@ function Diagnostics({ state, providers, act, busy }) {
           <div>
             <dt>路由入口</dt>
             <dd className="mono">
-              http://127.0.0.1:{state.service.port}/clients/codex/v1
+              http://127.0.0.1:{state.service.port}/clients/ASS/v1
             </dd>
           </div>
           <div>

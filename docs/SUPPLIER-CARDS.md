@@ -21,6 +21,10 @@ OpenAI `used_percent` / `usedPercent` 表示已用，剩余为 `clamp(100 - used
 
 ## 图标与排序
 
+所有供应商卡片使用统一高度，现金余额、订阅窗口、查询中、查询失败和无额度均不改变外框。较多额度行在卡片内部滚动，不截断或丢弃明细。
+
+Pi 使用[官方品牌页](https://pi.dev/press-kit)的单色 Badge，客户端列表和原生目录共用；浅色模式黑色、深色模式白色。素材来源见[品牌素材](BRAND-ASSETS.md)。其余内置品牌标识来源如下。
+
 图标来自 [Lobe Icons](https://github.com/lobehub/lobe-icons) 的 `@lobehub/icons-static-svg@1.95.1`，21 个自包含 SVG 随包分发，MIT 许可见 [LICENSE](../public/providers/LICENSE.txt)。供应商商标归各自权利人，展示不代表隶属或背书。不会向第三方 favicon 服务发送供应商地址或凭据。
 
 已知官方 API 服务优先匹配；名称匹配仅采用明确品牌词。中转站出售 GPT / Claude 模型不代表它是 OpenAI / Anthropic，不能据模型名称套用官方 logo；没有匹配时使用文字头像。

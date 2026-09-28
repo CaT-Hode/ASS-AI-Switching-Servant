@@ -26,14 +26,15 @@ const declaration = (v) =>
 export function ModelCheckButton({ provider, model, state, act, busy }) {
   const providerId = model.diagnosticProviderId || provider.id;
   const key = modelKey(providerId, model.model),
-    result = state.diagnostics[key];
-  const running = busy === "diag-" + key || state.diagnosticJobs?.[key];
+    result = state.diagnostics[key], protocolResult = state.protocolResults?.[key];
+  const running = busy === "diag-" + key || state.diagnosticJobs?.[key] || state.protocolJobs?.[key];
+  const protocolPassed = Object.values(protocolResult?.protocols || {}).some(p => p.status === "passed");
   return (
     <button
       type="button"
       className={
         "model-icon check-model " +
-        (result ? (result.stale ? "stale" : result.ok ? "passed" : "failed") : "")
+        (result ? (result.stale ? "stale" : result.ok ? "passed" : "failed") : protocolResult ? (protocolPassed ? "passed" : "stale") : "")
       }
       aria-label={"检测模型 " + model.model}
       title={
@@ -46,7 +47,8 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
             (result.stale ? " · 配置已变化或目录待恢复" : "") +
             (result.saveError ? " · " + result.saveError : "") +
             " · 点击重新检测"
-          : (model.diagnosticProviderId ? "使用此模型的原生配置直连检测（小请求，可能计费）" : "检测此模型连接（小请求，可能计费）")
+          : protocolResult ? "协议已检测 · " + exactTime(protocolResult.time) + " · 点击重新检测连接与协议"
+          : (model.diagnosticProviderId ? "使用此模型的原生配置直连检测（小请求，可能计费）" : "检测此模型连接与支持的协议（小请求，可能计费）")
       }
       disabled={
         !!busy ||
@@ -62,10 +64,26 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
       {running ? (
         <Loader2 size={17} className="spin" />
       ) : (
-        <Zap size={17} fill={result ? "currentColor" : "none"} />
+        <Zap size={17} fill={result || protocolResult ? "currentColor" : "none"} />
       )}
     </button>
   );
+}
+export function ModelProtocolBadges({ provider, model, state }) {
+  if (provider.id === "official" || model.diagnosticProviderId) return null;
+  const key = modelKey(provider.id, model.model), report = state.protocolResults?.[key], checking = state.protocolJobs?.[key];
+  const names = { "openai-responses": "Responses", anthropic: "Messages", "openai-chat": "Chat" };
+  return <span className="model-protocol-badges" aria-label={model.model + " 协议支持"}>
+    {Object.entries(names).map(([protocol, name]) => {
+      const result = report?.protocols?.[protocol], status = checking === protocol ? "checking" : result?.status || "untested";
+      const label = { passed: "支持", unsupported: "不支持", unknown: "未确认", untested: "未检测", checking: "检测中" }[status];
+      const retained = result?.status === "passed" && result.lastStatus === "unknown";
+      return <span key={protocol} data-status={status} aria-label={name + "：" + label}
+        title={`${name}：${label}${retained ? "（保留上次成功，本次未确认）" : ""}${result?.time ? " · " + exactTime(result.time) : ""}${result?.httpStatus ? " · HTTP " + result.httpStatus : ""}${Number.isFinite(result?.ms) ? " · " + result.ms + " ms" : ""}`}>
+        {name}<i aria-hidden="true">{status === "passed" ? "✓" : status === "unsupported" ? "×" : status === "checking" ? "…" : "?"}</i>
+      </span>;
+    })}
+  </span>;
 }
 function Declared({ value = {} }) {
   return (
@@ -103,7 +121,8 @@ export function ModelCapabilities({ provider, model, state, act, busy }) {
   const declared = directory?.models.find(
     (m) => m.model === model.model,
   )?.declared;
-  const report = state.capabilities?.[key],
+  const capabilityReport = state.capabilities?.[key], protocolReport = state.protocolResults?.[key];
+  const report = capabilityReport ? { ...capabilityReport, ...(protocolReport ? { protocols: protocolReport.protocols } : {}) } : protocolReport,
     progress = state.capabilityJobs?.[key];
   return (
     <>
@@ -217,7 +236,7 @@ export function ModelCapabilities({ provider, model, state, act, busy }) {
       <p className="capability-warning">
         不会修改配置或执行工具。上下文上限、图像 / 音频 /
         视频输入只显示明确声明，不进行大请求盲测。原生 API 能力不等同于 Codex
-        跨协议工具兼容性。协议结果已持久化；注入时自动选择原生接口或协议转换。
+        跨协议工具兼容性。协议结果长期保存，接入不重复检查；点击闪电可重新检测。
       </p>
     </>
   );
