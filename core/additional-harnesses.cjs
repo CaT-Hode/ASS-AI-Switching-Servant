@@ -71,6 +71,14 @@ function official(base, service) {
     return u.hostname === "generativelanguage.googleapis.com";
   } catch { return false; }
 }
+function identifiableApiUrl(base) {
+  try {
+    const url = new URL(base);
+    return !url.username && !url.password && !url.search && !url.hash &&
+      (url.protocol === "https:" || url.protocol === "http:" &&
+        ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname));
+  } catch { return false; }
+}
 function account(harness, dir, file, provider, label, auth, fields = [], secrets = []) {
   if (!text(provider, secrets)) return null;
   return { ...auth, id: "native:" + hash([harness, dir, provider, file].join("\0")),
@@ -101,7 +109,7 @@ function catalog(harness, dir, file, models) {
 
 function inspectKimi(location, { env, now }) {
   const { dir, legacy } = location, file = path.join(dir, "config.toml"), config = read(file, "toml");
-  const sources = [config], accounts = [], models = [], providers = object(config.data?.providers) ? config.data.providers : {};
+  const sources = [config], accounts = [], apiAccounts = [], models = [], providers = object(config.data?.providers) ? config.data.providers : {};
   const loaded = [], secrets = [];
   for (const [id, p] of Object.entries(providers)) {
     if (!object(p)) continue;
@@ -136,9 +144,10 @@ function inspectKimi(location, { env, now }) {
       auth = authorization(t.access_token, t.refresh_token, t.expires_at, now);
       auth.oauthHistoryProvider = kimiReference(dir, p)?.provider;
     } else if (has(key)) auth = apiAuth;
-    if (auth && official(p.base_url, "kimi")) loaded.push({ id, auth, source, envName });
+    if (auth && (auth.authType === "api" ? identifiableApiUrl(p.base_url) : official(p.base_url, "kimi")))
+      loaded.push({ id, auth, source, envName });
   }
-  for (const row of loaded) accounts.push(account("kimi", dir, row.source, row.id,
+  for (const row of loaded) (official(providers[row.id].base_url, "kimi") ? accounts : apiAccounts).push(account("kimi", dir, row.source, row.id,
     legacy ? "Kimi CLI（旧版）" : legacy === null ? "Kimi Code（自定义目录）" : "Kimi Code", row.auth,
     [["provider", "供应商", row.id], ["version", "配置版本", legacy ? "旧版 .kimi" : legacy === null ? "自定义目录" : "新版 .kimi-code"],
       ["keyEnvironment", "密钥变量", row.envName]], secrets));
@@ -152,11 +161,11 @@ function inspectKimi(location, { env, now }) {
     raw.protocol || providers[raw.provider].type, secrets);
     if (m) models.push(m);
   }
-  return { sources, accounts, modelAccounts: models.length ? [catalog("kimi", dir, file, models)] : [] };
+  return { sources, accounts, apiAccounts, modelAccounts: models.length ? [catalog("kimi", dir, file, models)] : [] };
 }
 
 function inspectZCode({ dir, bootstrap, issue }, { env, now, override, launcher }) {
-  const credentials = read(path.join(dir, "credentials.json")), accounts = [], models = [], sources = [credentials];
+  const credentials = read(path.join(dir, "credentials.json")), accounts = [], apiAccounts = [], models = [], sources = [credentials];
   if (bootstrap) sources.push({ file: bootstrap, status: issue ? "unreadable" : "detected", message: issue || "" });
   if (credentials.data && Object.values(credentials.data).some((v) => typeof v !== "string")) {
     credentials.status = "unreadable"; credentials.message = "ZCode 凭据格式无法识别";
@@ -203,8 +212,8 @@ function inspectZCode({ dir, bootstrap, issue }, { env, now, override, launcher 
   for (const r of directory.providers) if (has(r.config.access?.apiKey)) secrets.push(r.config.access.apiKey);
   for (const r of directory.providers) {
     const p = r.config, access = p.access;
-    if (["api-key", "zhipu-coding-plan-api-key"].includes(access?.type) && has(access.apiKey) && official(p.api?.baseUrl, "zcode"))
-      accounts.push(account("zcode", dir, file, r.providerId, r.providerName || "ZCode API", apiAuth,
+    if (["api-key", "zhipu-coding-plan-api-key"].includes(access?.type) && has(access.apiKey) && identifiableApiUrl(p.api?.baseUrl))
+      (official(p.api?.baseUrl, "zcode") ? accounts : apiAccounts).push(account("zcode", dir, file, r.providerId, r.providerName || "ZCode API", apiAuth,
         [["provider", "供应商", r.providerName || r.providerId]], secrets));
     for (const { modelId, config: c } of r.models) {
       const props = c.properties || {}, options = c.optionSpecs || {};
@@ -221,7 +230,7 @@ function inspectZCode({ dir, bootstrap, issue }, { env, now, override, launcher 
     t.provider === "zai" ? "Z.ai" : "智谱 BigModel", t.auth,
     t.provider === "zai" && has(t.user.user_id) ? [["email", "邮箱", t.user.email], ["name", "名称", t.user.name], ["accountId", "用户 ID", t.user.user_id]] :
       [["name", "名称", t.user.displayName || t.user.username], ["accountId", "用户 ID", t.user.id]], secrets));
-  return { sources, accounts, modelAccounts: models.length ? [catalog("zcode", dir, file, models)] : [] };
+  return { sources, accounts, apiAccounts, modelAccounts: models.length ? [catalog("zcode", dir, file, models)] : [] };
 }
 function inspect(id, options) {
   const input = { env: {}, now: Date.now(), ...options };
@@ -230,6 +239,8 @@ function inspect(id, options) {
     locations(id, input).map((location) => inspectOne(location, input));
   // Do not return parsed files: they contain raw credentials and arbitrary fields.
   return { sources: results.flatMap((r) => r.sources).map(({ file, status, message = "" }) => ({ file, status, message })),
-    accounts: results.flatMap((r) => r.accounts).filter(Boolean), modelAccounts: results.flatMap((r) => r.modelAccounts) };
+    accounts: results.flatMap((r) => r.accounts).filter(Boolean),
+    apiAccounts: results.flatMap((r) => r.apiAccounts || []).filter(Boolean),
+    modelAccounts: results.flatMap((r) => r.modelAccounts) };
 }
 module.exports = { SPECS, inspect, locations };

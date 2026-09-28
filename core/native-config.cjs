@@ -9,6 +9,7 @@ const { injectionCatalog, modelRef } = require("./client-policy.cjs");
 const { target: kimiTarget } = require("./kimi-config.cjs");
 const zcode = require("./zcode-config.cjs");
 const dsh = require("./dsh-config.cjs");
+const { sameApi } = require("./native-api-identity.cjs");
 const DIRECT = ["opencode", "pi", "dsh", "kimi", "zcode"];
 const APIS = {
   "openai-responses": "openai-responses",
@@ -111,7 +112,10 @@ function compose(harness, manager, selection, targetOverride) {
     fields.push({ harness, file, format, path: keys, value, ...extra });
   const providers = manager.effectiveProviders?.(harness) || manager.getState().providers;
   const settings = manager.state.injections?.[harness] || {};
-  const catalog = injectionCatalog(harness, providers, settings);
+  const managedCatalog = manager.injection?.(harness, undefined, targetOverride ? { target } : {})?.models;
+  const catalog = Array.isArray(managedCatalog)
+    ? managedCatalog
+    : injectionCatalog(harness, providers, settings);
   const included = new Set(catalog.filter((m) => m.included).map((m) => m.ref));
   const selectedRef = selection?.model && selection?.account
     ? modelRef(selection.account.replace(/^api:/, ""), selection.model)
@@ -300,7 +304,8 @@ function compose(harness, manager, selection, targetOverride) {
     }
   }
   if (selectedRef && !selected) throw Error("默认接入模型不可用，请重新选择或保留客户端默认模型");
-  return { target, fields, selected, modelCount: included.size };
+  return { target, fields, selected, modelCount: included.size,
+    nativeModelCount: catalog.filter((m) => m.native).length };
 }
 
 class NativeConfig {
@@ -369,9 +374,23 @@ class NativeConfig {
     targets[id] ||= [];
     if (targets[id].includes(dir)) return;
     const source = locations(id, this.manager), target = profileLocations(id, dir, source);
+    const { activeApis } = this.manager.discoverNativeApis(id, undefined, { target });
+    const duplicateIds = new Set();
+    for (const entry of existing.filter((e) => e.file === source.config && !e.replace)) {
+      const pid = id === "dsh" ? entry.path[2] : entry.path[1];
+      const auth = existing.find((e) => e.file === source.auth &&
+        (e.path[0] === pid || e.path[1] === "llm-pi-ai/" + pid));
+      const value = entry.value;
+      if (auth && value && activeApis.some((api) => sameApi(api, {
+        baseUrl: value.baseURL || value.baseUrl || value.options?.baseURL,
+        apiKey: auth.value.key, extraHeaders: value.headers || value.options?.headers,
+      }))) duplicateIds.add(pid);
+    }
     const fields = existing.flatMap((e) => {
       const key = ["config", "auth", "settings"].find((k) => source[k] === e.file);
       if (!key) return [];
+      if (e.path.some((part) => duplicateIds.has(part) || typeof part === "string" &&
+          part.startsWith("llm-pi-ai/") && duplicateIds.has(part.slice(10)))) return [];
       if (id === "dsh" && key === "auth" && e.path.join("/") === "version" && document(read(target.auth), "yaml").data.version === 1) return [];
       return [{ ...e, file: target[key] }];
     });
@@ -391,7 +410,7 @@ class NativeConfig {
         continue;
       }
       const plan = enabled ? this.desired(id) : null;
-      if (plan && !plan.modelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id))
+      if (plan && !plan.modelCount && !plan.nativeModelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id))
         throw Error("没有可接入的模型，请先开启供应商及其兼容模型");
       this.fields.plan(id, plan ? plan.fields : this.retained(id));
     }
@@ -407,7 +426,7 @@ class NativeConfig {
       if (id === "dsh" && this.dshRelocations().length) throw Error("DSH 已升级配置格式，请使用一键修复迁移到当前 profile");
       this.fields.recover();
       const plan = this.desired(id, selection);
-      if (!plan.modelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id))
+      if (!plan.modelCount && !plan.nativeModelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id))
         throw Error("没有可接入的模型，请先开启供应商及其兼容模型");
       this.fields.apply(id, plan.fields);
       this.activated.add(id);
@@ -492,7 +511,7 @@ class NativeConfig {
         const plan = this.desired(id);
         modelCount = plan.modelCount;
         if (enabled) {
-          if (!modelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id)) error = "没有可接入的模型";
+          if (!modelCount && !plan.nativeModelCount && !this.activated.has(id) && !this.manager.options.isConnected?.(id)) error = "没有可接入的模型";
           pending = this.fields.plan(id, plan.fields).files.length > 0;
         }
       } catch (e) {

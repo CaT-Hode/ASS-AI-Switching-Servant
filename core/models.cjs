@@ -150,6 +150,8 @@ function normalizeProvider(raw, officialModels = []) {
   p.models = list.map((m) => normalizeModel(m, p, officialModels));
   p.balance = normalizeBalance(raw.balance);
   if (raw.nativeCatalogInitialized === true) p.nativeCatalogInitialized = true;
+  if (Array.isArray(raw.nativeImportedModels)) p.nativeImportedModels = [...new Set(raw.nativeImportedModels
+    .filter((m) => typeof m === "string" && m.length <= 250 && !/[\x00-\x1f]/.test(m)))].slice(0, 10000);
   if (new Set(p.models.map((m) => m.model)).size !== p.models.length)
     throw new Error("同一供应商中存在重复模型");
   return p;

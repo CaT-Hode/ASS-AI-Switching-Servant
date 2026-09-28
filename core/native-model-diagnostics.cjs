@@ -14,6 +14,7 @@ const zcodeCatalog = require("./zcode-catalog.cjs");
 const zcodeInfo = require("./zcode-account-info.cjs");
 const { inspectStream } = require("./model-inspection.cjs");
 const { providerSessionHeaders } = require("./provider-transport.cjs");
+const { builtinApi } = require("./native-api-defaults.cjs");
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const secret = (v) => typeof v === "string" && v.trim() && v.length <= 65536 && !/[\r\n\0]/.test(v) ? v.trim() : "";
 const protocols = { kimi: "openai-chat", openai: "openai-chat", openai_legacy: "openai-chat",
@@ -32,12 +33,20 @@ function read(file, format = "json") {
   } catch { throw Error("原生模型配置或凭据无法读取，请在客户端检查"); }
 }
 function value(raw, env, mode = "literal") {
+  if (object(raw) && typeof raw.env === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw.env))
+    return secret(env[raw.env]);
   const v = secret(raw);
   if (!v) return "";
-  if (v.startsWith("!") || v.includes("{file:")) throw Error("此凭据依赖外部命令或文件引用，请在原生客户端测试");
+  if (v.startsWith("!") || v.includes("{file:") || v.startsWith("$") && mode !== "pi")
+    throw Error("此凭据依赖外部命令或文件引用，请在原生客户端测试");
   const match = /^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(v);
   if (match) return secret(env[match[1]]);
-  if (mode === "pi" && v.startsWith("$")) return secret(env[v.slice(1)]);
+  if (mode === "pi" && v.includes("$")) {
+    let missing = false;
+    const result = v.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+      (_, a, b) => { if (!secret(env[a || b])) missing = true; return secret(env[a || b]); });
+    return missing || result.includes("$") ? "" : result;
+  }
   if (mode === "pi" && Object.hasOwn(env, v)) return secret(env[v]);
   return v;
 }
@@ -76,7 +85,7 @@ function notExpired(token, seconds) {
 function kimiTarget(a, m, env) {
   const config = read(a.sourcePath, "toml"), p = config.providers?.[m.nativeProvider];
   const rows = Object.values(config.models || {}).filter((r) => r?.provider === m.nativeProvider && r.model === m.model);
-  if (!object(p) || rows.length !== 1) throw Error("Kimi 模型配置已变化或有重复声明，请刷新目录");
+  if (!object(p) || (m.model && rows.length !== 1)) throw Error("Kimi 模型配置已变化或有重复声明，请刷新目录");
   if (["KIMI_BASE_URL", "KIMI_API_KEY", "KIMI_MODEL_NAME", "KIMI_MODEL_PROVIDER"].some((k) => env[k]))
     throw Error("Kimi 存在运行时模型覆盖，请在原生客户端测试或清除覆盖后重试");
   if ([!!secret(p.api_key), !!secret(p.api_key_env), !!p.oauth].filter(Boolean).length > 1)
@@ -92,11 +101,13 @@ function kimiTarget(a, m, env) {
     const grant = read(ref.authFile);
     key = secret(grant.access_token); notExpired(key, grant.expires_at);
   } else key = secret(p.api_key) || secret(env[p.api_key_env]);
-  const protocol = protocols[rows[0].protocol || p.type];
+  const protocol = protocols[rows[0]?.protocol || p.type];
   const extraHeaders = { "user-agent": "ASS/native-model-check", ...headers(p.custom_headers, env) };
   if (p.oauth && Object.keys(extraHeaders).some((k) => /authorization|api-key/i.test(k)))
     throw Error("Kimi OAuth 配置含冲突的认证请求头");
   return { baseUrl: base, apiKey: key, protocol, extraHeaders,
+    nativeAuthType: p.oauth ? "oauth" : "api", nativeProvider: m.nativeProvider,
+    nativeProviderName: p.name,
     thinkingOff: p.type === "kimi" };
 }
 function zcodeTarget(client, a, m, env) {
@@ -108,7 +119,7 @@ function zcodeTarget(client, a, m, env) {
       try { return readFile(file) === null ? { file, status: "missing" } : { file, data: read(file), status: "detected" }; }
       catch { return { file, status: "unreadable" }; }
     }, ["zai", "bigmodel"].includes(active) ? [active] : []);
-  const p = catalog.providers.find((r) => r.providerId === m.nativeProvider && r.models.some((r) => r.modelId === m.model))?.config;
+  const p = catalog.providers.find((r) => r.providerId === m.nativeProvider && (!m.model || r.models.some((r) => r.modelId === m.model)))?.config;
   if (!p) throw Error("ZCode 模型配置已变化，请刷新目录");
   const access = p.access || {}, protocol = protocols[p.api?.type];
   let key = secret(access.apiKey);
@@ -137,7 +148,9 @@ function zcodeTarget(client, a, m, env) {
       throw Error("ZCode OAuth 配置含冲突的认证请求头");
     extraHeaders.authorization ||= "Bearer " + key;
   }
-  return { baseUrl: p.api?.baseUrl, apiKey: key, protocol, extraHeaders };
+  return { baseUrl: p.api?.baseUrl, apiKey: key, protocol, extraHeaders,
+    nativeAuthType: access.type === "api-key" || access.type === "zhipu-coding-plan-api-key" ? "api" : "oauth",
+    nativeProvider: m.nativeProvider, nativeProviderName: p.name || p.providerName };
 }
 function dshSettings(dir) { return require("./dsh-config.cjs").readSettings(dir, read); }
 function classicTarget(client, a, m, home, env) {
@@ -165,43 +178,87 @@ function classicTarget(client, a, m, home, env) {
   }
   if (a.authType === "oauth") throw Error("此原生 OAuth 协议暂不支持独立检测，请在客户端测试");
   let p = {}, raw = {}, key, mode;
-  const official = nativeOfficialProvider(client, a);
+  const official = nativeOfficialProvider(client, a, { home, env });
+  const builtin = builtinApi(id);
   if (client.id === "opencode") {
     p = opencodeProvider(a, dir, id, home, env, read);
     raw = Object.values(p.models || {}).find((r) => (r?.id || r?.model) === m.model) || p.models?.[m.model] || {};
     if (!p.enabled) throw Error("此原生供应商已停用");
-    key = value(p.options?.apiKey, env) || value(data[id]?.key, env);
-    return { baseUrl: p.options?.baseURL || raw.provider?.api || p.api || official?.baseUrl,
-      apiKey: key, protocol: m.wireApi || official?.wireApi,
+    key = p.options?.apiKey !== undefined ? value(p.options.apiKey, env) : value(data[id]?.key, env) ||
+      (p.env || [builtin.envKey]).map((name) => secret(env[name])).find(Boolean);
+    const npm = raw.provider?.npm || p.npm || p.package;
+    const packageProtocol = { "@ai-sdk/openai": "openai-responses", "@ai-sdk/anthropic": "anthropic",
+      "@ai-sdk/openai-compatible": "openai-chat", "@opencode/ai/providers/openai": "openai-responses",
+      "@opencode/ai/providers/anthropic": "anthropic", "@opencode/ai/providers/openai-compatible": "openai-chat" }[npm];
+    return { baseUrl: p.options?.baseURL || raw.provider?.api || p.api || official?.baseUrl || builtin.baseUrl,
+      apiKey: key, protocol: m.wireApi || packageProtocol || builtin.protocol,
+      nativeAuthType: "api", nativeProvider: m.nativeProvider, nativeProviderName: p.name,
       extraHeaders: headers({ ...p.options?.headers, ...raw.headers }, env) };
+  }
+  if (client.id === "codex") {
+    const config = read(path.join(dir, "config.toml"), "toml");
+    p = config.model_providers?.[id] || {};
+    if (p.auth || Object.keys(p.query_params || {}).length) throw Error("此 Codex API 使用命令凭据或查询参数，继续由客户端管理");
+    const rows = Array.isArray(p.models) ? p.models : [];
+    raw = rows.find((r) => (r?.slug || r?.id || r?.model) === m.model) || {};
+    const envKey = typeof p.env_key === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(p.env_key)
+      ? secret(env[p.env_key]) : "";
+    key = envKey || value(p.experimental_bearer_token, env) || value(p.api_key, env) ||
+      ((id === "openai" || p.requires_openai_auth) ? value(data.OPENAI_API_KEY, env) || secret(env.OPENAI_API_KEY) : "");
+    const extraHeaders = headers({ ...p.headers, ...p.http_headers }, env);
+    for (const [name, variable] of Object.entries(p.env_http_headers || {}))
+      if (secret(env[variable])) Object.assign(extraHeaders, headers({ [name]: secret(env[variable]) }, {}));
+    const protocol = protocols[p.wire_api] || (p.wire_api === "responses" ? "openai-responses" : "");
+    return { baseUrl: p.base_url || p.baseURL || (id === "openai" ? "https://api.openai.com/v1" : official?.baseUrl), apiKey: key,
+      protocol: protocol || m.wireApi, nativeAuthType: "api", nativeProvider: id,
+      nativeProviderName: p.name || id, extraHeaders };
+  }
+  if (client.id === "claude") {
+    const settings = read(path.join(dir, "settings.json"));
+    const runtime = object(settings.env) ? settings.env : {};
+    key = secret(runtime.ANTHROPIC_API_KEY) || secret(env.ANTHROPIC_API_KEY) || secret(data.primaryApiKey);
+    return { baseUrl: runtime.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL || "https://api.anthropic.com",
+      apiKey: key, protocol: "anthropic", nativeAuthType: "api", nativeProvider: "anthropic-api",
+      nativeProviderName: "Anthropic", extraHeaders: {} };
   }
   if (client.id === "pi") { p = read(path.join(dir, "models.json")).providers?.[id] || {}; mode = "pi"; }
   else if (client.id === "dsh") {
     const settings = dshSettings(dir);
-    if (id === "DEEPSEEK_API_KEY") {
+    if (id === "DEEPSEEK_API_KEY" || id === (settings["llm-deepseek"]?.apiKeyEnv || "DEEPSEEK_API_KEY")) {
       p = settings["llm-deepseek"] || {};
       const keyName = p.apiKeyEnv || "DEEPSEEK_API_KEY";
-      const storedKey = secret(data.refs?.[keyName] || (!data.version && data[keyName])), envKey = secret(env[keyName]);
+      const storedKey = value(data.refs?.[keyName] || (!data.version && data[keyName]), env), envKey = secret(env[keyName]);
       if (storedKey && envKey && storedKey !== envKey) throw Error("DSH 的环境密钥与已存账户不一致，请在客户端确认后测试");
       return { baseUrl: p.baseURL || p.baseUrl || "https://api.deepseek.com", apiKey: storedKey || envKey,
-        protocol: "openai-chat", extraHeaders: headers(p.headers, env) };
+        protocol: "openai-chat", nativeAuthType: "api", nativeProvider: m.nativeProvider,
+        nativeProviderName: p.displayName || "DeepSeek", extraHeaders: headers(p.headers, env) };
     }
     p = settings["llm-pi-ai"]?.providers?.[id] || {}; mode = "pi";
-  } else if (client.id === "claude") throw Error("此 Claude 原生配置暂不支持独立检测");
+  }
   const rows = Array.isArray(p.models) ? p.models : Object.values(p.models || {});
   raw = rows.find((r) => (r?.id || r?.model) === m.model) || {};
-  key = value(credential?.key, env, mode) || value(p.apiKey, env, mode) || official?.apiKey;
-  return { baseUrl: raw.baseURL || raw.baseUrl || p.baseURL || p.baseUrl || official?.baseUrl, apiKey: key,
-    protocol: protocols[raw.api || p.api] || m.wireApi || official?.wireApi,
+  if (credential?.type === "oauth" || record?.kind === "grant") throw Error("原生 OAuth 优先，未使用被覆盖的 API Key");
+  key = value(credential?.key, env, mode) || value(p.apiKey, env, mode) ||
+    (client.id === "dsh" && p.apiKeyEnv ? secret(env[p.apiKeyEnv]) : "") || official?.apiKey || secret(env[builtin.envKey]);
+  return { baseUrl: raw.baseURL || raw.baseUrl || p.baseURL || p.baseUrl || official?.baseUrl || builtin.baseUrl, apiKey: key,
+    nativeAuthType: a.authType === "api" || record?.kind === "api-key" ? "api" : undefined,
+    nativeProvider: m.nativeProvider, nativeProviderName: p.displayName || p.name,
+    protocol: protocols[raw.api || p.api] || m.wireApi || official?.wireApi || builtin.protocol,
     extraHeaders: headers({ ...p.headers, ...raw.headers }, env, mode) };
+}
+function resolveNativeApiTarget(client, account, model, { home, env = {} } = {}) {
+  const target = client.id === "kimi" ? kimiTarget(account, model, env)
+    : client.id === "zcode" ? zcodeTarget(client, account, model, env)
+      : classicTarget(client, account, model, home, env);
+  return { ...target, protocol: target.protocol || model.wireApi,
+    nativeAuthType: target.nativeAuthType || (account.authType === "api" ? "api" : "oauth") };
 }
 function resolveNativeDiagnostic(id, name, snapshot, { home, env = {}, directories = {} } = {}) {
   for (const client of snapshot.clients) for (const a of (client.modelAccounts || client.accounts || []).filter((a) => a.kind !== "api")) {
     const models = directories["native-" + client.id]?.accounts?.[a.id]?.models || nativeModels(client, a, home, env);
     const m = models.find((m) => m.model === name && nativeTargetId(client, a, m) === id);
     if (!m || m.enabled === false) continue;
-    const target = client.id === "kimi" ? kimiTarget(a, m, env) : client.id === "zcode" ? zcodeTarget(client, a, m, env)
-      : classicTarget(client, a, m, home, env);
+    const target = resolveNativeApiTarget(client, a, m, { home, env });
     if (!["openai-chat", "openai-responses", "anthropic"].includes(target.protocol))
       throw Error("此模型的原生协议尚未确认，请先在客户端刷新目录");
     if (!secret(target.apiKey)) throw Error("未找到此模型对应的有效原生凭据，请先在客户端登录");
@@ -218,6 +275,9 @@ function resolveNativeDiagnostic(id, name, snapshot, { home, env = {}, directori
         ...(target.thinkingOff ? { thinking: { type: "disabled" } } : {}) };
     return { model: { ...m, wireApi: target.protocol }, native: true, client, account: a,
       provider: { id, baseUrl: url, apiKey: target.apiKey, network: "system", extraHeaders, enabled: true,
+        nativeBaseUrl: target.baseUrl, nativeAuthType: target.nativeAuthType,
+        nativeProvider: target.nativeProvider || m.nativeProvider, nativeProviderName: target.nativeProviderName || a.label,
+        nativeProtocol: target.protocol,
         nativeRequest: body }, request: { url, body, headers: extraHeaders, protocol: target.protocol } };
   }
   throw Error("原生模型已变化或不存在，请刷新目录后重试");
@@ -235,4 +295,4 @@ async function checkNativeConnection(context, fetchUpstream, signal, metrics) {
   if (!inspected.completed || !inspected.text) throw Error("未收到完整结束事件");
   return { message: "连接成功 · 完整流式响应", protocol };
 }
-module.exports = { resolveNativeDiagnostic, checkNativeConnection };
+module.exports = { resolveNativeDiagnostic, resolveNativeApiTarget, checkNativeConnection };

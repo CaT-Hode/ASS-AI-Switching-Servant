@@ -17,6 +17,8 @@ const { configureClaudeModels, assertClaudePicker, prepareClaudeOnboarding } = r
 const { safePath, read: readNative, document: nativeDocument } = require("./native-fields.cjs");
 const { ACCOUNT_SERVICES, officialApiService, acceptsApiAccount, acceptsNativeAccount,
   modelRef, injectionCatalog } = require("./client-policy.cjs");
+const { nativeOfficialProvider } = require("./native-official.cjs");
+const { nativeApiProfiles: discoverNativeApiProfiles, sameApi } = require("./native-suppliers.cjs");
 const {
   inspectCredentials,
   discoverNative,
@@ -332,6 +334,7 @@ class HarnessManager {
     this.piProviders = [];
     this.detected = {};
     this.discovery = {};
+    this.nativeApiProfilesByHarness = {};
     this.file = path.join(dataDir, "clients.json");
     this.state = {
       profiles: [],
@@ -547,6 +550,7 @@ class HarnessManager {
     return path.join(this.dataDir, "clients", harness, id);
   }
   snapshot() {
+    this.nativeApiProfilesByHarness = {};
     return {
       workspace: this.state.workspace,
       piOAuthProviders: this.piProviders,
@@ -576,13 +580,16 @@ class HarnessManager {
             credentialHome: this.state.credentialHomes[s.id] || "", credentialSources: native.sources,
             nativeVariant: s.id === "kimi" ? this.state.nativeVariants.kimi || "auto" : undefined,
             accounts, modelAccounts: [...accounts, ...modelAccounts],
-            injection: s.injectionUnsupported ? { models: [], excludedProviders: [] } : this.injection(s.id) };
+            injection: s.injectionUnsupported ? { models: [], excludedProviders: [] } : this.injection(s.id, [...accounts, ...modelAccounts, ...(native.apiAccounts || [])],
+              { credentialHome: this.state.credentialHomes[s.id] || "", launcher }) };
         }
         const native = discoverNative(s.id, {
           home: this.nativeHome,
           env: this.nativeEnv,
+          workspace: this.state.workspace,
           override: this.state.credentialHomes[s.id],
           codexDir: this.codexDir,
+          owns: (file, provider) => this.options.nativeConfig?.owns(s.id, file, provider),
         });
         const apiCandidates = apiAccounts(
           s.id,
@@ -599,8 +606,7 @@ class HarnessManager {
                 this.getState().providers.find((p) => p.id === a.providerId),
               )),
         );
-        const accounts = [
-          ...native
+        const nativeAccounts = native
             .flatMap((source) => source.accounts)
             .filter(
               (account) =>
@@ -609,7 +615,9 @@ class HarnessManager {
                   account.sourcePath,
                   account.provider,
                 ),
-            ),
+            );
+        const accounts = [
+          ...nativeAccounts,
           ...this.state.profiles
             .filter((p) => p.harness === s.id)
             .flatMap((p) => {
@@ -669,7 +677,7 @@ class HarnessManager {
               : "",
           accountServices: ACCOUNT_SERVICES[s.id],
           oauthProviders: s.id === "pi" ? this.piProviders : [],
-          injection: this.injection(s.id),
+          injection: this.injection(s.id, nativeAccounts),
           modelAccounts,
           credentialHome: this.state.credentialHomes[s.id] || "",
           credentialSources: native.map(({ file, status, message }) => ({
@@ -729,11 +737,55 @@ class HarnessManager {
   selectModel(harness, accountId, model) {
     throw Error("请在客户端内选择模型；ASS 接入范围已改为供应商开关");
   }
-  injection(harness) {
-    this.spec(harness);
-    const settings = this.state.injections[harness];
-    return { ...settings, models: injectionCatalog(harness, this.effectiveProviders(harness), settings) };
+  discoverNativeApis(harness, nativeAccounts, clientContext = {}) {
+    const spec = this.spec(harness);
+    let accounts = nativeAccounts;
+    let profileContext = clientContext;
+    const direct = ["dsh", "opencode", "pi", "kimi", "zcode"].includes(harness);
+    const target = clientContext.target;
+    let env = this.nativeEnv;
+    if (target && harness === "opencode") {
+      env = { ...env, XDG_CONFIG_HOME: path.resolve(target.config, "../.."),
+        XDG_DATA_HOME: path.dirname(target.dir) };
+      for (const name of ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT"]) delete env[name];
+    }
+    if (!accounts && spec.nativeLoginOnly) {
+      const native = additional.inspect(harness, { home: this.nativeHome, env,
+        override: target?.dir || this.state.credentialHomes[harness], launcher: this.launcher(harness) });
+      accounts = [...native.accounts, ...native.modelAccounts, ...(native.apiAccounts || [])];
+      profileContext = { credentialHome: this.state.credentialHomes[harness] || "", launcher: this.launcher(harness) };
+    }
+    if (!accounts && ["codex", "claude", "dsh", "opencode", "pi"].includes(harness))
+      accounts = discoverNative(harness, {
+        home: this.nativeHome, env, override: target?.dir || this.state.credentialHomes[harness], codexDir: this.codexDir,
+        workspace: target ? undefined : this.state.workspace,
+        owns: (file, provider) => this.options.nativeConfig?.owns(harness, file, provider),
+      }).flatMap((source) => source.accounts);
+    accounts = (accounts || []).filter((a) => !this.options.nativeConfig?.owns(harness, a.sourcePath, a.provider));
+    const profiles = discoverNativeApiProfiles([{ id: harness, name: this.spec(harness).name,
+      ...profileContext, modelAccounts: accounts, accounts }], { home: this.nativeHome, env });
+    if (!target) this.nativeApiProfilesByHarness[harness] = profiles;
+    let activeDir;
+    if (direct) {
+      try { activeDir = target?.dir || require("./native-config.cjs").locations(harness, this).dir; } catch {}
+    }
+    const sameDir = (dir) => dir && activeDir && path.resolve(dir).toLowerCase() === path.resolve(activeDir).toLowerCase();
+    const activeApis = profiles.filter((p) => p.accountRefs.some((a) => sameDir(a.nativeDir)));
+    return { direct, activeApis };
   }
+  injection(harness, nativeAccounts, clientContext = {}) {
+    const settings = this.state.injections[harness], providers = this.effectiveProviders(harness);
+    const { direct, activeApis } = this.discoverNativeApis(harness, nativeAccounts, clientContext);
+    const models = injectionCatalog(harness, providers, settings).map((row) => {
+      const provider = providers.find((p) => p.id === row.providerId);
+      const alreadyNative = direct && provider && activeApis.some((native) => sameApi(native, provider));
+      return alreadyNative && !row.issue
+        ? { ...row, included: false, native: true, issue: "此 API 已在客户端当前配置中，无需重复接入" }
+        : row;
+    });
+    return { ...settings, models };
+  }
+  nativeApis(harness) { return this.nativeApiProfilesByHarness[harness] || []; }
   effectiveProviders(harness) {
     return this.options.protocols?.providers(harness) || this.getState().providers;
   }

@@ -5,7 +5,11 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const TOML = require("@iarna/toml");
 const YAML = require("yaml");
+const JSONC = require("jsonc-parser");
 const { localProfile } = require("./account-info.cjs");
+const dsh = require("./dsh-config.cjs");
+const { loadOpenCodeConfig } = require("./opencode-config.cjs");
+const { builtinApi, BUILTINS } = require("./native-api-defaults.cjs");
 const has = (v) => typeof v === "string" && !!v.trim();
 const object = (v) => v && typeof v === "object" && !Array.isArray(v);
 const digest = (v) =>
@@ -250,9 +254,93 @@ function nativeLocations(harness, home, env, override, codexDir) {
       return true;
     });
 }
+function configuredNativeApiProviders(harness, dir, { home, env = {}, authData = {}, workspace } = {}) {
+  const output = [];
+  const add = (provider, label, key, configPath) => {
+    if (typeof provider !== "string" || !provider || provider.length > 250 || /[\x00-\x1f\x7f]/.test(provider) ||
+        /^(?:ass-(?:api|[a-f0-9]{16}-(?:chat|responses|messages))|ass_(?:api|official))$/i.test(provider) ||
+        !has(key) || key.length > 65536 || /[\r\n\0]/.test(key) || /^[!$]/.test(key)) return;
+    const safeLabel = typeof label === "string" && !/[\x00-\x1f\x7f]/.test(label) &&
+      (!key || !label.includes(key)) ? label.trim().slice(0, 80) : "";
+    output.push({ provider, label: safeLabel || provider, configPath });
+  };
+  const expand = (raw, mode = "literal") => {
+    if (object(raw) && typeof raw.env === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw.env)) raw = env[raw.env];
+    if (!has(raw)) return "";
+    const text = raw.trim();
+    const ref = /^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(text);
+    if (ref) return has(env[ref[1]]) ? env[ref[1]].trim() : "";
+    if (mode === "pi" && text.includes("$")) {
+      let missing = false;
+      const result = text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+        (_, a, b) => { if (!has(env[a || b])) missing = true; return env[a || b] || ""; });
+      return missing || result.includes("$") ? "" : result;
+    }
+    if (mode === "pi" && Object.hasOwn(env, text)) return has(env[text]) ? env[text].trim() : "";
+    return text.startsWith("!") || text.includes("{file:") ? "" : text;
+  };
+  if (harness === "dsh") {
+    try {
+      const settings = dsh.readSettings(dir, (file, format) => read(file, format).data || {});
+      const authFile = path.join(dir, ".credentials.yaml"), auth = read(authFile, "yaml").data || {};
+      const providers = settings["llm-pi-ai"]?.providers || {};
+      for (const [id, p] of Object.entries(providers)) {
+        const record = auth.records?.["llm-pi-ai/" + id];
+        if (record?.kind === "grant") continue;
+        const key = record?.kind === "api-key" ? record.key : expand(p.apiKey, "pi") ||
+          (typeof p.apiKeyEnv === "string" ? expand(env[p.apiKeyEnv]) : "");
+        add(id, p.displayName || p.name, key, dsh.target(dir).config);
+      }
+      const deep = settings["llm-deepseek"] || {}, keyName = deep.apiKeyEnv || "DEEPSEEK_API_KEY";
+      const deepKey = expand(auth.refs?.[keyName] || (!auth.version && auth[keyName]) || env[keyName]);
+      add("DEEPSEEK_API_KEY", "DeepSeek", deepKey, dsh.target(dir).config);
+    } catch {}
+  } else if (harness === "pi") {
+    const file = path.join(dir, "models.json"), providers = read(file).data?.providers || {};
+    for (const [id, p] of Object.entries(providers))
+      if (object(p)) add(id, p.name || p.displayName, expand(p.apiKey, "pi"), file);
+    for (const id of Object.keys(BUILTINS)) {
+      if (authData[id]?.type === "oauth") continue;
+      add(id, id, expand(env[builtinApi(id).envKey]), file);
+    }
+  } else if (harness === "opencode") {
+    try {
+      const { data } = loadOpenCodeConfig({ home, env, workspace });
+      const cache = read(path.join(env.XDG_CACHE_HOME || path.join(home, ".cache"), "opencode/models.json")).data || {};
+      for (const id of new Set([...Object.keys(BUILTINS), ...Object.keys(cache), ...Object.keys(data.provider || {})])) {
+        const p = data.provider?.[id] || {};
+        const key = p.options?.apiKey !== undefined ? expand(p.options.apiKey) :
+          expand(authData[id]?.key) || (cache[id]?.env || [builtinApi(id).envKey]).map((name) => expand(env[name])).find(Boolean);
+        add(id, p.name, key, "");
+      }
+    } catch {}
+  } else if (harness === "codex") {
+    const file = path.join(dir, "config.toml");
+    let config = {};
+    try {
+      const text = fs.readFileSync(file, "utf8");
+      if (text.length <= 2 * 1024 * 1024) config = TOML.parse(text);
+    } catch {}
+    for (const [id, p] of Object.entries(config.model_providers || {})) {
+      if (!object(p)) continue;
+      if (p.auth) continue;
+      const key = (typeof p.env_key === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(p.env_key) && expand(env[p.env_key])) ||
+        expand(p.experimental_bearer_token) || expand(p.api_key) || (p.requires_openai_auth ? expand(authData.OPENAI_API_KEY) || expand(env.OPENAI_API_KEY) : "");
+      add(id, p.name, key, file);
+    }
+    if ((config.model_provider || "openai") === "openai")
+      add("openai", "OpenAI", expand(authData.OPENAI_API_KEY) || expand(env.OPENAI_API_KEY), file);
+  } else if (harness === "claude") {
+    const file = path.join(dir, "settings.json"), settings = read(file).data || {}, runtime = settings.env || {};
+    const key = expand(runtime.ANTHROPIC_API_KEY) || expand(env.ANTHROPIC_API_KEY) ||
+      expand(authData.primaryApiKey);
+    add("anthropic-api", "Anthropic", key, file);
+  }
+  return output;
+}
 function discoverNative(
   harness,
-  { home, env = {}, override, codexDir, now = Date.now() },
+  { home, env = {}, override, codexDir, now = Date.now(), owns, workspace },
 ) {
   const dirs = nativeLocations(harness, home, env, override, codexDir);
   const sources = dirs.map((dir) => {
@@ -270,28 +358,46 @@ function discoverNative(
             },
           ]
         : [];
+    const accounts = rows.map((row) => ({
+      ...row,
+      id: "native:" + digest(harness + "\0" + dir + "\0" + row.provider),
+      kind: "native",
+      label:
+        row.provider === "openai" && row.authType === "oauth"
+          ? "ChatGPT"
+          : row.provider,
+      badge:
+        row.authType === "oauth"
+          ? "OAuth"
+          : row.authType === "api"
+            ? "API Key"
+            : "待确认",
+      source: "本机账户",
+      sourcePath: result.file,
+      nativeDir: dir,
+      ...(harness === "opencode" ? { workspace } : {}),
+      providers: [row.provider],
+    }));
+    const authData = read(result.file, harness === "dsh" ? "yaml" : "json").data || {};
+    const configuredRows = harness === "opencode" && path.resolve(dir).toLowerCase() !== path.resolve(dirs[0]).toLowerCase()
+      ? [] : configuredNativeApiProviders(harness, dir, { home, env, authData, workspace });
+    const addedConfigured = new Set();
+    for (const configured of configuredRows) {
+      const matching = accounts.filter((account) => account.provider === configured.provider);
+      if (matching.some((account) => account.authType === "api" || harness === "pi" && account.authType === "oauth") || addedConfigured.has(configured.provider) ||
+          (configured.configPath && owns?.(configured.configPath, configured.provider))) continue;
+      addedConfigured.add(configured.provider);
+      const suffix = matching.length ? "\0config-api" : "";
+      accounts.push({ provider: configured.provider, authType: "api", ready: true, status: "detected",
+        message: "本机 API 配置", id: "native:" + digest(harness + "\0" + dir + "\0" + configured.provider + suffix),
+        kind: "native", label: configured.label, badge: "API Key", source: "本机配置",
+        sourcePath: result.file, nativeDir: dir, providers: [configured.provider] });
+      if (harness === "opencode") accounts.at(-1).workspace = workspace;
+    }
     return {
       ...result,
       dir,
-      accounts: rows.map((row) => ({
-        ...row,
-        id: "native:" + digest(harness + "\0" + dir + "\0" + row.provider),
-        kind: "native",
-        label:
-          row.provider === "openai" && row.authType === "oauth"
-            ? "ChatGPT"
-            : row.provider,
-        badge:
-          row.authType === "oauth"
-            ? "OAuth"
-            : row.authType === "api"
-              ? "API Key"
-              : "待确认",
-        source: "本机账户",
-        sourcePath: result.file,
-        nativeDir: dir,
-        providers: [row.provider],
-      })),
+      accounts,
     };
   });
   if (harness === "claude" && has(env.CLAUDE_CODE_OAUTH_TOKEN)) {
@@ -326,5 +432,6 @@ module.exports = {
   credentialFile,
   nativeLocations,
   discoverNative,
+  configuredNativeApiProviders,
   digest,
 };

@@ -1,10 +1,14 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const YAML = require("yaml");
+const TOML = require("@iarna/toml");
 const { parse: parseJSONC } = require("jsonc-parser");
 const { EFFORTS } = require("./models.cjs");
 const { createHash } = require("node:crypto");
 const dsh = require("./dsh-config.cjs");
+const { loadOpenCodeConfig, merge } = require("./opencode-config.cjs");
+const { builtinApi } = require("./native-api-defaults.cjs");
+const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const APIs = {
   "openai-completions": "openai-chat",
   "openai-responses": "openai-responses",
@@ -107,17 +111,6 @@ function opencodeProvider(account, dir, provider, home, env, readConfig = read) 
   const configDir = native
     ? path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "opencode")
     : path.resolve(dir, "../../config/opencode");
-  const files = [
-    path.join(configDir, "opencode.json"),
-    path.join(configDir, "opencode.jsonc"),
-  ];
-  if (native && env.OPENCODE_CONFIG) files.push(env.OPENCODE_CONFIG);
-  if (native && env.OPENCODE_CONFIG_DIR)
-    files.push(
-      ...["opencode.json", "opencode.jsonc"].map((f) =>
-        path.join(env.OPENCODE_CONFIG_DIR, f),
-      ),
-    );
   const cacheFile = path.join(
     native
       ? env.XDG_CACHE_HOME || path.join(home, ".cache")
@@ -125,32 +118,12 @@ function opencodeProvider(account, dir, provider, home, env, readConfig = read) 
     "opencode/models.json",
   );
   const builtin = read(cacheFile)[provider] || {};
-  let p = { ...builtin, models: { ...builtin.models } },
-    blocked = false;
-  const custom = new Set();
-  for (const file of files) {
-    if (!path.isAbsolute(file)) continue;
-    const c = readConfig(file);
-    if (
-      Array.isArray(c.disabled_providers) &&
-      c.disabled_providers.includes(provider)
-    )
-      blocked = true;
-    if (
-      Array.isArray(c.enabled_providers) &&
-      !c.enabled_providers.includes(provider)
-    )
-      blocked = true;
-    const next = c.providers?.[provider] || c.provider?.[provider];
-    if (!next || typeof next !== "object") continue;
-    const models = { ...p.models };
-    for (const [id, raw] of Object.entries(next.models || {})) {
-      if (!raw || typeof raw !== "object") continue;
-      models[id] = { ...models[id], ...raw };
-      custom.add(id);
-    }
-    p = { ...p, ...next, models };
-  }
+  const loaded = loadOpenCodeConfig({ home, env: native ? env : {}, configDir,
+    workspace: native ? account.workspace : undefined, read: readConfig });
+  const c = loaded.data, p = merge(builtin, c.provider?.[provider]);
+  const blocked = c.disabled_providers?.includes(provider) ||
+    (Array.isArray(c.enabled_providers) && !c.enabled_providers.includes(provider));
+  const custom = new Set([...loaded.custom].filter((id) => id.startsWith(provider + "\0")).map((id) => id.slice(provider.length + 1)));
   return { ...p, enabled: !blocked && p.enabled !== false, custom };
 }
 function opencodeModels(account, dir, provider, home, env) {
@@ -165,7 +138,7 @@ function opencodeModels(account, dir, provider, home, env) {
       (Array.isArray(p.whitelist) && !p.whitelist.includes(id))
     )
       return [];
-    const m = model(raw, id, packages[raw.provider?.npm || p.npm || p.package]);
+    const m = model(raw, id, packages[raw.provider?.npm || p.npm || p.package] || builtinApi(provider).protocol);
     return m
       ? [
           {
@@ -190,6 +163,43 @@ function nativeModels(client, account, home, env) {
     flat = [];
   if (client.id === "pi")
     configured = read(path.join(dir, "models.json")).providers || {};
+  if (client.id === "codex") {
+    let config = {};
+    try {
+      const file = path.join(dir, "config.toml");
+      if (fs.statSync(file).size <= 2 * 1024 * 1024)
+        config = TOML.parse(fs.readFileSync(file, "utf8"));
+    } catch {}
+    const selectedProvider = config.model_provider || "openai";
+    const p = config.model_providers?.[provider] || {};
+    const api = p.wire_api === "responses" ? "openai-responses" :
+      p.wire_api === "chat" || p.wire_api === "openai_legacy" ? "openai-chat" :
+        provider === "openai" ? "openai-responses" : "";
+    const rows = Array.isArray(p.models) ? p.models : object(p.models)
+      ? Object.entries(p.models).map(([id, raw]) => ({ ...(object(raw) ? raw : {}), id: typeof raw === "string" ? raw : raw?.id || id })) : [];
+    for (const raw of rows) {
+      if (!raw || (typeof raw !== "object" && typeof raw !== "string")) continue;
+      const name = typeof raw === "string" ? raw : raw.slug || raw.id || raw.model;
+      const m = model(typeof raw === "string" ? {} : { ...raw, id: name }, name, api);
+      if (m) flat.push(m);
+    }
+    if (!flat.length && provider === selectedProvider && typeof config.model_catalog_json === "string") {
+      const catalogPath = path.isAbsolute(config.model_catalog_json)
+        ? config.model_catalog_json : path.resolve(dir, config.model_catalog_json);
+      const catalog = read(catalogPath);
+      for (const raw of Array.isArray(catalog.models) ? catalog.models : []) {
+        if (!object(raw)) continue;
+        const name = raw.slug || raw.id || raw.model;
+        const m = model({ ...raw, id: name }, name, api);
+        if (m) flat.push(m);
+      }
+    }
+    if (!flat.length && typeof config.model === "string" && provider === selectedProvider) {
+      const m = model({}, config.model, api || "openai-responses");
+      if (m) flat.push(m);
+    }
+    return flat.filter(Boolean).map((m) => ({ ...m, nativeProvider: provider || "openai" }));
+  }
   if (client.id === "dsh") {
     let settings;
     try { settings = dsh.readSettings(dir, read); } catch { return []; }
@@ -289,7 +299,7 @@ function applyZCodeEntitlement(client, rows) {
 function modelSources(
   store,
   harnesses,
-  { home, env = {}, directories = {} } = {},
+  { home, env = {}, directories = {}, nativeApiModels = [] } = {},
 ) {
   const officialClient = harnesses.clients.find((c) => c.id === "codex");
   const sources = [
@@ -309,13 +319,17 @@ function modelSources(
   ];
   for (const client of harnesses.clients.filter((c) => c.id !== "codex")) {
     const accounts = (client.modelAccounts || client.accounts).filter((a) => a.kind !== "api" &&
-      !store.providers.some((p) => p.id === a.supplierId));
+      (!store.providers.some((p) => p.id === a.supplierId) ||
+        nativeApiModels.some((row) => row.clientId === client.id && row.accountId === a.id)));
     if (!accounts.length) continue;
     const models = new Map();
     const directory = directories["native-" + client.id];
+    const assigned = new Map(nativeApiModels.filter((row) => row.clientId === client.id)
+      .map((row) => [JSON.stringify([row.accountId, row.nativeProvider, row.model]), row.supplierId]));
     for (const a of accounts)
       for (const m of directory?.accounts?.[a.id]?.models ||
         nativeModels(client, a, home || "", env)) {
+        if (assigned.has(JSON.stringify([a.id, m.nativeProvider || "", m.model]))) continue;
         const diagnosticProviderId = nativeTargetId(client, a, m);
         models.set(diagnosticProviderId + "::" + m.model, {
           ...m, diagnosticProviderId, nativeAccountLabel: a.label || "", nativeScope: nativeScope(a),
@@ -323,6 +337,7 @@ function modelSources(
       }
     const runtime = applyZCodeEntitlement(client, [...models.values()]);
     const rows = runtime.rows.map(({ nativeScope: _nativeScope, ...model }) => model);
+    if (!rows.length && assigned.size) continue;
     const directoryError = directory?.error;
     const entitlementNotice = runtime.unresolved?.length
       ? `当前权益中的 ${runtime.unresolved.length} 个模型缺少本机目录元数据；请更新或刷新 ZCode 模型目录。` : undefined;

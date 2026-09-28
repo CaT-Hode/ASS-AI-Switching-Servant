@@ -61,8 +61,12 @@ const { Preferences } = require("../core/preferences.cjs");
 const { UsageHistory } = require("../core/usage-history.cjs");
 const accountTransactions = require("../core/account-transactions.cjs");
 const { modelSources, nativeModels } = require("../core/model-inventory.cjs");
-const { nativeOfficialProvider } = require("../core/native-official.cjs");
-const { promoteNativeSupplier } = require("../core/native-suppliers.cjs");
+const { nativeOfficialProvider: resolveNativeOfficialProvider } = require("../core/native-official.cjs");
+const { apiIdentity } = require("../core/native-api-identity.cjs");
+function nativeOfficialProvider(client, account) {
+  return resolveNativeOfficialProvider(client, account, { home: harnesses.nativeHome, env: harnesses.nativeEnv });
+}
+const { promoteNativeApiProfile, promoteNativeSupplier, sameApi } = require("../core/native-suppliers.cjs");
 const { resolveNativeDiagnostic, checkNativeConnection } = require("../core/native-model-diagnostics.cjs");
 const {
   nativeSubscriptionProvider,
@@ -292,7 +296,15 @@ let supplierSync;
 async function syncNativeSuppliers() {
   if (supplierSync) return supplierSync;
   supplierSync = (async () => {
-    for (const client of harnesses.snapshot().clients) {
+    const clients = harnesses.snapshot().clients;
+    for (const client of clients) {
+      for (const profile of harnesses.nativeApis(client.id)) {
+        // Discovery is local, including zero-model APIs. Verification/quotas
+        // remain separate and must not gate their appearance as a supplier.
+        try { promoteNativeApiProfile({ store, profile }); } catch {}
+      }
+    }
+    for (const client of clients) {
       const accounts = (client.modelAccounts || client.accounts).filter((a) => nativeOfficialProvider(client, a));
       let verified = false;
       for (const account of accounts) {
@@ -346,6 +358,7 @@ async function refreshAccountInfo(id, options) {
 function snapshot() {
   const publicState = store.public(),
     clientState = harnesses.snapshot();
+  const nativeApiModels = [];
   for (const client of clientState.clients)
     for (const account of client.accounts) {
       const subscription = nativeSubscriptionProvider(client, account);
@@ -413,11 +426,20 @@ function snapshot() {
   for (const client of clientState.clients)
     for (const account of client.modelAccounts || client.accounts) {
       const native = nativeOfficialProvider(client, account);
-      if (native) account.supplierId = store.state.providers.find((p) => p.apiKey === native.apiKey &&
-        p.baseUrl.replace(/\/$/, "") === native.baseUrl.replace(/\/$/, ""))?.id;
+      if (native) account.supplierId = store.state.providers.find((p) => sameApi(p, native))?.id;
     }
+  for (const client of clientState.clients) for (const profile of harnesses.nativeApis(client.id)) {
+    const supplier = store.state.providers.find((provider) => sameApi(provider, profile));
+    if (!supplier) continue;
+    for (const ref of profile.accountRefs || [])
+      for (const account of client.modelAccounts || client.accounts)
+        if (ref.clientId === client.id && account.id === ref.accountId && !account.catalogOnly) account.supplierId = supplier.id;
+    for (const ref of profile.modelRefs) {
+      nativeApiModels.push({ ...ref, supplierId: supplier.id });
+    }
+  }
   const sources = modelSources(publicState, clientState, {
-    home: harnesses.nativeHome, env: harnesses.nativeEnv, directories: providerModels,
+    home: harnesses.nativeHome, env: harnesses.nativeEnv, directories: providerModels, nativeApiModels,
   });
   return {
     ...publicState,
@@ -1270,6 +1292,7 @@ else {
         if (!r.canceled) {
           harnesses.state.workspace = r.filePaths[0];
           harnesses.save();
+          await syncNativeSuppliers();
         }
       });
       register("client-launch", async (id, account, action, model) => {
@@ -1331,6 +1354,8 @@ else {
           cancelId: 0,
         });
         if (r.response === 1) {
+          const identity = apiIdentity(store.state.providers.find((p) => p.id === id));
+          if (identity) store.state.nativeApiExclusions = [...new Set([...(store.state.nativeApiExclusions || []), identity])];
           if (/^native_api_[a-f0-9]{20}$/.test(id))
             store.state.nativeSupplierExclusions = [...new Set([...(store.state.nativeSupplierExclusions || []), id])];
           store.state.providers = store.state.providers.filter(
