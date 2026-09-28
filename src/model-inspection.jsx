@@ -8,7 +8,7 @@ import {
   Plus,
   Search,
   Check,
-} from "lucide-react";
+} from "./icons.jsx";
 import "./model-inspection.css";
 import { exactTime } from "./relative-time.mjs";
 const api = window.ass;

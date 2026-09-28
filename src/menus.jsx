@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from "react";
-import { ChevronDown, MoreHorizontal } from "lucide-react";
+import { ChevronDown, MoreHorizontal } from "./icons.jsx";
 
 export function ActionMenu({ label, items, disabled = false, text }) {
   const [open, setOpen] = useState(false),

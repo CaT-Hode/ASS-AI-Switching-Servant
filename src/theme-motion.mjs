@@ -1,4 +1,9 @@
 const clamp = (value) => Math.max(0, Math.min(1, value));
+// Match click selection to the thumb's physical stops, including its inset.
+export function themeAtPoint(clientX, left, width) {
+  const position = clamp((clientX - left - 19) / Math.max(1, width - 38));
+  return ["light", "system", "dark"][Math.round(position * 2)];
+}
 // Closed-form critically damped spring. Retargeting keeps presentation position
 // and velocity, including when the pointer grabs a still-moving thumb.
 export function springStep(position, velocity, target, seconds, frequency = 28) {

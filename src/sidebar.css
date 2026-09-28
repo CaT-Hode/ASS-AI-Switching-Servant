@@ -8,8 +8,11 @@
 }
 .sidebar .sidebar-bottom {
   display: block;
-  padding: 24px 0 12px;
+  margin-top: auto;
+  padding: 24px 0 0;
 }
+.sidebar-bottom .theme-control { margin: 16px 0 0; }
+.brand-title { display: flex; align-items: center; gap: 7px; }
 .sidebar-service {
   display: grid;
   gap: 9px;
@@ -51,9 +54,10 @@
   justify-content: center;
 }
 .sidebar .version-button {
-  padding: 7px 12px;
-  border-radius: 8px;
-  min-height: 30px;
+  padding: 4px 2px;
+  border-radius: 4px;
+  min-height: 24px;
+  white-space: nowrap;
 }
 
 .sidebar > nav > button {

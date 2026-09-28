@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronRight, Layers3, RefreshCw } from "lucide-react";
+import { ChevronRight, Layers3, RefreshCw } from "./icons.jsx";
 import { providerBrand } from "./provider-brand.mjs";
 const api = window.ass;
 const protocols = { "openai-chat": "Chat Completions", "openai-responses": "Responses", anthropic: "Anthropic Messages" };

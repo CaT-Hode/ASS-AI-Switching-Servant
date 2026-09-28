@@ -24,29 +24,27 @@ const packaged = process.env.ASS_QA_PACKAGED === "1";
         const frames = [];
         for (let i = 0; i < 16; i++) {
           await new Promise(requestAnimationFrame);
-          frames.push(JSON.stringify([...node.querySelectorAll("svg.lucide, svg.lucide > *")].map((s) => {
-            const style = getComputedStyle(s); return [style.transform, style.d];
+          frames.push(JSON.stringify([...node.querySelectorAll("svg[data-motion-icon] [data-part]")].map((s) => {
+            const style = getComputedStyle(s); return [style.transform, style.opacity];
           })));
         }
         return new Set(frames).size;
       });
-      assert.ok(count > 1, name + " should animate through different shapes"); frames[name] = count;
+      assert.ok(count > 1, name + " should animate its own parts"); frames[name] = count;
+      assert.equal(await button.locator("svg[data-motion-icon]").first().evaluate((s) => getComputedStyle(s).transform), "none", "outer icon remains stable");
     }
     for (const name of ["路由总览", "供应商与模型", "客户端与账户", "连接诊断", "关于 ASS"]) {
       await hoverFrames(page.getByRole("button", { name, exact: true }), name);
     }
     const nav = page.getByRole("button", { name: "路由总览", exact: true });
     await nav.click();
-    assert.equal(await nav.getAttribute("data-icon-pulse"), "true");
-    await page.waitForFunction(() => !document.querySelector('[data-icon-pulse]'));
-    await nav.press("Enter"); assert.equal(await nav.getAttribute("data-icon-pulse"), null, "keyboard does not trigger decorative pulse");
+    await page.waitForFunction(() => !document.querySelector('[data-icon-animating]'));
+    await nav.press("Enter"); assert.equal(await page.locator('[data-icon-animating]').count(), 0, "keyboard does not trigger decorative motion");
     await page.getByRole("button", { name: "供应商与模型", exact: true }).click();
     await page.getByRole("button", { name: "查看 Icon Fixture 的模型", exact: true }).click();
     for (const [label, name] of [["模型详情 icon-model", "settings"], ["检测模型 icon-model", "zap"], ["删除模型 icon-model", "trash"]]) {
       await hoverFrames(page.getByRole("button", { name: label, exact: true }), name);
-      if (name === "settings") assert.equal(await page.getByRole("button", { name: label, exact: true }).locator("circle").first().evaluate((s) => new DOMMatrix(getComputedStyle(s).transform).e < -4), true, "slider knobs must move inside the settings icon");
     }
-    assert.equal(await page.getByRole("button", { name: "删除模型 icon-model", exact: true }).locator("path").first().evaluate((s) => new DOMMatrix(getComputedStyle(s).transform).b < -.15), true, "trash lid must lift/rotate, not just the whole button");
     await page.getByRole("button", { name: "删除模型 icon-model", exact: true }).hover();
     await page.screenshot({ path: path.join(out, "model-icons-hover.png") });
     await page.getByRole("button", { name: "删除模型 icon-model", exact: true }).click();
@@ -56,7 +54,58 @@ const packaged = process.env.ASS_QA_PACKAGED === "1";
     const settings = page.getByRole("button", { name: "模型详情 icon-model", exact: true });
     await settings.hover();
     assert.equal(await settings.locator("svg").evaluate((s) => getComputedStyle(s).transitionDuration), "0s");
+    assert.equal(await page.locator('[data-icon-animating]').count(), 0);
+    await page.keyboard.press("Escape");
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" });
+    const theme = page.locator(".theme-toggle");
+    const width = await theme.evaluate((b) => b.getBoundingClientRect().width);
+    const choose = async (mode, x) => {
+      await theme.click({ position: { x, y: 20 } });
+      await page.waitForFunction((mode) => document.querySelector('.theme-toggle').dataset.mode === mode && !document.querySelector('.theme-toggle').hasAttribute('data-moving'), mode);
+    };
+    for (const [mode, x] of [["dark", width - 20], ["light", 20], ["system", width / 2], ["system", width / 2], ["dark", width - 20], ["dark", width - 20]]) {
+      await choose(mode, x);
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), mode, "click location is stable, not cyclic");
+      assert.equal(await theme.locator('.theme-ripples i').evaluateAll((nodes) => nodes.every((n) => getComputedStyle(n).animationPlayState === 'running')), true);
+      await theme.screenshot({ path: path.join(out, 'theme-' + mode + '.png') });
+    }
+    const eclipse = await theme.locator('.theme-eclipse-shadow').evaluate((node) => {
+      const animation = node.getAnimations()[0]; animation.pause();
+      return [0, 6000, 15600, 24000].map((time) => { animation.currentTime = time; return getComputedStyle(node).transform; });
+    });
+    assert.equal(new Set(eclipse).size, 3, "moon shadow follows a slow eclipse cycle");
+    const thumb = await theme.locator('.theme-orbit').boundingBox();
+    const travel = await theme.evaluate((n) => n.clientWidth - 38);
+    await page.mouse.move(thumb.x + 16, thumb.y + 16); await page.mouse.down();
+    await page.mouse.move(thumb.x + 16 - travel * .45, thumb.y + 16, { steps: 5 });
+    const progress = () => theme.evaluate((n) => Number(n.style.getPropertyValue('--theme-progress')));
+    assert.ok(Math.abs(await progress() - .55) < .03, "drag preserves grab offset");
+    await page.mouse.move(thumb.x + 16 - travel * .2, thumb.y + 16, { steps: 4 });
+    assert.ok(Math.abs(await progress() - .8) < .03, "direction reversal remains continuous");
+    await page.keyboard.press('Escape'); await page.mouse.up();
+    await page.waitForFunction(() => !document.querySelector('.theme-toggle').hasAttribute('data-moving'));
+    assert.equal(await progress(), 1, "cancelled drag restores committed mode");
+    await page.getByRole('button', { name: '关于 ASS', exact: true }).click();
+    const geometry = await page.evaluate(() => {
+      const theme = document.querySelector('.theme-control').getBoundingClientRect(), version = document.querySelector('.brand .version-button').getBoundingClientRect();
+      return { bottomGap: innerHeight - theme.bottom, versionTop: version.top, width: document.documentElement.scrollWidth, window: innerWidth,
+        sidebarText: document.querySelector('.sidebar').textContent };
+    });
+    assert.ok(geometry.bottomGap < 24 && geometry.bottomGap > 0); assert.ok(geometry.versionTop < 110);
+    assert.ok(!geometry.sidebarText.includes('检查更新')); assert.ok(geometry.width <= geometry.window);
+    // Mock the OS boundary only inside this disposable process, not Windows.
+    await app.evaluate(({ app }) => { global.loginItemCalls = []; app.setLoginItemSettings = (settings) => global.loginItemCalls.push(settings); });
+    const startup = page.getByRole('switch', { name: '开机启动', exact: true });
+    const wasOn = await startup.isChecked(); await startup.click();
+    await page.waitForFunction((wasOn) => document.querySelector('[aria-label="开机启动"]').checked !== wasOn, wasOn);
+    assert.equal(await app.evaluate(() => global.loginItemCalls.at(-1).openAtLogin), !wasOn);
+    assert.equal(await startup.evaluate((n) => getComputedStyle(n).width), await page.getByRole('switch', { name: '自动检查更新', exact: true }).evaluate((n) => getComputedStyle(n).width));
+    await page.screenshot({ path: path.join(out, 'about-dark.png') });
+    await choose('light', 20); await page.screenshot({ path: path.join(out, 'about-light.png') });
+    await choose('system', width / 2);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.equal(await theme.locator('.theme-ripples i').first().evaluate((n) => getComputedStyle(n).animationName), 'none');
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, packaged, frames, errors, data }));
+    console.log(JSON.stringify({ ok: true, packaged, frames, eclipse, geometry, errors, data, screenshots: out }));
   } finally { await app.evaluate(() => global.assTest.quit()).catch(() => {}); await app.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -187,10 +187,6 @@
   color: light-dark(#a8443c, #ff8f9c);
 }
 .connection-repair-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
-@media (hover: hover) and (pointer: fine) {
-  .connection-repair:hover:not(:disabled) .lucide-wrench { transform: rotate(-18deg); }
-}
-.connection-repair .lucide-wrench { transition: transform 160ms ease-out; }
 .modal.connection-confirm footer {
   border-top: 0;
   margin-top: 22px;
@@ -210,10 +206,6 @@
 .connection-restart input:disabled + span { opacity: .45; cursor: not-allowed; }
 .connection-restart small { display: block; min-height: 36px; margin: 9px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .connection-restart[data-force] small { color: light-dark(#a8443c, #ffad90); }
-.connection-restart .lucide-rotate-cw { transition: transform 180ms ease-out; }
-@media (hover: hover) and (pointer: fine) {
-  .connection-restart label:hover input:not(:disabled) + span .lucide-rotate-cw { transform: rotate(45deg); }
-}
 @media (prefers-reduced-motion: reduce) {
   .connection-switch,
   .connection-pill-track i,

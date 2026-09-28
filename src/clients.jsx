@@ -16,7 +16,7 @@ import {
   Unlink,
   ExternalLink,
   ArrowRightLeft,
-} from "lucide-react";
+} from "./icons.jsx";
 import { Modal } from "./editors.jsx";
 import {
   AddAccount,

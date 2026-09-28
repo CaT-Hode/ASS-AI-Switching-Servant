@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useState, useRef, useId } from "react";
-import { themeMotion } from "./theme-motion.mjs";
+import { themeMotion, themeAtPoint } from "./theme-motion.mjs";
 
 export function applyTheme(theme) {
   const value = ["light", "dark"].includes(theme) ? theme : "system";
@@ -16,20 +16,26 @@ function SunMoon() {
   return <svg className="theme-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
     <defs><mask id={mask} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
       <rect x="0" y="0" width="24" height="24" fill="white" stroke="none" />
-      <circle className="theme-cut" cx="18" cy="12" r="7.5" fill="black" stroke="none" />
+      <g className="theme-cut"><circle className="theme-eclipse-shadow" cx="18" cy="12" r="7.5" fill="black" stroke="none" /></g>
       <rect className="theme-dawn-cut" x="0" y="12" width="24" height="12" fill="black" stroke="none" />
     </mask></defs>
+    <circle className="theme-moon-rim" cx="12" cy="12" r="7" strokeWidth=".6" />
     <g mask={`url(#${mask})`}><circle className="theme-disc" cx="12" cy="12" r="7" />
     <g className="theme-rays"><g className="theme-sun-idle"><path d="M12 1v2M12 21v2M1 12h2M21 12h2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" /></g></g>
-    </g>
-    <g className="theme-horizon" strokeLinecap="round"><path d="M4 13h16M7 17h10M10 21h4" /></g>
     <g className="theme-craters" fill="currentColor" stroke="none"><circle cx="7.4" cy="13" r="1" /><circle cx="11" cy="17" r=".7" /></g>
+    </g>
+    <g className="theme-horizon" strokeLinecap="round"><path d="M4 13h16" /><path d="M7 17h10" /><path d="M10 21h4" /></g>
   </svg>;
 }
 export function ThemeControl({ value = "system", onChange }) {
   const [theme, setTheme] = useState(value);
   const [systemDark, setSystemDark] = useState(() => matchMedia("(prefers-color-scheme: dark)").matches);
   const button = useRef(null), motion = useRef(null), drag = useRef(null), suppressClick = useRef(false);
+  useEffect(() => {
+    const visibility = () => { button.current.toggleAttribute("data-hidden", document.hidden); };
+    visibility(); document.addEventListener("visibilitychange", visibility);
+    return () => document.removeEventListener("visibilitychange", visibility);
+  }, []);
   useEffect(() => { setTheme(value); applyTheme(value); }, [value]);
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
@@ -57,7 +63,7 @@ export function ThemeControl({ value = "system", onChange }) {
   useEffect(() => { if (!drag.current) motion.current?.settle(position, { instant: instantaneous() }); }, [position]);
   const commit = (choice, options = {}) => {
     motion.current.settle(themePositions[choice], { instant: instantaneous(), ...options });
-    setTheme(choice); applyTheme(choice); onChange(choice);
+    setTheme(choice); applyTheme(choice); if (choice !== theme) onChange(choice);
   };
   const release = (event, cancel = false) => {
     const gesture = drag.current;
@@ -76,10 +82,10 @@ export function ThemeControl({ value = "system", onChange }) {
     commit(modes[Math.round(Math.max(0, Math.min(1, projected)) * 2)], { speed });
   };
   const nextMode = modes[(modes.indexOf(theme) + 1) % modes.length];
-  const label = "切换为" + themeNames[nextMode] + "模式";
+  const label = "外观模式：" + themeNames[theme];
   return <div className="theme-control">
     <button ref={button} className="theme-toggle" type="button" data-mode={theme} data-system-dark={systemDark} aria-label={label}
-      title={(theme === "system" ? `自动 · 跟随系统（当前${systemDark ? "深色" : "浅色"}）` : themeNames[theme]) + "；" + label}
+      title={(theme === "system" ? `自动 · 跟随系统（当前${systemDark ? "深色" : "浅色"}）` : themeNames[theme]) + "；左侧浅色 · 中间自动 · 右侧深色；可拖拽或使用左右方向键"}
       aria-pressed={theme === "system" ? "mixed" : theme === "dark"}
       onPointerDown={(event) => {
         if (event.button !== 0 || event.isPrimary === false || drag.current) return;
@@ -112,9 +118,11 @@ export function ThemeControl({ value = "system", onChange }) {
       }}
       onClick={(event) => {
         if (suppressClick.current && event.detail !== 0) { suppressClick.current = false; return; }
-        commit(nextMode, { instant: event.detail === 0 || instantaneous() });
+        const bounds = event.currentTarget.getBoundingClientRect();
+        commit(event.detail === 0 ? nextMode : themeAtPoint(event.clientX, bounds.left, bounds.width), { instant: event.detail === 0 || instantaneous() });
       }}>
       <svg className="theme-sky" viewBox="0 0 216 40" preserveAspectRatio="none" aria-hidden="true">
+        <g className="theme-dawn-glow"><ellipse className="theme-dawn-light" cx="108" cy="36" rx="56" ry="12" /></g>
         <g className="theme-cloud-idle"><path className="theme-cloud theme-cloud-far" d="M76 18h29a4 4 0 0 0-4-4h-2a7 7 0 0 0-13-2 8 8 0 0 0-10 6Z" /></g>
         <g className="theme-cloud-idle"><path className="theme-cloud" d="M147 30h42a6 6 0 0 0-6-6h-3a10 10 0 0 0-19-3 10 10 0 0 0-14 9Z" /></g>
         <g className="theme-cloud-idle"><path className="theme-cloud theme-cloud-near" d="M112 36h25a4 4 0 0 0-4-4h-2a6 6 0 0 0-11-2 7 7 0 0 0-8 6Z" /></g>
@@ -122,7 +130,7 @@ export function ThemeControl({ value = "system", onChange }) {
         <g className="theme-stars theme-stars-late"><path d="M137 22l.8 2.5 2.5.8-2.5.8-.8 2.5-.8-2.5-2.5-.8 2.5-.8Z" /><circle cx="84" cy="14" r="1.3" /><circle cx="20" cy="28" r=".8" /></g>
         <path className="theme-comet" d="M92 9l13-4" />
       </svg>
-      <span className="theme-orbit"><SunMoon /></span>
+      <span className="theme-orbit"><span className="theme-ripples" aria-hidden="true"><i /><i /><i /></span><SunMoon /></span>
     </button>
   </div>;
 }

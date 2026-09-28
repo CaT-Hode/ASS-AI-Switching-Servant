@@ -1,5 +1,16 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+
+test("pointer position chooses a fixed theme instead of cycling the previous theme", async () => {
+  const { themeAtPoint } = await import("../src/theme-motion.mjs");
+  for (const width of [170, 216, 300]) {
+    assert.equal(themeAtPoint(100 + 19, 100, width), "light");
+    assert.equal(themeAtPoint(100 + width / 2, 100, width), "system");
+    assert.equal(themeAtPoint(100 + width - 19, 100, width), "dark");
+    assert.equal(themeAtPoint(-20, 100, width), "light");
+    assert.equal(themeAtPoint(1000, 100, width), "dark");
+  }
+});
 test("theme spring preserves live position and velocity through reversal, dragging and cancellation", async () => {
   const { themeMotion, dragPosition } = await import("../src/theme-motion.mjs");
   let time = 0, callback = null;

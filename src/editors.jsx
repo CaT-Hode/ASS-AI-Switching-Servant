@@ -7,7 +7,7 @@ import {
   Settings2,
   ScanSearch,
   ChevronDown,
-} from "lucide-react";
+} from "./icons.jsx";
 const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const protocols = {
   "openai-responses": "Responses",

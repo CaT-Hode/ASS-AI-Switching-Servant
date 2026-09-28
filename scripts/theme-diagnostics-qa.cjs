@@ -43,7 +43,11 @@ const launch = () => electron.launch({ ...(packaged ? { executablePath: path.joi
     assert.equal(await page.locator(".theme-control button").count(), 1);
     await page.locator(".theme-toggle").press("Home");
     await page.locator(".theme-toggle").screenshot({ path: path.join(out, "theme-light.png") });
-    await page.getByRole("button", { name: "切换为自动模式", exact: true }).click();
+    const themeClick = async (mode) => {
+      const width = await page.locator('.theme-toggle').evaluate((b) => b.getBoundingClientRect().width);
+      await page.locator('.theme-toggle').click({ position: { x: mode === 'light' ? 20 : mode === 'dark' ? width - 20 : width / 2, y: 20 } });
+    };
+    await themeClick('system');
     const animation = await page.evaluate(async () => {
       const frames = [];
       for (let i = 0; i < 24; i++) {
@@ -58,7 +62,7 @@ const launch = () => electron.launch({ ...(packaged ? { executablePath: path.joi
     await page.waitForFunction(() => Number(document.querySelector(".theme-toggle").style.getPropertyValue("--theme-progress")) === .5);
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "system");
     await page.locator(".theme-toggle").screenshot({ path: path.join(out, "theme-auto.png") });
-    await page.getByRole("button", { name: "切换为深色模式", exact: true }).click();
+    await themeClick('dark');
     await page.waitForFunction(() => Number(document.querySelector(".theme-toggle").style.getPropertyValue("--theme-progress")) === 1);
     const geometry = await page.locator(".theme-toggle").evaluate((button) => ({ width: button.getBoundingClientRect().width,
       parentWidth: button.parentElement.getBoundingClientRect().width, travel: button.clientWidth - 38,
@@ -85,7 +89,7 @@ const launch = () => electron.launch({ ...(packaged ? { executablePath: path.joi
     await page.mouse.move(geometry.thumb.x - geometry.travel, geometry.thumb.y); await page.mouse.down();
     await page.mouse.move(geometry.thumb.x - geometry.travel * .5, geometry.thumb.y, { steps: 8 }); await page.mouse.up();
     await page.waitForFunction(() => document.querySelector(".theme-toggle").dataset.mode === "system");
-    await page.getByRole("button", { name: "切换为深色模式", exact: true }).click();
+    await themeClick('dark');
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
     await page.screenshot({ path: path.join(out, "overview-dark.png") });
     await page.getByRole("button", { name: "连接诊断", exact: true }).click();
@@ -95,11 +99,11 @@ const launch = () => electron.launch({ ...(packaged ? { executablePath: path.joi
     assert.equal(results.length, 2); assert.ok(results.every((r) => r.ok && r.httpStatus === 200 && r.firstTextMs >= r.headersMs && r.outputTokens === 2));
     await page.locator(".diagnostic-extra summary").first().click();
     await page.screenshot({ path: path.join(out, "diagnostics-dark.png"), fullPage: true });
-    await page.getByRole("button", { name: "切换为浅色模式", exact: true }).click();
+    await themeClick('light');
     await page.screenshot({ path: path.join(out, "diagnostics-light.png"), fullPage: true });
     await page.getByRole("button", { name: "供应商与模型", exact: true }).click();
-    await page.getByRole("button", { name: "切换为自动模式", exact: true }).click();
-    await page.getByRole("button", { name: "切换为深色模式", exact: true }).click();
+    await themeClick('system');
+    await themeClick('dark');
     await page.waitForFunction(() => Number(document.querySelector(".theme-toggle").style.getPropertyValue("--theme-progress")) === 1);
     await page.screenshot({ path: path.join(out, "providers-dark.png") });
     assert.equal(await page.locator('.supplier-symbol img').evaluateAll((imgs) => imgs.length > 0 && imgs.every((img) => getComputedStyle(img).filter !== "none")), true);

@@ -10,7 +10,7 @@ import {
   BellRing,
   Loader2,
   ExternalLink,
-} from "lucide-react";
+} from "./icons.jsx";
 import "./updates.css";
 const api = window.ass;
 const date = (value) =>
@@ -65,16 +65,6 @@ export function Updates({ state, act, busy }) {
     act("update-open", () => api.call("update-open", kind));
   return (
     <div className="updates-page">
-      <label className="check-field small">
-        <input
-          type="checkbox"
-          checked={state.autoStart}
-          onChange={(e) =>
-            act("auto", () => api.call("autostart", e.target.checked))
-          }
-        />
-        登录 Windows 时启动
-      </label>
       <section className="ass-brand-hero">
         <img src="./ass-logo.png" alt="ASS 菊花标志" />
         <div>
@@ -138,6 +128,11 @@ export function Updates({ state, act, busy }) {
           )}
         </div>
         <div className="update-preferences">
+          <label className="update-toggle">
+            <span><strong>开机启动</strong><small>登录 Windows 后自动启动 ASS。</small></span>
+            <input type="checkbox" role="switch" aria-label="开机启动" checked={state.autoStart} disabled={!!busy}
+              onChange={(e) => act("auto", () => api.call("autostart", e.target.checked))} />
+          </label>
           <label className="update-toggle">
             <span>
               <strong>自动检查更新</strong>

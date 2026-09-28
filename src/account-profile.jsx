@@ -1,5 +1,5 @@
 import React from "react";
-import { RefreshCw, ExternalLink } from "lucide-react";
+import { RefreshCw, ExternalLink } from "./icons.jsx";
 const api = window.ass;
 const plans = {
   free: "Free",

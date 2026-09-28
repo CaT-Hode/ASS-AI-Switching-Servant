@@ -11,7 +11,7 @@ import {
   GripVertical,
   RefreshCw,
   AlertTriangle,
-} from "lucide-react";
+} from "./icons.jsx";
 import { Modal, ModelEditor, ProviderEditor } from "./editors.jsx";
 import { ActionMenu } from "./menus.jsx";
 import {

@@ -1,76 +1,13 @@
-/* Interruptible geometry and a short click echo; actions are never delayed. */
-.app-shell[data-input="pointer"] :is(button, summary) > svg.lucide:not(.spin),
-.app-shell[data-input="pointer"] :is(button, summary) > svg.lucide:not(.spin) > *,
-.app-shell[data-input="pointer"] .client-glyph {
-  transform-box: fill-box; transform-origin: center;
-  transition: transform 200ms var(--ease-out), opacity 160ms ease, fill 160ms ease, d 240ms var(--ease-out);
-}
-.app-shell :is(button, summary) > svg.lucide:not(.spin) { overflow: visible; }
-.app-shell :is(button, summary) > .lucide-activity > path { d: path("M2 12 L6 12 L9 3 L15 21 L18 12 L22 12"); }
+/* Motion belongs to the icon's named parts, not to its outer silhouette. */
+.ass-icon { overflow: visible; flex-shrink: 0; }
+.ass-icon [data-part] { transform-box: view-box; transform-origin: 12px 12px; }
 details > summary > svg { transform-origin: center; }
 details[open] > summary > .lucide-chevron-right { transform: rotate(90deg); }
-
 @media (prefers-reduced-motion: no-preference) {
   .app-shell[data-input="pointer"] button:active:not(:disabled, .theme-toggle) { transform: scale(.97); }
-  .app-shell[data-input="pointer"] .check-model.passed .lucide-zap { transform: scale(1.06); }
-  @media (hover: hover) and (pointer: fine) {
-    .app-shell[data-input="pointer"] :is(button, summary):hover:not(:disabled) > :where(svg.lucide:not(.spin)) { transform: translateY(-1px) scale(1.08); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-refresh-cw { transform: rotate(100deg); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-settings2 path:first-child { transform: translateX(2px) scaleX(.78); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-settings2 path:nth-child(2) { transform: translateX(-2px) scaleX(.78); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-settings2 circle:nth-of-type(1) { transform: translateX(-5px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-settings2 circle:nth-of-type(2) { transform: translateX(5px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-settings { transform: rotate(45deg); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-trash2 :is(path:first-child, path:nth-child(3)) { transform-box: view-box; transform-origin: 5px 6px; transform: translateY(-1px) rotate(-14deg); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-trash2 line { transform: scaleY(.84); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > :is(.lucide-plus, .lucide-x) { transform: rotate(90deg) scale(1.12); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-download :is(line, polyline) { transform: translateY(3px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-upload :is(line, polyline) { transform: translateY(-3px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > :is(.lucide-download, .lucide-upload) path:first-child { transform: scaleX(1.12); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-chevron-right { transform: translateX(3px) scaleX(1.15); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-zap { transform: rotate(-12deg) scale(1.16); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-layout-grid rect:nth-child(1) { transform: translate(-1px, -1px) rotate(-8deg) scale(.88); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-layout-grid rect:nth-child(2) { transform: translate(1px, -1px) rotate(8deg) scale(.88); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-layout-grid rect:nth-child(3) { transform: translate(1px, 1px) rotate(-8deg) scale(.88); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-layout-grid rect:nth-child(4) { transform: translate(-1px, 1px) rotate(8deg) scale(.88); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-boxes { transform: translateY(-1px) rotate(-9deg) scale(1.08); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-boxes path:nth-child(-n+3) { transform: translateY(-1.1px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-activity > path { d: path("M2 12 L5 12 L10 7 L14 17 L19 12 L22 12"); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-monitor rect { transform: translateY(-1px) scale(1.1, .85); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-monitor path { transform: translateY(1px) scaleX(.84); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-play { transform: translateX(2px) scale(1.12); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > :is(.lucide-search, .lucide-scan-search) circle { transform: scale(1.23); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-scan-search path:nth-child(-n+4) { transform: scale(.86); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > :is(.lucide-folder, .lucide-folder-open) { transform-origin: center bottom; transform: skewX(-8deg) scaleY(.92); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > :is(.lucide-log-in, .lucide-log-out, .lucide-external-link) > :not(:first-child) { transform: translate(2px, -1px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-arrow-right-left { transform: rotate(180deg); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > :is(.lucide-key-round, .lucide-key) { transform: rotate(-20deg); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-wallet { transform: rotate(-6deg) scale(1.1); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-wallet path:last-child { transform: translateX(1.5px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-user-round circle { transform: translateY(-1.5px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-power path { transform: translateY(-1.8px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > :is(.lucide-check, .lucide-check-check) { transform: rotate(-8deg) scale(1.12); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-ellipsis circle:nth-child(1) { transform: translateY(-2px); }
-    .app-shell[data-input="pointer"] button:hover:not(:disabled) > .lucide-ellipsis circle:nth-child(3) { transform: translateY(2px); }
-    .app-shell[data-input="pointer"] .client-select:hover .client-glyph { transform: translateY(-1px) rotate(-5deg) scale(1.08); }
-    .app-shell[data-input="pointer"] details > summary:hover > .lucide-chevron-right { transform: translateX(2px); }
-    .app-shell[data-input="pointer"] details[open] > summary:hover > .lucide-chevron-right { transform: translateY(2px) rotate(90deg); }
-  }
-  /* Pressed shapes remain for 240ms after a quick pointer click. */
-  .app-shell[data-input="pointer"] :is(button, summary):is(:active, [data-icon-pulse]):not(:disabled) > :where(svg.lucide:not(.spin)) { transform: scale(.9) rotate(-6deg); transition-duration: 95ms; }
-  .app-shell[data-input="pointer"] button:is(:active, [data-icon-pulse]):not(:disabled) > :is(.lucide-refresh-cw, .lucide-settings) { transform: rotate(180deg) scale(.94); }
-  .app-shell[data-input="pointer"] button:is(:active, [data-icon-pulse]):not(:disabled) > :is(.lucide-plus, .lucide-x) { transform: rotate(180deg) scale(.9); }
-  .app-shell[data-input="pointer"] button:is(:active, [data-icon-pulse]):not(:disabled) > .lucide-layout-grid rect { transform: scale(.76); }
-  .app-shell[data-input="pointer"] button:is(:active, [data-icon-pulse]):not(:disabled) > .lucide-activity path { d: path("M2 12 L7 12 L11 2 L14 22 L17 12 L22 12"); }
-  .app-shell[data-input="pointer"] button:is(:active, [data-icon-pulse]):not(:disabled) > .lucide-settings2 circle:nth-of-type(1) { transform: translateX(-2px); }
-  .app-shell[data-input="pointer"] button:is(:active, [data-icon-pulse]):not(:disabled) > .lucide-settings2 circle:nth-of-type(2) { transform: translateX(2px); }
-  .app-shell[data-input="pointer"] button:is(:active, [data-icon-pulse]):not(:disabled) > .lucide-trash2 :is(path:first-child, path:nth-child(3)) { transform-box: view-box; transform-origin: 5px 6px; transform: translateY(-2px) rotate(-25deg); }
-  .app-shell[data-input="pointer"] button:is(:active, [data-icon-pulse]):not(:disabled) > .lucide-zap { transform: rotate(9deg) scale(1.24); }
-  .app-shell[data-input="pointer"] button:is(:active, [data-icon-pulse]):not(:disabled) > :is(.lucide-play, .lucide-chevron-right) { transform: translateX(4px) scale(.92); }
-  .app-shell[data-input="pointer"] .client-select:is(:active, [data-icon-pulse]) .client-glyph { transform: scale(.94) rotate(3deg); }
 }
-.app-shell[data-input="keyboard"] :is(button, summary, button > svg, button > svg > *, summary > svg, .client-glyph) { transition: none !important; }
+.app-shell[data-input="keyboard"] :is(button, summary, .client-glyph) { transition: none !important; }
 @media (prefers-reduced-motion: reduce) {
-  .app-shell :is(button, summary, button > svg, button > svg > *, summary > svg, .client-glyph) { transition: none !important; }
+  .app-shell :is(button, summary, .client-glyph) { transition: none !important; }
   .app-shell .spin { animation: none; }
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Power, Loader2, Wrench, SlidersHorizontal, RotateCw } from "lucide-react";
+import { Power, Loader2, Wrench, SlidersHorizontal, RotateCw } from "./icons.jsx";
 import { Modal } from "./editors.jsx";
 import "./connections.css";
 const api = window.ass;

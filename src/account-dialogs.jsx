@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Search, KeyRound, Plus, ChevronRight } from "lucide-react";
+import { Search, KeyRound, Plus, ChevronRight } from "./icons.jsx";
 import { Modal } from "./editors.jsx";
 const api = window.ass;
 export function OfficialApiForm({ client, profiles, provider, preset, onClose }) {

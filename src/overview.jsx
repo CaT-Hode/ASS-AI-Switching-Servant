@@ -9,7 +9,7 @@ import {
   Info,
   Zap,
   UserRound,
-} from "lucide-react";
+} from "./icons.jsx";
 import {
   CLIENT_NAMES,
   detectedClients,

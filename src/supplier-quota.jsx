@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw } from "./icons.jsx";
 import { ElapsedTime } from "./diagnostic-time.jsx";
 import { exactTime } from "./relative-time.mjs";
 const api = window.ass;

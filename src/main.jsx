@@ -17,7 +17,7 @@ import {
   Loader2,
   Play,
   Square,
-} from "lucide-react";
+} from "./icons.jsx";
 import "./style.css";
 import "./controls.css";
 import "./polish.css";
@@ -279,7 +279,7 @@ function Diagnostics({ state, providers, act, busy }) {
   );
 }
 function App() {
-  const iconClick = useIconMotion();
+  useIconMotion();
   const [state, setState] = useState(null),
     [view, setViewLocal] = useState("overview"),
     [clientTarget, setClientTargetLocal] = useState("codex"),
@@ -402,7 +402,6 @@ function App() {
       className="app-shell"
       data-window-chrome={api.windowChrome || undefined}
       data-input="keyboard"
-      onClickCapture={iconClick}
       onPointerDownCapture={(e) => {
         e.currentTarget.dataset.input = "pointer";
       }}
@@ -419,7 +418,11 @@ function App() {
         <div className="brand">
           <img src="./ass-logo.png" alt="ASS 菊花标志" />
           <div>
-            <strong>ASS</strong>
+            <div className="brand-title"><strong>ASS</strong>
+              <button className="version-button" aria-label="查看 ASS 版本与更新" title={state.updates.available ? "发现新版本" : "版本与更新"} onClick={() => setView("updates")}>
+                {state.updates.available && <span className="update-dot" />}v{state.version}
+              </button>
+            </div>
             <small>AI 路由</small>
           </div>
         </div>
@@ -444,7 +447,6 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <ThemeControl value={state.preferences.theme} onChange={(theme) => remember({ theme })} />
           <section
             className={
               "sidebar-service" + (!state.service.running ? " stopped" : "")
@@ -467,16 +469,8 @@ function App() {
               管理客户端接入
             </Button>
           </section>
+          <ThemeControl value={state.preferences.theme} onChange={(theme) => remember({ theme })} />
         </div>
-        <button
-          className="version version-button"
-          aria-label="查看 ASS 版本与更新"
-          onClick={() => setView("updates")}
-        >
-          {state.updates.available && <span className="update-dot" />}v
-          {state.version}
-          {state.updates.available ? " · 发现新版" : " · 检查更新"}
-        </button>
       </aside>
       <main>
         <header className="page-header">

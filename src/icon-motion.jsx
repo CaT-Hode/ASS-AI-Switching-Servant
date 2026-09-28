@@ -1,19 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
+import { attachIconMotion } from "./icon-player.mjs";
 
-// A short release accent remains visible after a quick click. CSS transitions
-// retarget from their current shape; repeated clicks never restart keyframes.
+// Transient animation state stays outside React; one listener set per window.
 export function useIconMotion() {
-  const timers = useRef(new Map());
-  useEffect(() => () => {
-    for (const [node, timer] of timers.current) { clearTimeout(timer); delete node.dataset.iconPulse; }
-    timers.current.clear();
-  }, []);
-  return (event) => {
-    if (event.detail === 0 || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const node = event.target.closest?.("button, summary");
-    if (!node || node.matches(":disabled, .theme-toggle") || !node.querySelector("svg.lucide")) return;
-    clearTimeout(timers.current.get(node));
-    node.dataset.iconPulse = "true";
-    timers.current.set(node, setTimeout(() => { delete node.dataset.iconPulse; timers.current.delete(node); }, 240));
-  };
+  useEffect(() => attachIconMotion(document), []);
 }
