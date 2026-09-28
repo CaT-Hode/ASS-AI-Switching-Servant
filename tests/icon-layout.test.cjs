@@ -21,5 +21,10 @@ test("icon export enlarges padded artwork to 94 percent and centers it without s
 test("icon export rejects empty or invalid input without replacing the asset", () => {
   assert.throws(() => iconCrop(Buffer.alloc(0), 0, 0));
   assert.throws(() => iconCrop(Buffer.alloc(16), 2, 2));
-  assert.throws(() => iconCrop(rectangle(4, 4, 0, 0, 4, 4), 4, 4, 0.94));
+  assert.throws(() => iconCrop(rectangle(8, 4, 0, 0, 8, 4), 8, 4, 0.94));
+});
+test("already tightly framed square artwork does not gain extra whitespace or fail export", () => {
+  const { crop, occupancy } = iconCrop(rectangle(100, 100, 1, 1, 98, 98), 100, 100, .94);
+  assert.deepEqual(crop, { x: 0, y: 0, width: 100, height: 100 });
+  assert.equal(occupancy, .98);
 });

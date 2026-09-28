@@ -16,6 +16,7 @@ import {
   Unlink,
   ExternalLink,
   ArrowRightLeft,
+  BrandMotion,
 } from "./icons.jsx";
 import { Modal } from "./editors.jsx";
 import {
@@ -34,7 +35,7 @@ const clientBrands = { codex: "openai", claude: "anthropic", opencode: "opencode
 function ClientEntry({ client: c, activeClient, onSelect }) {
   return <div className={"client-entry" + (c.id === activeClient ? " active" : "")}>
     <button className="client-select" aria-label={c.name} aria-pressed={c.id === activeClient} onClick={() => onSelect(c.id)}>
-      <span className="client-glyph" aria-hidden="true">{clientBrands[c.id] ? <img src={"./providers/" + clientBrands[c.id] + ".svg"} alt="" /> : <Terminal size={23} />}</span>
+      <span className="client-glyph motion-brand" aria-hidden="true">{clientBrands[c.id] ? <><img src={"./providers/" + clientBrands[c.id] + ".svg"} alt="" /><BrandMotion brand={clientBrands[c.id]} /></> : <Terminal size={23} />}</span>
       <strong>{c.name}</strong><i className={"client-detected-dot" + (c.detected ? " found" : "")} title={c.detected ? "已识别" : "未识别"} /><ChevronRight size={14} />
     </button>
   </div>;

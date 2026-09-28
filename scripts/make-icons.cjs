@@ -14,8 +14,8 @@ app
     const { width, height } = image.getSize();
     const layout = iconCrop(image.toBitmap(), width, height);
     const icon = image.crop(layout.crop);
-    // Keep the in-app logo untouched. Windows window/tray/shortcut assets use
-    // the same tightly framed artwork as the executable's multi-resolution ICO.
+    // Retain the source for future edits. Every UI and Windows icon consumes
+    // this same tightly framed export rather than the generator's canvas.
     fs.writeFileSync(path.join(root, "public/ass-app-icon.png"), icon.toPNG());
     const sizes = [16, 24, 32, 48, 64, 128, 256];
     const pngs = sizes.map((size) =>

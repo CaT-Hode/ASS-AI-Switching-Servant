@@ -66,7 +66,7 @@ export function Updates({ state, act, busy }) {
   return (
     <div className="updates-page">
       <section className="ass-brand-hero">
-        <img src="./ass-logo.png" alt="ASS 菊花标志" />
+        <img src="./ass-app-icon.png" alt="ASS 菊花标志" />
         <div>
           <div className="ass-wordmark">
             ASS<span>v{state.version}</span>

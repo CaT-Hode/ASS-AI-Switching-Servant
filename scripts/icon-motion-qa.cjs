@@ -38,13 +38,20 @@ const packaged = process.env.ASS_QA_PACKAGED === "1";
     }
     const nav = page.getByRole("button", { name: "路由总览", exact: true });
     await nav.click();
+    await page.mouse.move(480, 35);
     await page.waitForFunction(() => !document.querySelector('[data-icon-animating]'));
     await nav.press("Enter"); assert.equal(await page.locator('[data-icon-animating]').count(), 0, "keyboard does not trigger decorative motion");
     await page.getByRole("button", { name: "供应商与模型", exact: true }).click();
+    await page.getByRole("button", { name: "查看 Icon Fixture 的模型", exact: true }).hover();
+    await page.waitForFunction(() => document.querySelector('[data-provider-id="icons"] .brand-motion-trace')?.dataset.iconPhase === 'hover');
     await page.getByRole("button", { name: "查看 Icon Fixture 的模型", exact: true }).click();
     for (const [label, name] of [["模型详情 icon-model", "settings"], ["检测模型 icon-model", "zap"], ["删除模型 icon-model", "trash"]]) {
       await hoverFrames(page.getByRole("button", { name: label, exact: true }), name);
     }
+    const lid = page.getByRole('button', { name: '删除模型 icon-model', exact: true }).locator('[data-part="lid"]');
+    await page.waitForFunction(() => document.querySelector('[aria-label="删除模型 icon-model"] svg')?.dataset.iconPhase === 'hover');
+    await lid.evaluate(async (node) => { await new Promise((resolve) => setTimeout(resolve, 650)); });
+    assert.ok(await lid.evaluate((n) => new DOMMatrix(getComputedStyle(n).transform).b < -.4), 'trash lid remains open throughout hover');
     await page.getByRole("button", { name: "删除模型 icon-model", exact: true }).hover();
     await page.screenshot({ path: path.join(out, "model-icons-hover.png") });
     await page.getByRole("button", { name: "删除模型 icon-model", exact: true }).click();

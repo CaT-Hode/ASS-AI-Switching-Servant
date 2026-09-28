@@ -11,6 +11,7 @@ import {
   GripVertical,
   RefreshCw,
   AlertTriangle,
+  BrandMotion,
 } from "./icons.jsx";
 import { Modal, ModelEditor, ProviderEditor } from "./editors.jsx";
 import { ActionMenu } from "./menus.jsx";
@@ -108,6 +109,7 @@ function SourceCard({
   return (
     <article
       className="supplier-card"
+      data-icon-control="provider"
       aria-label={p.name + " 供应商"}
       data-provider-id={p.id}
       onClick={(event) => {
@@ -119,11 +121,12 @@ function SourceCard({
         ref={buttonRef}
         type="button"
         className="supplier-open"
+        data-icon-scope="parent"
         aria-label={"查看 " + p.name + " 的模型"}
         onClick={onSelect}
       />
       <header>
-        <span className="supplier-symbol">
+        <span className="supplier-symbol motion-brand">
           {brand && failedBrand !== brand ? (
             <img
               src={"./providers/" + brand + ".svg"}
@@ -136,6 +139,7 @@ function SourceCard({
           ) : (
             p.name.slice(0, 1).toUpperCase()
           )}
+          <BrandMotion brand={brand} />
         </span>
         <div className="supplier-title">
           <h2

@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronRight, Layers3, RefreshCw } from "./icons.jsx";
+import { ChevronRight, Layers3, RefreshCw, BrandMotion } from "./icons.jsx";
 import { providerBrand } from "./provider-brand.mjs";
 const api = window.ass;
 const protocols = { "openai-chat": "Chat Completions", "openai-responses": "Responses", anthropic: "Anthropic Messages" };
@@ -24,7 +24,7 @@ export function ClientInjection({ client, state, act, busy, onManage }) {
         const checked = !excluded.has(id) && compatible.length > 0;
         return <section className="client-provider" key={id} aria-label={models[0].providerName + " 接入供应商"}>
           <details>
-            <summary><span className="client-provider-logo" aria-hidden="true">{brand ? <img src={"./providers/" + brand + ".svg"} alt="" /> : <Layers3 size={21} />}</span>
+            <summary><span className="client-provider-logo motion-brand" aria-hidden="true">{brand ? <><img src={"./providers/" + brand + ".svg"} alt="" /><BrandMotion brand={brand} /></> : <Layers3 size={21} />}</span>
               <strong>{models[0].providerName}</strong><small>{compatible.length} 个模型</small><ChevronRight className="provider-disclosure" size={16} /></summary>
             <div className="client-provider-models">{models.map((m) => <div key={m.ref} className={m.issue ? "unavailable" : ""}>
               <span title={m.model}>{m.name || m.model}<small>{m.name !== m.model ? m.model : ""}</small></span>

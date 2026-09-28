@@ -10,16 +10,18 @@ const tray = p("M3 15v5a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-5", "tray");
 const lens = [c(10.5, 10.5, 5.5), p("m15 15 5 5")];
 const roundArrow = (reverse = false) => [g("rotor", [p(reverse ? "M3 10a9 9 0 1 1 1 8M3 4v6h6" : "M21 10a9 9 0 1 0-1 8m1-14v6h-6")])];
 const chevron = (d) => [p(d, "arrow")];
-const check = p("m6 12 4 4 8-8", "tick");
+const check = p("m6 12 4 4 8-8", "tick", { pathLength: 1 });
 const layer = (y, part) => p(`m3 ${y} 9 5 9-5`, part);
 const cube = (x, y, part) => g(part, [p(`m${x} ${y} 5 2.8v5.6l-5 2.8-5-2.8v-5.6Zm-5 2.8 5 2.8 5-2.8m-5 2.8v5.6`)]);
 
 export const iconArt = {
   Activity: [p("M2 12h4l3-8 4 16 4-12 2 4h3", "trace"),
+    p("M2 12h4l3-8 4 16 4-12 2 4h3", "trail", { pathLength: 1, strokeDasharray: ".25 .75", strokeDashoffset: 1, opacity: 0, strokeWidth: 2.5 }),
     g("signal", [c(0, 0, 2.8, null, { ...fill, opacity: .16 }), c(0, 0, 1.15, null, fill)], { opacity: 0 })],
   Monitor: [r(3, 3, 18, 14, "frame", { rx: 2 }), p("M8 21h8m-4-4v4"),
     g("picture", [p("m10 7 5 3-5 3Z", null, fill)], { opacity: 0 }),
-    p("M6 14h12", "progress", { opacity: 0, strokeWidth: 1.3, style: { transformOrigin: "6px 14px" } })],
+    p("M6 14h12", "progress", { opacity: 0, strokeWidth: 1.3, style: { transformOrigin: "6px 14px" } }),
+    ...[6, 9, 12, 15].map((x, i) => r(x, 6, 1.5, 6, "bar" + i, { ...effect, rx: .6, style: { transformOrigin: `${x}px 12px` } }))],
   LayoutGrid: [[3, 3], [14, 3], [3, 14], [14, 14]].flatMap(([x, y], i) => [r(x, y, 7, 7), r(x + 1, y + 1, 5, 5, "tile" + i, { ...effect, rx: .5 })]),
   Boxes: [cube(6.5, 10, "left"), cube(17.5, 10, "right"), cube(12, 1, "top")],
   Upload: [tray, arrow("up"), p("M8 21h8", "edge", { opacity: 0 })],
@@ -30,8 +32,9 @@ export const iconArt = {
   SlidersHorizontal: [p("M3 5h18M3 12h18M3 19h18", "rails", { opacity: .5 }),
     ...[[8, 5], [16, 12], [10, 19]].map(([x, y], i) => r(x - 1.5, y - 2, 3, 4, "knob" + i, { rx: 1, fill: "currentColor" }))],
   Trash2: [p("m5 7 1 14h12l1-14M10 10v7m4-7v7", "bin"),
-    g("lid", [p("M3 6h18M9 6V3h6v3")], { style: { transformOrigin: "5px 6px" } })],
-  Search: [g("lens", lens), p("M8 8h3", "glint", { opacity: 0, strokeWidth: 1.3 })],
+    g("lid", [p("M3 6h18M9 6V3h6v3")], { style: { transformOrigin: "5px 6px" } }),
+    p("m10 8 3-1 2 3-3 2Z", "paper", effect)],
+  Search: [g("lens", lens), p("M8 8h3", "glint", { opacity: 0, strokeWidth: 1.3 }), c(10.5, 10.5, 3, "focus", { opacity: 0, strokeWidth: 1.2 })],
   ScanSearch: [p("M7 3H3v4m14-4h4v4M3 17v4h4m14-4v4h-4"), g("lens", [c(10.5, 10.5, 3.5), p("m13 13 4 4")]),
     p("M6 7h12", "scan", { opacity: 0, strokeWidth: 1.2 })],
   Wallet: [g("card", [p("M6 7V3h11v4")], { opacity: 0 }),
@@ -53,18 +56,25 @@ export const iconArt = {
   Square: [r(5, 5, 14, 14, "stop", { rx: 1.5 }), r(7, 7, 10, 10, "fill", effect)],
   Power: [p("M6 5a9 9 0 1 0 12 0", "ring"), p("M12 2v9", "switch"), c(12, 12, 5, "glow", effect)],
   Wrench: [g("tool", [p("M15 4a6 6 0 0 0-7 7l-6 6a3 3 0 0 0 5 5l6-6a6 6 0 0 0 7-8l-4 4-4-4 3-4Z")], { style: { transformOrigin: "15px 9px" } })],
-  Zap: [p("m13 2-10 12h8l-1 8 11-12h-8Z", "bolt"), p("M3 5 1 4m20 15 2 1", "spark", { opacity: 0, fill: "none", strokeWidth: 1.3 })],
+  Zap: [p("m13 2-10 12h8l-1 8 11-12h-8Z", "bolt"), p("m13 2-10 12h8l-1 8 11-12h-8Z", "charge", effect), p("M3 5 1 4m20 15 2 1", "spark", { opacity: 0, fill: "none", strokeWidth: 1.3 })],
   UserRound: [c(12, 8, 4, "head"), p("M4 21v-2a8 8 0 0 1 16 0v2", "shoulders")],
   Unlink: [p("m9 8 2-2a5 5 0 0 1 7 7l-2 2", "upper"), p("m15 16-2 2a5 5 0 0 1-7-7l2-2", "lower"), p("M4 3v3H1m22 12h-3v3", "break")],
   MoreHorizontal: [c(5, 12, 1, "dot0", fill), c(12, 12, 1, "dot1", fill), c(19, 12, 1, "dot2", fill)],
   GripVertical: [0, 1, 2].flatMap((i) => [c(9, 5 + i * 7, 1, "left" + i, fill), c(15, 5 + i * 7, 1, "right" + i, fill)]),
   Layers: [p("m3 7 9-5 9 5-9 5Z", "top"), layer(12, "middle"), layer(17, "bottom")],
   Layers3: [p("m3 7 9-5 9 5-9 5Z", "top"), layer(12, "middle"), layer(17, "bottom")],
-  Network: [p("M12 8v5m-7 4v-4h14v4", "wires"), r(9, 2, 6, 6, "source"), r(2, 17, 6, 5, "left"), r(16, 17, 6, 5, "right"), c(12, 9, 1, "packet", effect)],
+  Network: [p("M12 8v5m-7 4v-4h14v4", "wires"), r(9, 2, 6, 6, "source"), r(2, 17, 6, 5, "left"), r(16, 17, 6, 5, "right"), c(12, 9, 1.5, "packet", effect), c(12, 9, 1.5, "packetLeft", effect)],
   Check: [check], CheckCircle2: [c(12, 12, 9, "ring"), check],
-  ShieldCheck: [p("m12 2 9 4v6c0 5-5 9-9 10-4-1-9-5-9-10V6Z", "shield"), p("m8 12 3 3 5-6", "tick")],
+  ShieldCheck: [p("m12 2 9 4v6c0 5-5 9-9 10-4-1-9-5-9-10V6Z", "shield"), p("m8 12 3 3 5-6", "tick", { pathLength: 1 })],
   BellRing: [g("bell", [p("M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"), p("M10 21h4", "clapper")], { style: { transformOrigin: "12px 3px" } }), p("M2 4v4m20-4v4", "echo", { opacity: .5 })],
   Info: [c(12, 12, 9), p("M12 11v6", "stem"), c(12, 7, .7, "dot", fill)],
   AlertCircle: [c(12, 12, 9), p("M12 6v7", "stem"), c(12, 17, .7, "dot", fill)],
   AlertTriangle: [p("m12 3 10 18H2Z"), p("M12 9v4", "stem"), c(12, 17, .7, "dot", fill)],
+  BrandOpenai: [g("orbit", [p("M12 1a11 11 0 0 1 11 11M12 23A11 11 0 0 1 1 12"), c(12, 1, 1.4, null, fill), c(12, 23, 1.4, null, fill)])],
+  BrandAnthropic: [g("rays", [p("M3 8 1 7M5 4 4 2M10 2V0M21 16l2 1m-4 3 1 2m-6 0v2")])],
+  BrandDeepseek: [p("M1 20q5-4 10 0t12 0", "wave0"), p("M1 23q5-4 10 0t12 0", "wave1")],
+  BrandOpencode: [p("M3 21h12", "line", { style: { transformOrigin: "3px 21px" } }), r(17, 19, 3, 3, "cursor", { ...fill, rx: .4 })],
+  BrandKimi: [p("M1 5V1h4m14 22h4v-4", "corners"), p("M2 22 22 2", "scan", { opacity: .4 })],
+  BrandZai: [p("M1 3h22", "scan"), p("M1 1v4m22-4v4M1 19v4m22-4v4", "corners")],
+  BrandProvider: [p("M1 7V1h6m10 0h6v6M1 17v6h6m10 0h6v-6", "corners"), c(22, 2, 1.5, "dot", fill)],
 };

@@ -14,8 +14,10 @@ function iconCrop(bitmap, width, height, occupancy = 0.94) {
   }
   if (right < 0) throw Error("Icon contains no visible artwork");
   const artwork = { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
-  const side = Math.ceil(Math.max(artwork.width, artwork.height) / occupancy);
-  if (side > Math.min(width, height)) throw Error("Logo needs more source padding for square icon export");
+  // A tightly framed square is already usable: never require extra source
+  // whitespace merely to hit the preferred occupancy ratio.
+  const side = Math.min(Math.min(width, height), Math.ceil(Math.max(artwork.width, artwork.height) / occupancy));
+  if (Math.max(artwork.width, artwork.height) > side) throw Error("Non-square logo needs padding for square icon export");
   const crop = {
     x: Math.max(0, Math.min(width - side, Math.floor(left + artwork.width / 2 - side / 2))),
     y: Math.max(0, Math.min(height - side, Math.floor(top + artwork.height / 2 - side / 2))),

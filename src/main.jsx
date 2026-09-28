@@ -416,7 +416,7 @@ function App() {
       {api.windowChrome && <div className="window-chrome" aria-hidden="true" />}
       <aside className="sidebar">
         <div className="brand">
-          <img src="./ass-logo.png" alt="ASS 菊花标志" />
+          <img src="./ass-app-icon.png" alt="ASS 菊花标志" />
           <div>
             <div className="brand-title"><strong>ASS</strong>
               <button className="version-button" aria-label="查看 ASS 版本与更新" title={state.updates.available ? "发现新版本" : "版本与更新"} onClick={() => setView("updates")}>

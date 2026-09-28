@@ -23,3 +23,10 @@ export const Activity = icon("Activity"), Monitor = icon("Monitor"), LayoutGrid 
   Wrench = icon("Wrench"), Zap = icon("Zap"), UserRound = icon("UserRound"), Unlink = icon("Unlink"), MoreHorizontal = icon("MoreHorizontal"), GripVertical = icon("GripVertical"),
   Layers = icon("Layers"), Layers3 = icon("Layers3"), Network = icon("Network"), Check = icon("Check"), CheckCircle2 = icon("CheckCircle2"), ShieldCheck = icon("ShieldCheck"),
   BellRing = icon("BellRing"), Info = icon("Info"), AlertCircle = icon("AlertCircle"), AlertTriangle = icon("AlertTriangle");
+
+const brandTraces = { openai: icon("BrandOpenai"), anthropic: icon("BrandAnthropic"), deepseek: icon("BrandDeepseek"),
+  opencode: icon("BrandOpencode"), kimi: icon("BrandKimi"), zai: icon("BrandZai"), fallback: icon("BrandProvider") };
+export function BrandMotion({ brand }) {
+  const Trace = brandTraces[brand] || brandTraces.fallback;
+  return <Trace className="brand-motion-trace" strokeWidth={1.2} />;
+}
