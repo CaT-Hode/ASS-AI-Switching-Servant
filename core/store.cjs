@@ -17,19 +17,22 @@ class Store {
     this.state = { providers: [], officialOverrides: {}, autoStart: false };
     this.officialModels = [];
     this.readCatalog();
-    if (fs.existsSync(this.file)) {
-      const persisted = JSON.parse(fs.readFileSync(this.file, "utf8"));
-      this.state = {
-        ...this.state,
-        ...persisted,
-        providers: persisted.providers.map((p) => ({
-          ...p,
-          ...JSON.parse(crypto.decryptString(Buffer.from(p.secrets, "base64"))),
-          secrets: undefined,
-        })),
-      };
-    }
+    this.persisted = null;
+    this.reload();
     this.writeCatalog();
+  }
+  reload() {
+    const text = fs.existsSync(this.file) ? fs.readFileSync(this.file, "utf8") : null;
+    if (text === this.persisted) return false;
+    if (text === null) throw Error("供应商配置被外部移除，未用旧内存覆盖");
+    const persisted = JSON.parse(text);
+    if (!Array.isArray(persisted.providers)) throw Error("供应商配置无法识别，未覆盖");
+    const state = { ...this.state, ...persisted, providers: persisted.providers.map(p => ({
+      ...p, ...JSON.parse(this.crypto.decryptString(Buffer.from(p.secrets, "base64"))), secrets: undefined,
+    })) };
+    this.state = state;
+    this.persisted = text;
+    return true;
   }
   readCatalog() {
     try {
@@ -50,6 +53,8 @@ class Store {
     }
   }
   save() {
+    if ((fs.existsSync(this.file) ? fs.readFileSync(this.file, "utf8") : null) !== this.persisted)
+      throw Error("供应商配置已在外部更新，请刷新后重试；未覆盖现有文件");
     if (!this.crypto.isEncryptionAvailable())
       throw new Error("Windows 凭据加密不可用，未保存");
     const providers = this.state.providers.map(
@@ -65,7 +70,9 @@ class Store {
     try {
       this.writeCatalog();
       // Settings are authoritative on restart; commit them only after the derived catalog.
-      atomic(this.file, JSON.stringify({ ...this.state, providers }, null, 2));
+      const text = JSON.stringify({ ...this.state, providers }, null, 2);
+      atomic(this.file, text);
+      this.persisted = text;
     } catch (error) {
       if (previous) atomic(catalog, previous);
       throw error;

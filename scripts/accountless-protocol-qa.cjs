@@ -32,6 +32,11 @@ async function start() {
       return new Response(events.map(e => "data: " + JSON.stringify(e) + "\n\n").join(""));
     });
   });
+  await app.evaluate(() => {
+    // Only advertise the fixture desktop; this QA never opens the real app.
+    const t = global.assTest, desktop = t.harnesses.desktop.bind(t.harnesses);
+    t.harnesses.desktop = id => id === "claude" ? "C:\\fixture\\Claude.exe" : desktop(id);
+  });
 }
 async function stop() { await app?.evaluate(() => global.assTest.quit()).catch(() => {}); await app?.close().catch(() => {}); app = null; }
 async function choose(name) {
@@ -88,7 +93,8 @@ async function exitBy(dialog, name) {
     await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
     snapshot = await call("snapshot");
     assert.equal(snapshot.connections.clients.claude.runtimeStatus, "terminal-ready");
-    await page.getByText("Claude Code 终端免登录 · ASS 需保持运行", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "启动桌面版", exact: true }).isEnabled(), true);
+    await page.getByText("终端与桌面版免登录 · ASS 需保持运行", { exact: true }).waitFor();
     assert.equal(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude/settings.json"))).env.ANTHROPIC_BASE_URL, "http://127.0.0.1:25839/clients/claude/models");
     assert.equal(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude.json"))).hasCompletedOnboarding, true);
     assert.deepEqual(snapshot.harnesses.clients.find(c => c.id === "claude").injection.models.map(m => m.protocol), ["anthropic", "openai-chat"]);
@@ -106,9 +112,7 @@ async function exitBy(dialog, name) {
     await page.locator(".claude-desktop-setup summary").click();
     await page.getByRole("button", { name: "复制网关地址" }).waitFor();
     await page.getByRole("button", { name: "复制本机密钥" }).waitFor();
-    const desktopSwitch = page.getByRole("switch", { name: "Claude 桌面版第三方推理" });
-    assert.equal(await desktopSwitch.getAttribute("aria-checked"), "false");
-    await desktopSwitch.click();
+    assert.equal(await page.getByRole("switch", { name: "Claude 桌面版第三方推理" }).count(), 0);
     assert.equal((await call("snapshot")).claudeDesktop.current, true);
     await page.getByText("已配置", { exact: true }).waitFor();
     const library = path.join(data, "claude-desktop/configLibrary");
@@ -119,10 +123,10 @@ async function exitBy(dialog, name) {
     assert.equal(JSON.parse(fs.readFileSync(path.join(data, "claude-desktop/claude_desktop_config.json"), "utf8")).deploymentMode, "3p");
     const discovered = await fetch(gatewayUrl + "/v1/models", { headers: { authorization: "Bearer " + gatewayKey } });
     assert.equal(discovered.status, 200);
-    assert.deepEqual((await discovered.json()).data.map(model => model.id), ["fixture::dual", "fixture::chat-only"]);
+    assert.deepEqual((await discovered.json()).data.map(model => model.id), ["claude-ass/fixture::dual", "claude-ass/fixture::chat-only"]);
     const response = await fetch(gatewayUrl + "/v1/messages", { method: "POST",
       headers: { authorization: "Bearer " + gatewayKey, "content-type": "application/json" },
-      body: JSON.stringify({ model: "fixture::dual", messages: [{ role: "user", content: "Say OK" }], max_tokens: 16, stream: true }) });
+      body: JSON.stringify({ model: "claude-ass/fixture::dual", messages: [{ role: "user", content: "Say OK" }], max_tokens: 16, stream: true }) });
     assert.equal(response.status, 200);
     assert.match(await response.text(), /OK/);
     await page.locator(".client-provider summary").click();
@@ -163,10 +167,8 @@ async function exitBy(dialog, name) {
     assert.equal((await call("snapshot")).connections.clients.codex.accountless, false);
     assert.equal((await call("snapshot")).connections.clients.claude.accountless, true);
     await choose("Claude Code");
-    await page.locator(".claude-desktop-setup summary").click();
-    await page.getByRole("switch", { name: "Claude 桌面版第三方推理" }).click();
-    assert.equal((await call("snapshot")).claudeDesktop.current, false);
     await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
+    assert.equal((await call("snapshot")).claudeDesktop.current, false);
     assert.equal((await call("snapshot")).connections.clients.claude.accountless, false);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude/settings.json"))), {});
     assert.equal(fs.readFileSync(path.join(codex, "auth.json"), "utf8"), auth);
@@ -174,7 +176,7 @@ async function exitBy(dialog, name) {
     // their accountless overlays, without touching the original OAuth.
     await choose("Codex"); await confirm(page.getByRole("switch", { name: "Codex 无账号启动" }));
     await choose("Claude Code"); await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
-    await call("claude-desktop-configure", true);
+    assert.equal((await call("snapshot")).claudeDesktop.current, true);
     const safeExit = await exitDialog();
     // Modal uses the native <dialog> role; click waits for enabled state.
     await exitBy(safeExit, "安全退出");

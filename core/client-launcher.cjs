@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { execFileSync } = require("node:child_process");
 const { createRequire } = require("node:module");
 const { pathToFileURL } = require("node:url");
 
@@ -26,6 +27,13 @@ function stat(file) {
   } catch {
     return null;
   }
+}
+function directories(root, pattern) {
+  if (!root) return [];
+  try { return fs.readdirSync(root, { withFileTypes: true })
+    .filter(e => e.isDirectory() && pattern.test(e.name))
+    .sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }))
+    .map(e => path.join(root, e.name)); } catch { return []; }
 }
 function json(file) {
   try {
@@ -96,6 +104,15 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
   // Electron Desktop is not the CLI: it ignores auth/model arguments and uses
   // a shared application profile. Detect it without launching it or injecting
   // account-specific settings into the user's existing desktop instance.
+  if (harness === "claude") {
+    const desktop = info.isDirectory() ? path.join(location, "claude.exe") : location;
+    if (/^claude\.exe$/i.test(path.basename(desktop)) && stat(desktop)?.isFile() &&
+        (stat(path.join(path.dirname(desktop), "resources/app.asar"))?.isFile() ||
+          /claude/i.test(json(path.join(path.dirname(desktop), "resources/app.asar/package.json")).name || "") ||
+          /claude/i.test(json(path.join(path.dirname(desktop), "resources/app/package.json")).name || "")))
+      return { ...fail("Claude 桌面版 · 通过 Gateway 接入；终端启动请使用 Claude Code CLI"), installed: true,
+        kind: "desktop", desktopExecutable: desktop };
+  }
   if (harness === "antigravity") {
     const files = info.isDirectory() ? ["Antigravity.exe", "Antigravity IDE.exe"].map((name) => path.join(location, name)) : [location];
     for (const desktop of files) {
@@ -220,6 +237,32 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
 function searchLocations(harness, env = process.env) {
   const home = env.USERPROFILE || os.homedir();
   const locations = [findExecutable(COMMANDS[harness] || harness, env)];
+  if (harness === "claude") {
+    if (env.LOCALAPPDATA) {
+      const squirrel = path.join(env.LOCALAPPDATA, "AnthropicClaude");
+      locations.push(path.join(squirrel, "claude.exe"), path.join(env.LOCALAPPDATA, "Programs/Claude/claude.exe"),
+        ...directories(squirrel, /^app-\d/).map(dir => path.join(dir, "claude.exe")));
+    }
+    if (env.ProgramFiles) {
+      const packageName = /^Claude_[\d.]+_(?:x64|arm64|x86)__pzs8sxrjxfjjc$/i;
+      const packages = directories(path.join(env.ProgramFiles, "WindowsApps"), packageName);
+      // WindowsApps enumeration may be denied even when the installed app is
+      // accessible by its exact path. Query registration only during detection.
+      if (!packages.length && process.platform === "win32" && env.ProgramFiles === process.env.ProgramFiles) {
+        try {
+          const output = execFileSync(
+            path.join(process.env.SystemRoot || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"),
+            ["-NoProfile", "-NonInteractive", "-Command",
+              "Get-AppxPackage -Name Claude | Sort-Object Version -Descending | Select-Object -ExpandProperty InstallLocation"],
+            { encoding: "utf8", windowsHide: true, timeout: 5000, maxBuffer: 16384, stdio: ["ignore", "pipe", "pipe"] },
+          );
+          packages.push(...output.split(/\r?\n/).map(s => s.trim())
+            .filter(dir => path.isAbsolute(dir) && packageName.test(path.basename(dir))));
+        } catch {}
+      }
+      locations.push(path.join(env.ProgramFiles, "Claude/claude.exe"), ...packages.map(dir => path.join(dir, "app/claude.exe")));
+    }
+  }
   if (harness === "antigravity") {
     if (env.LOCALAPPDATA) locations.push(path.join(env.LOCALAPPDATA, "agy", "bin", "agy.exe"));
     for (const root of [env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "Programs"), env.ProgramFiles, env["ProgramFiles(x86)"]].filter(Boolean))

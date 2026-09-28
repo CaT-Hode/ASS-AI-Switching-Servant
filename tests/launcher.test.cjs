@@ -114,6 +114,29 @@ test("ambiguous installations are returned separately and package bin cannot esc
   );
 });
 
+test("Claude Store and per-user desktop installations stay distinct from the CLI", (t) => {
+  const { root, write, env } = fixture(t);
+  const store = "programs/WindowsApps/Claude_2.9939.2.0_x64__pzs8sxrjxfjjc/app";
+  const user = "local/AnthropicClaude/app-2.9.0";
+  write("runtime/claude.cmd");
+  for (const dir of [store, user]) {
+    write(dir + "/claude.exe");
+    write(dir + "/resources/app.asar");
+  }
+  const candidates = discoverLaunchers("claude", {
+    ...env, ProgramFiles: path.join(root, "programs"), LOCALAPPDATA: path.join(root, "local"),
+  });
+  assert.equal(candidates.filter(c => c.ready).length, 1);
+  const desktops = candidates.filter(c => c.kind === "desktop");
+  assert.equal(desktops.length, 2);
+  for (const c of desktops) {
+    assert.equal(c.installed, true);
+    assert.equal(c.ready, false);
+    assert.equal(c.executable, "");
+    assert.equal(resolveLauncher("claude", path.dirname(c.desktopExecutable), env).kind, "desktop");
+  }
+});
+
 test("OpenCode Desktop outside PATH is detected without being treated as a CLI", (t) => {
   const { root, write, env } = fixture(t);
   const relative = "local/Programs/@opencode-aidesktop";

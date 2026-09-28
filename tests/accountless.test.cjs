@@ -219,6 +219,6 @@ test("accountless router rejects OAuth, non-injected and subscription models bef
   const discovery = token => fetch(base + "/clients/claude/models/v1/models", { headers: { authorization: "Bearer " + token } });
   assert.equal((await discovery(f.proxy.clients.codex.localToken)).status, 401);
   const models = await (await discovery(f.proxy.clients.claude.localToken)).json();
-  assert.deepEqual(models.data.map(m => m.id), ["relay::test-claude", "relay::test-chat"]);
+  assert.deepEqual(models.data.map(m => m.id), ["relay::test-claude", "claude-ass/relay::test-chat"]);
   assert.equal(models.has_more, false); assert.equal(f.calls.length, 0);
 });

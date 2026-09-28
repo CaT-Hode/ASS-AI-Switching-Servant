@@ -10,7 +10,6 @@ const allowed = [
   "client-model-launch",
   "client-accountless-launch",
   "claude-desktop-copy",
-  "claude-desktop-configure",
   "client-credentials",
   "import",
   "save-provider",

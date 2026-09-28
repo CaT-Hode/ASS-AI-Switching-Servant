@@ -139,8 +139,14 @@ class ClaudeDesktopGateway {
     } finally { this.invalidate(); }
   }
   enable(token, port) {
+    if (this.owner()?.version === 1) return this.enableLegacy(desired(token, port));
+    const plan = this.prepareEnable(token, port);
+    this.commit(plan.changes, plan.owner, "Claude 桌面版本地配置写入失败");
+    return { ok: true, message: "Claude 桌面版已配置。重新打开 Claude 后可通过 ASS 使用注入模型。" };
+  }
+  prepareEnable(token, port) {
     const expected = desired(token, port), owner = this.owner();
-    if (owner?.version === 1) return this.enableLegacy(expected);
+    if (owner?.version === 1) throw Error("请先移除旧版 Claude 桌面策略，再启用一体化无账号接入");
     this.invalidate();
     const { user, machine } = this.policies();
     if (Object.keys(user).length || Object.keys(machine).length)
@@ -158,12 +164,11 @@ class ClaudeDesktopGateway {
     const entries = local.meta.entries || [];
     let metaText = edit(local.metaText, "json", ["entries"], present(entries.some(e => e.id === id) ? entries : [...entries, { id, name: "ASS" }]));
     metaText = edit(metaText, "json", ["appliedId"], present(id));
-    this.commit([
+    return { changes: [
       { file, before: profileText, after: JSON.stringify(expected, null, 2) + "\n" },
       { file: this.settingsFile, before: local.settingsText, after: edit(local.settingsText, "json", ["deploymentMode"], present("3p")) },
       { file: this.metaFile, before: local.metaText, after: metaText },
-    ], next, "Claude 桌面版本地配置写入失败");
-    return { ok: true, message: "Claude 桌面版已配置。重新打开 Claude 后可通过 ASS 使用注入模型。" };
+    ], owner: next };
   }
   preflightDisable() {
     const owner = this.owner();
@@ -184,6 +189,14 @@ class ClaudeDesktopGateway {
     const owner = this.preflightDisable();
     if (!owner) return { ok: true, message: "Claude 桌面版没有 ASS 管理的接入" };
     if (owner.version === 1) return this.disableLegacy(owner);
+    const plan = this.prepareDisable();
+    this.commit(plan.changes, null, "Claude 桌面版本地接入关闭失败");
+    return { ok: true, message: "已关闭 ASS 对 Claude 桌面版的接入，重新打开 Claude 后生效。" };
+  }
+  prepareDisable() {
+    const owner = this.preflightDisable();
+    if (!owner) return { changes: [], owner: null };
+    if (owner.version === 1) throw Error("请先移除旧版 Claude 桌面策略，再切换一体化无账号接入");
     const local = this.local(), file = this.profileFile(owner.id), profileText = read(file);
     if (profileText !== null && localHash(json(profileText)) !== owner.hash)
       throw Error("Claude 桌面版配置已变化，ASS 未删除其他程序的设置");
@@ -199,12 +212,28 @@ class ClaudeDesktopGateway {
     }
     if (!owner.before.metaExisted && !Object.keys(json(metaText)).length) metaText = null;
     if (!owner.before.settingsExisted && !Object.keys(json(settingsText)).length) settingsText = null;
-    this.commit([
+    return { changes: [
       { file: this.metaFile, before: local.metaText, after: metaText },
       { file: this.settingsFile, before: local.settingsText, after: settingsText },
       { file, before: profileText, after: null },
-    ], null, "Claude 桌面版本地接入关闭失败");
-    return { ok: true, message: "已关闭 ASS 对 Claude 桌面版的接入，重新打开 Claude 后生效。" };
+    ], owner: null };
+  }
+  // Included in ProxyConfig's encrypted write-ahead transaction so CLI and
+  // Desktop either commit together or are both restored after failure/crash.
+  plan(token, port) {
+    const result = token ? this.prepareEnable(token, port) : this.prepareDisable();
+    return [...result.changes, { file: this.file, before: read(this.file),
+      after: result.owner ? JSON.stringify(result.owner, null, 2) + "\n" : null }]
+      .filter(change => change.before !== change.after);
+  }
+  allowsFile(file) {
+    return [this.file, this.metaFile, this.settingsFile].includes(file) ||
+      path.dirname(file) === path.dirname(this.metaFile) && uuid.test(path.basename(file, ".json")) && path.extname(file) === ".json";
+  }
+  fingerprint() {
+    const owner = this.owner();
+    return [this.file, this.metaFile, this.settingsFile, ...(owner?.version === 2 ? [this.profileFile(owner.id)] : [])]
+      .map(file => [file, read(file)]);
   }
   // Existing 0.1.32 policies remain reversible. New setups never write Policies:
   // even HKCU\Software\Policies can be read-only for the current Windows user.

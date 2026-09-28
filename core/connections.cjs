@@ -400,7 +400,7 @@ class Connections {
           : plan.ids.some((id) => this.nativeConfig?.isDirect(id))
               ? "已同步原生配置；客户端直连供应商，不依赖 ASS 路由。"
             : plan.ids.includes("claude") && this.proxyConfig?.clients.claude?.accountless
-              ? "无账号启动已生效；在系统终端运行 claude 即可使用注入模型。请保持 ASS 运行。"
+              ? "终端与 Claude 桌面版无账号启动已配置。桌面版重新打开后选择 Continue with Gateway；请保持 ASS 运行。"
               : "已开启接入，从 ASS 新启动客户端时生效。"
           : "已断开所选客户端、恢复其注入文件；账户与会话数据保留。",
       };

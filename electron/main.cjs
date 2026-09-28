@@ -298,6 +298,9 @@ let supplierSync;
 async function syncNativeSuppliers() {
   if (supplierSync) return supplierSync;
   supplierSync = (async () => {
+    // The native scan may follow an external import/migration while ASS stays
+    // open. Never promote from (or later save over) a stale provider snapshot.
+    store.reload();
     const clients = harnesses.snapshot().clients;
     for (const client of clients) {
       for (const profile of harnesses.nativeApis(client.id)) {
@@ -354,6 +357,7 @@ function snapshot() {
   return withReadScope(buildSnapshot);
 }
 function buildSnapshot() {
+  store.reload();
   const publicState = store.public(),
     clientState = harnesses.snapshot();
   const nativeApiModels = [];
@@ -428,6 +432,12 @@ function buildSnapshot() {
     }
   for (const client of clientState.clients) for (const profile of harnesses.nativeApis(client.id)) {
     const supplier = store.state.providers.find((provider) => sameApi(provider, profile));
+    if (!supplier && store.state.nativeApiExclusions?.includes(apiIdentity(profile))) {
+      // Keep the native account card, but do not resurrect an excluded API as
+      // an unassigned native model source (for example an unfunded Zen key).
+      nativeApiModels.push(...profile.modelRefs.map(ref => ({ ...ref, excluded: true })));
+      continue;
+    }
     if (!supplier) continue;
     for (const ref of profile.accountRefs || [])
       for (const account of client.modelAccounts || client.accounts)
@@ -941,10 +951,10 @@ else {
       });
       nativeConfig = new NativeConfig(dataDir, safeStorage, harnesses);
       harnesses.options.nativeConfig = nativeConfig;
-      proxyConfig = new ProxyConfig(dataDir, safeStorage, harnesses, store, config);
-      harnesses.options.proxyConfig = proxyConfig;
       claudeDesktop = new ClaudeDesktopGateway(dataDir, testMode
         ? { directory: path.join(dataDir, "claude-desktop"), policyReader: () => ({}) } : {});
+      proxyConfig = new ProxyConfig(dataDir, safeStorage, harnesses, store, config, claudeDesktop);
+      harnesses.options.proxyConfig = proxyConfig;
       router = new Router({
         getState: (id) => proxyConfig.routingState(id),
         fetchUpstream: upstream,
@@ -1027,8 +1037,8 @@ else {
         if (scope === "claude" && enabled && !quit &&
             (accountless === true || (accountless === undefined && proxyConfig.clients.claude?.accountless))) {
           const launcher = harnesses.launcher("claude");
-          if (!launcher.ready) throw Error(launcher.message);
-          await require("../core/accountless.cjs").assertClaudePicker(launcher);
+          if (!launcher.ready && !harnesses.desktop("claude")) throw Error(launcher.message);
+          if (launcher.ready) await require("../core/accountless.cjs").assertClaudePicker(launcher);
         }
         return connections.preview(scope, enabled, quit, accountless);
       });
@@ -1074,16 +1084,6 @@ else {
           quitting = true;
           setImmediate(() => app.quit());
           return result;
-        }
-        const desktop = claudeDesktop.status(proxyConfig.clients.claude?.localToken, servicePort);
-        if (desktop.owned) {
-          try {
-            if (!connections.snapshot().clients.claude?.accountless) claudeDesktop.disable();
-            else if (!desktop.current && !desktop.conflict)
-              claudeDesktop.enable(proxyConfig.clients.claude.localToken, servicePort);
-          } catch (error) {
-            result.message += "；Claude 桌面版配置未同步：" + error.message;
-          }
         }
         return result;
       });
@@ -1216,15 +1216,6 @@ else {
         if (!router.server) await router.start(servicePort);
         return harnesses.launchAccountless(id, router.clientToken);
       }));
-      register("claude-desktop-configure", async (enabled) => {
-        if (enabled !== true && enabled !== false) throw Error("无效的桌面版接入操作");
-        if (!enabled) return claudeDesktop.disable();
-        const applied = proxyConfig.clients.claude;
-        if (!connections.snapshot().clients.claude?.accountlessAvailable || !applied?.accountless)
-          throw Error("请先完成 Claude Code 的模型接入和无账号配置");
-        if (!router.server) await router.start(servicePort);
-        return claudeDesktop.enable(applied.localToken, servicePort);
-      });
       register("claude-desktop-copy", async (kind) => {
         if (!["url", "key"].includes(kind)) throw Error("无效的桌面版接入信息");
         const applied = proxyConfig.clients.claude;
@@ -1254,6 +1245,10 @@ else {
         return { candidates };
       });
       register("client-open-desktop", async (id) => {
+        if (id === "claude" && proxyConfig.clients.claude?.accountless &&
+            (!proxyConfig.status("claude", true).applied ||
+              !claudeDesktop.status(proxyConfig.clients.claude.localToken, servicePort).current))
+          throw Error("Claude 桌面版无账号配置尚未同步，请先同步接入后再启动");
         const executable = harnesses.desktop(id);
         if (!executable)
           throw Error("未找到已安装的桌面客户端，请重新自动识别");
@@ -1262,7 +1257,9 @@ else {
         return {
           ok: true,
           message:
-            proxyConfig.clients[id]?.accountless ? "已打开 Codex 桌面端。若已有窗口仍使用旧配置，请结束任务后通过接入菜单重启。"
+            proxyConfig.clients[id]?.accountless ? id === "claude"
+              ? "已打开 Claude 桌面版；若出现 Gateway 提示，选择继续即可。已有窗口需在任务结束后重新打开。"
+              : "已打开 Codex 桌面端。若已有窗口仍使用旧配置，请结束任务后通过接入菜单重启。"
               : "已打开 " + harnesses.spec(id).name + " 桌面端；沿用其原生账户，没有注入或切换凭据。",
         };
       });

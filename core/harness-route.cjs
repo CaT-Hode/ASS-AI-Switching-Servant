@@ -4,6 +4,7 @@ const { sseMessages } = require("./adapters.cjs");
 const { once } = require("node:events");
 const { messagesTransport, providerSessionHeaders } = require("./provider-transport.cjs");
 const { messagesRequest, messagesEvents, messagesJSON, normalizeMessages } = require("./messages-adapter.cjs");
+const { claudeModels, resolveClaudeModel } = require("./claude-models.cjs");
 function authorized(value, token) {
   const a = Buffer.from(value || ""),
     b = Buffer.from(token || "");
@@ -13,6 +14,7 @@ function harnessRoute(url, body, state) {
   // Claude's base URL is process-wide. Namespaced model IDs allow /model to
   // select any injected Messages model without changing the logged-in account.
   if (/^\/models\/v1\/messages(?:\/count_tokens)?(?:\?[^#]*)?$/.test(url)) {
+    body.model = resolveClaudeModel(state.providers, body.model);
     const split = typeof body.model === "string" ? body.model.indexOf("::") : -1;
     if (split < 1) throw Object.assign(new Error("请选择完整的供应商::模型 ID"), { status: 400 });
     const provider = body.model.slice(0, split);
@@ -88,9 +90,9 @@ async function forwardHarness(router, req, res) {
         { status: 401 },
       );
     if (req.method === "GET" && /^\/models\/v1\/models(?:\?[^#]*)?$/.test(req.url)) {
-      const data = state.providers.filter((p) => p.enabled && p.apiKey).flatMap((p) => p.models.filter((m) => m.enabled).map((m) => ({
-        id: p.id + "::" + m.model, type: "model", display_name: p.name + " · " + (m.displayName || m.model), created_at: "2026-01-01T00:00:00Z",
-      })));
+      const data = claudeModels(state.providers).map(m => ({
+        id: m.discoveryId, type: "model", display_name: m.label, description: m.description, created_at: "2026-01-01T00:00:00Z",
+      }));
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
       res.end(JSON.stringify({ data, has_more: false, first_id: data[0]?.id || null, last_id: data.at(-1)?.id || null }));
       return;

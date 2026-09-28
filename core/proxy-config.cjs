@@ -15,8 +15,8 @@ const read = (file) => fs.existsSync(file) ? fs.readFileSync(file) : null;
 // A draft edit never changes the running route. Persist applied routing secrets
 // with the same OS encryption as provider settings, not in a second plaintext DB.
 class ProxyConfig {
-  constructor(dataDir, crypto, manager, store, config) {
-    Object.assign(this, { crypto, manager, store, config });
+  constructor(dataDir, crypto, manager, store, config, desktop) {
+    Object.assign(this, { crypto, manager, store, config, desktop });
     this.file = path.join(dataDir, "proxy-applied.json");
     this.clients = {};
     this.modeTokens = {};
@@ -40,7 +40,8 @@ class ProxyConfig {
           const allowed = [config.file, config.record, config.catalog, ...Object.values(claudeNative.targets(manager)),
             ...Object.values(clients.claude?.nativeClaude?.targets || {})];
           if (!Array.isArray(payload.pending.files) || payload.pending.files.some((f) =>
-            !allowed.includes(f.file) || (f.before !== null && typeof f.before !== "string") || typeof f.after !== "string")) throw Error();
+            (!allowed.includes(f.file) && !desktop?.allowsFile(f.file)) || (f.before !== null && typeof f.before !== "string") ||
+            (f.after !== null && typeof f.after !== "string"))) throw Error();
           this.pending = payload.pending;
         }
       }
@@ -91,6 +92,11 @@ class ProxyConfig {
       if (id === "claude" && enabled && desired.accountless) {
         const native = claudeNative.plan(this.manager, desired, this.clients.claude?.nativeClaude);
         nativePending = !this.clients.claude?.nativeClaude || native.files.length > 0;
+        if (this.desktop) {
+          const desktop = this.desktop.status(desired.localToken, this.manager.options?.port || 25819);
+          if (desktop.conflict) throw Error("Claude 桌面版配置存在冲突，请检查第三方推理设置");
+          nativePending ||= !desktop.current;
+        }
       }
     }
     catch (e) { error = e.message; }
@@ -106,7 +112,7 @@ class ProxyConfig {
   fingerprint(ids, enabled) {
     return hash(JSON.stringify([read(this.file)?.toString("base64"), ids.filter((id) => this.supports(id)).map((id) =>
       [id, enabled ? this.desired(id) : null, id === "codex" ? [read(this.config.catalog)?.toString("base64"), read(this.config.record)?.toString("base64")]
-        : claudeNative.fingerprint(this.manager, this.clients.claude?.nativeClaude)])]));
+        : [claudeNative.fingerprint(this.manager, this.clients.claude?.nativeClaude), this.desktop?.fingerprint()]])]));
   }
   preflight(ids, enabled, accountless) {
     if (!enabled) {
@@ -115,6 +121,7 @@ class ProxyConfig {
         this.checkFiles("claude");
         claudeNative.plan(this.manager, null, this.clients.claude.nativeClaude);
       }
+      if (ids.includes("claude")) this.desktop?.plan();
       return;
     }
     for (const id of ids.filter((id) => this.supports(id))) {
@@ -123,7 +130,10 @@ class ProxyConfig {
       const plan = this.desired(id, accountless);
       if (!plan.providers.length && !this.clients[id]) throw Error("没有可接入的兼容模型，请先配置供应商与模型");
       if (id === "codex") this.config.prepareAttach(plan.defaultModel, plan.localToken);
-      if (id === "claude") claudeNative.plan(this.manager, plan, this.clients.claude?.nativeClaude);
+      if (id === "claude") {
+        claudeNative.plan(this.manager, plan, this.clients.claude?.nativeClaude);
+        this.desktop?.plan(plan.accountless ? plan.localToken : null, this.manager.options?.port || 25819);
+      }
     }
   }
   persist(clients, pending = null) {
@@ -166,6 +176,7 @@ class ProxyConfig {
       const native = claudeNative.plan(this.manager, plan, this.clients.claude?.nativeClaude);
       if (native.record) plan.nativeClaude = native.record;
       files.push(...native.files);
+      files.push(...(this.desktop?.plan(plan.accountless ? plan.localToken : null, this.manager.options?.port || 25819) || []));
     }
     if (id === "codex") {
       const attachment = this.config.prepareAttach(plan.defaultModel, plan.localToken);
@@ -186,7 +197,8 @@ class ProxyConfig {
       this.persist(this.clients, { files });
       for (const f of files) {
         if ((read(f.file)?.toString() ?? null) !== f.before) throw Error("接入配置在写入前被修改，已停止");
-        atomic(f.file, f.after);
+        if (f.after === null) fs.unlinkSync(f.file);
+        else atomic(f.file, f.after);
       }
       this.persist(clients);
     } catch (error) {
@@ -202,6 +214,7 @@ class ProxyConfig {
     if (this.pending) throw Error("路由配置事务待恢复，请先重新同步");
     const clients = { ...this.clients };
     const files = ids.includes("claude") ? claudeNative.plan(this.manager, null, this.clients.claude?.nativeClaude).files : [];
+    if (ids.includes("claude")) files.push(...(this.desktop?.plan() || []));
     for (const id of ids) delete clients[id];
     this.commit(clients, files);
   }
@@ -235,6 +248,7 @@ class ProxyConfig {
       const native = claudeNative.plan(this.manager, this.clients.claude, this.clients.claude.nativeClaude, { repair: true });
       nativeClaude = native.record;
       files.push(...native.files);
+      files.push(...(this.desktop?.plan(this.clients.claude.accountless ? this.clients.claude.localToken : null, this.manager.options?.port || 25819) || []));
     }
     return { files, routeOnly: !files.length, nativeClaude };
   }
@@ -255,7 +269,8 @@ class ProxyConfig {
       this.persist(this.clients, { files });
       for (const f of files) {
         if ((read(f.file)?.toString() ?? null) !== f.before) throw Error("修复期间配置已变化，已停止");
-        atomic(f.file, f.after);
+        if (f.after === null) fs.unlinkSync(f.file);
+        else atomic(f.file, f.after);
       }
       this.persist(plan.nativeClaude ? { ...this.clients, claude: { ...this.clients.claude, nativeClaude: plan.nativeClaude } } : this.clients);
     } catch (error) {

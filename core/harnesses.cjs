@@ -458,6 +458,10 @@ class HarnessManager {
     const selected = this.state.executables[harness];
     const candidates = this.discovery[harness] || [];
     const ready = candidates.filter((c) => c.ready);
+    // A formerly misidentified Desktop executable is never called with CLI
+    // flags. Keep it as the desktop choice and use the sole detected CLI.
+    if (harness === "claude" && selected && resolveLauncher(harness, selected, this.launchEnv).kind === "desktop" && ready.length === 1)
+      return resolveLauncher(harness, ready[0].location, this.launchEnv);
     if (!selected && (ready.length || candidates.length) > 1) {
       return {
         ...resolveLauncher(harness, ""),

@@ -93,7 +93,9 @@ function promoteNativeApiProfile({ store, profile }) {
   const legacy = Object.keys(names).map((name) => "native_api_" + createHash("sha256").update(name + "\0" + profile.apiKey).digest("hex").slice(0, 20));
   if (!existing && (store.state.nativeApiExclusions?.includes(identity) ||
       [id, ...legacy].some((entry) => store.state.nativeSupplierExclusions?.includes(entry)))) return null;
-  const provider = { id, name: existing?.name || profile.name || "原生 API", brand: existing?.brand || profile.brand || "generic",
+  const originName = profile.clients?.includes("dsh") && new URL(baseUrl).hostname === "api.deepseek.com"
+    ? "DeepSeek · DSH 原生" : profile.name;
+  const provider = { id, name: existing?.name || originName || "原生 API", brand: existing?.brand || profile.brand || "generic",
     baseUrl: existing?.baseUrl || baseUrl, apiKey: profile.apiKey, network: existing?.network || "system", wireApi: existing?.wireApi || profile.wireApi || "openai-chat",
     extraHeaders: existing?.extraHeaders || profile.extraHeaders || {}, enabled: existing?.enabled !== false,
     balance: existing?.balance || { preset: "auto" } };
