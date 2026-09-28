@@ -10,11 +10,15 @@ const { localProfile } = require("./account-info.cjs");
 const dsh = require("./dsh-config.cjs");
 const { loadOpenCodeConfig } = require("./opencode-config.cjs");
 const { builtinApi, BUILTINS } = require("./native-api-defaults.cjs");
+const { memoRead } = require("./read-scope.cjs");
 const has = (v) => typeof v === "string" && !!v.trim();
 const object = (v) => v && typeof v === "object" && !Array.isArray(v);
 const digest = (v) =>
   crypto.createHash("sha256").update(v).digest("hex").slice(0, 20);
 function read(file, format = "json") {
+  return memoRead(read, [file, format], () => readUncached(file, format));
+}
+function readUncached(file, format) {
   try {
     const stat = fs.statSync(file);
     if (stat.size > 2 * 1024 * 1024) return { error: "凭据文件过大，未读取" };

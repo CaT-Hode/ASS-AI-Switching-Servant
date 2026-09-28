@@ -352,16 +352,21 @@ export function Clients({
   }
   // Returning from a native login window refreshes status without running auth helpers.
   useEffect(() => {
-    const refresh = () =>
-      api
-        .call("snapshot")
-        .catch(() => setNotice("状态读取失败，请点击刷新状态。"));
+    let mounted = true, pending = false;
+    const refresh = async () => {
+      if (pending || document.hidden) return;
+      pending = true;
+      try { await api.call("snapshot"); }
+      catch { if (mounted) setNotice("状态读取失败，请点击刷新状态。"); }
+      finally { pending = false; }
+    };
     const tick = setInterval(() => {
       if (document.hasFocus()) refresh();
     }, 15000);
     window.addEventListener("focus", refresh);
     refresh();
     return () => {
+      mounted = false;
       clearInterval(tick);
       window.removeEventListener("focus", refresh);
     };

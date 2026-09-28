@@ -1,8 +1,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const YAML = require("yaml");
+const { memoRead } = require("./read-scope.cjs");
 const ids = new Set(["llm-pi-ai", "llm-deepseek", "agent-default-model"]);
 function json(file) {
+  return memoRead(json, [file], () => readJson(file));
+}
+function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); }
   catch (error) { if (error.code === "ENOENT") return {}; throw Error("DSH 运行版本记录无法读取"); }
 }
@@ -13,6 +17,9 @@ function usesProfile(version) {
   return major > 0 || minor > 1 || (minor === 1 && (patch > 7 || (patch === 7 && (!m[4] || m[4] === "rc" && +m[5] >= 2))));
 }
 function target(dir, manager) {
+  return memoRead(target, [dir, manager], () => resolveTarget(dir, manager));
+}
+function resolveTarget(dir, manager) {
   const link = json(path.join(dir, "desktop-link", "web.json"));
   const installed = json(path.join(dir, "desktop-link", "active-core.json"));
   // A running desktop core can differ from the source checkout selected as CLI.
@@ -89,6 +96,9 @@ function validField(e) {
 function readSettings(dir, readLegacy) {
   const location = target(dir);
   if (location.format === "yaml") return readLegacy(location.config, "yaml");
+  return memoRead(readSettings, [location.config], () => readProfileSettings(location));
+}
+function readProfileSettings(location) {
   let content = null;
   try {
     if (fs.statSync(location.config).size > 8 * 1024 * 1024) throw Error("DSH profile 配置过大");

@@ -429,3 +429,51 @@ test("oversized, malformed, denied and missing responses never become verified p
     );
   }
 });
+
+test("a damaged old account does not turn every successful refresh into a cache failure", async (t) => {
+  const s = setup(t, async () => Response.json({ data: { usage: 1 } }));
+  const provider = s.info.getProvider;
+  s.info.cache.broken = { fingerprint: "expired", fields: [] };
+  s.info.getProvider = (id) => { if (id === "broken") throw Error("unavailable old profile"); return provider(id); };
+  assert.equal((await s.info.refresh("test")).ok, true);
+  assert.equal(s.info.public(s.providers[0]).error, undefined);
+  assert.equal(s.info.public(s.providers[0]).warning, undefined);
+  assert.equal(fields(new AccountInfo(s.options).public(s.providers[0])).usage, "1");
+});
+test("cache writes share one credential read scope and a later save resolves fresh data", (t) => {
+  const { memoRead } = require("../core/read-scope.cjs");
+  const s = setup(t, async () => Response.json({ data: { usage: 1 } }));
+  let reads = 0; const owner = {};
+  s.info.getProvider = () => { memoRead(owner, [], () => ++reads); return undefined; };
+  s.info.cache = { a: {}, b: {}, c: {} }; s.info.save(); assert.equal(reads, 1);
+  s.info.cache = { d: {} }; s.info.save(); assert.equal(reads, 2);
+});
+test("quota received but local persistence failed is a warning, not a failed network refresh", async (t) => {
+  const s = setup(t, async () => Response.json({ data: { usage: 2 } }));
+  const save = s.info.save; s.info.save = () => { throw Error("disk failed"); };
+  const r = await s.info.refresh("test"), p = s.info.public(s.providers[0]);
+  assert.equal(r.ok, true); assert.match(r.warning, /未保存/); assert.equal(p.error, undefined);
+  assert.match(p.warning, /未保存/); assert.equal(fields(p).usage, "2");
+  s.info.save = save; await s.info.refresh("test"); assert.equal(s.info.public(s.providers[0]).warning, undefined);
+});
+test("automatic throttling retains a failed result instead of reporting success and isolates other accounts", async (t) => {
+  let calls = 0;
+  const s = setup(t, async (url) => { calls++; return url.includes("opencode.ai") ? new Response(null, { status: 403 }) : Response.json({ data: { usage: 1 } }); });
+  s.providers.push({ id: "go", baseUrl: "https://opencode.ai/zen/go/v1", apiKey: "synthetic-go" });
+  assert.equal((await s.info.refresh("go")).ok, false);
+  const cached = await s.info.refresh("go", { automatic: true });
+  assert.equal(cached.ok, false); assert.equal(cached.cached, true); assert.match(cached.message, /Go.*403/);
+  assert.equal((await s.info.refresh("test")).ok, true); assert.equal(calls, 2);
+  assert.equal(s.info.public(s.providers[0]).error, undefined);
+});
+test("quota failures report safe timeout, certificate, DNS and proxy categories", async (t) => {
+  for (const [error, expected] of [
+    [new DOMException("private timeout", "TimeoutError"), /超时/],
+    [Object.assign(Error("private"), { code: "CERT_HAS_EXPIRED" }), /证书/],
+    [new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } }), /域名/],
+    [Error("net::ERR_PROXY_CONNECTION_FAILED https://private.test"), /代理/],
+  ]) {
+    const s = setup(t, async () => { throw error; }); const result = await s.info.refresh("test");
+    assert.equal(result.ok, false); assert.match(result.message, expected); assert.ok(!result.message.includes("private"));
+  }
+});

@@ -5,6 +5,7 @@ const path = require("node:path");
 const os = require("node:os");
 const YAML = require("yaml");
 const { opencodeProvider } = require("./model-inventory.cjs");
+const { memoRead } = require("./read-scope.cjs");
 const endpoints = {
   deepseek: "https://api.deepseek.com",
   opencode: "https://opencode.ai/zen/v1",
@@ -76,6 +77,10 @@ function configuredBase(client, account, rawId, id, options) {
   return endpoint(endpoints[id]);
 }
 function nativeOfficialProvider(client, account, options = {}) {
+  return memoRead(nativeOfficialProvider, [client.id, account, options.home, options.env],
+    () => resolveOfficialProvider(client, account, options));
+}
+function resolveOfficialProvider(client, account, options) {
   if (
     !account ||
     account.kind === "api" ||

@@ -5,6 +5,7 @@ const { resolveNativeApiTarget } = require("./native-model-diagnostics.cjs");
 const { normalizeModel } = require("./models.cjs");
 const { inferProtocol } = require("./presets.cjs");
 const { safeBaseUrl, canonicalEndpoint, supplierHeaders, apiIdentity, sameApi } = require("./native-api-identity.cjs");
+const { withReadScope } = require("./read-scope.cjs");
 const names = { deepseek: "DeepSeek", opencode: "OpenCode Zen", "opencode-go": "OpenCode Go" };
 const assOwnedProvider = (value) => /^(?:ass-(?:api|[a-f0-9]{16}-(?:chat|responses|messages))|ass_(?:api|official))$/i.test(String(value || ""));
 const trimEndpoint = canonicalEndpoint;
@@ -28,6 +29,9 @@ function displayName(target, client) {
 // A credential is discoverable even without a model catalog. Empty model rows
 // below are resolution probes only: they never become invented model entries.
 function nativeApiProfiles(clients, { home, env = {} } = {}) {
+  return withReadScope(() => discoverApiProfiles(clients, { home, env }));
+}
+function discoverApiProfiles(clients, { home, env }) {
   const groups = new Map();
   let visited = 0;
   for (const client of clients || []) for (const account of client.modelAccounts || client.accounts || []) {

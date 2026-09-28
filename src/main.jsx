@@ -333,7 +333,9 @@ function App() {
         setClientTargetLocal(next.preferences.client);
       })
       .catch((e) => setToast({ error: true, message: e.message }));
-    return api.subscribe((next) => setState((current) => latestSnapshot(current, next)));
+    const unsubscribe = api.subscribe((next) => setState((current) => latestSnapshot(current, next)));
+    const unsubscribeError = api.onStateError((message) => setToast({ error: true, message }));
+    return () => { unsubscribe(); unsubscribeError(); };
   }, []);
   useEffect(() => {
     if (toast) {

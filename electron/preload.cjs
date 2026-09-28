@@ -80,4 +80,9 @@ contextBridge.exposeInMainWorld("ass", {
     ipcRenderer.on("ass:state", handler);
     return () => ipcRenderer.removeListener("ass:state", handler);
   },
+  onStateError: (callback) => {
+    const handler = (_, message) => callback(message);
+    ipcRenderer.on("ass:state-error", handler);
+    return () => ipcRenderer.removeListener("ass:state-error", handler);
+  },
 });

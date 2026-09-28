@@ -8,6 +8,7 @@ const { createHash } = require("node:crypto");
 const dsh = require("./dsh-config.cjs");
 const { loadOpenCodeConfig, merge } = require("./opencode-config.cjs");
 const { builtinApi } = require("./native-api-defaults.cjs");
+const { memoRead } = require("./read-scope.cjs");
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const APIs = {
   "openai-completions": "openai-chat",
@@ -16,6 +17,9 @@ const APIs = {
 };
 const cache = new Map();
 function read(file) {
+  return memoRead(read, [file], () => readUncached(file));
+}
+function readUncached(file) {
   try {
     const stat = fs.statSync(file);
     if (stat.size > 8 * 1024 * 1024) return {};
@@ -107,6 +111,10 @@ const deepseekDefaults = [
   },
 ].map((m) => ({ ...m, contextWindow: 1000000 }));
 function opencodeProvider(account, dir, provider, home, env, readConfig = read) {
+  return memoRead(opencodeProvider, [account.kind, account.workspace, dir, provider, home, env, readConfig],
+    () => resolveOpenCodeProvider(account, dir, provider, home, env, readConfig));
+}
+function resolveOpenCodeProvider(account, dir, provider, home, env, readConfig) {
   const native = account.kind === "native";
   const configDir = native
     ? path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "opencode")
@@ -153,6 +161,9 @@ function opencodeModels(account, dir, provider, home, env) {
   });
 }
 function nativeModels(client, account, home, env) {
+  return memoRead(nativeModels, [client.id, account, home, env], () => readNativeModels(client, account, home, env));
+}
+function readNativeModels(client, account, home, env) {
   if (["kimi", "zcode", "antigravity"].includes(client.id))
     return account.declaredModels || [];
   const dir = account.nativeDir || path.dirname(account.sourcePath || "");

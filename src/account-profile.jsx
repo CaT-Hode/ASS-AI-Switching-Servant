@@ -221,6 +221,7 @@ export function AccountProfile({ account, client, state, act, busy }) {
       {quota !== p && quota.error && quota.error !== p.error && (
         <p className="account-profile-error" role="alert">{quota.error}{quota.updatedAt ? "；保留上次成功用量" : ""}</p>
       )}
+      {(p.warning || quota.warning) && <p className="muted tiny" role="status">{p.warning || quota.warning}</p>}
     </section>
   );
 }

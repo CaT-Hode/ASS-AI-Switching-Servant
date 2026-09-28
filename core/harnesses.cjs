@@ -19,6 +19,7 @@ const { ACCOUNT_SERVICES, officialApiService, acceptsApiAccount, acceptsNativeAc
   modelRef, injectionCatalog } = require("./client-policy.cjs");
 const { nativeOfficialProvider } = require("./native-official.cjs");
 const { nativeApiProfiles: discoverNativeApiProfiles, sameApi } = require("./native-suppliers.cjs");
+const { withReadScope, memoRead } = require("./read-scope.cjs");
 const {
   inspectCredentials,
   discoverNative,
@@ -549,12 +550,15 @@ class HarnessManager {
     if (!/^[a-f0-9]{24}$/.test(id)) throw new Error("账户 ID 无效");
     return path.join(this.dataDir, "clients", harness, id);
   }
-  snapshot() {
-    this.nativeApiProfilesByHarness = {};
+  snapshot({ accountsOnly = false } = {}) {
+    return withReadScope(() => memoRead(this, ["snapshot", accountsOnly], () => this.readSnapshot(accountsOnly)));
+  }
+  readSnapshot(accountsOnly) {
+    if (!accountsOnly) this.nativeApiProfilesByHarness = {};
     return {
       workspace: this.state.workspace,
       piOAuthProviders: this.piProviders,
-      oauthSources: this.oauthSources().map(
+      oauthSources: accountsOnly ? [] : this.oauthSources().map(
         ({ file, sourceProvider, ...s }) => s,
       ),
       clients: ACTIVE_SPECS.map((s) => {
@@ -580,7 +584,7 @@ class HarnessManager {
             credentialHome: this.state.credentialHomes[s.id] || "", credentialSources: native.sources,
             nativeVariant: s.id === "kimi" ? this.state.nativeVariants.kimi || "auto" : undefined,
             accounts, modelAccounts: [...accounts, ...modelAccounts],
-            injection: s.injectionUnsupported ? { models: [], excludedProviders: [] } : this.injection(s.id, [...accounts, ...modelAccounts, ...(native.apiAccounts || [])],
+            injection: accountsOnly || s.injectionUnsupported ? { models: [], excludedProviders: [] } : this.injection(s.id, [...accounts, ...modelAccounts, ...(native.apiAccounts || [])],
               { credentialHome: this.state.credentialHomes[s.id] || "", launcher }) };
         }
         const native = discoverNative(s.id, {
@@ -658,11 +662,11 @@ class HarnessManager {
               : ACCOUNT_SERVICES[s.id].includes(a.oauthProvider)))));
         const saved = this.state.selected[s.id];
         const legacy = visible.filter((a) => a.profileId === saved);
-        const launcher = this.launcher(s.id), desktop = this.desktop(s.id);
+        const launcher = accountsOnly ? {} : this.launcher(s.id), desktop = accountsOnly ? null : this.desktop(s.id);
         return {
           ...s,
           detected: !!(launcher.ready || launcher.installed ||
-            desktop || this.discovery[s.id]?.some((c) => {
+            desktop || !accountsOnly && this.discovery[s.id]?.some((c) => {
               const current = resolveLauncher(s.id, c.location, this.launchEnv);
               return current.ready || current.installed;
             }) ||
@@ -677,7 +681,7 @@ class HarnessManager {
               : "",
           accountServices: ACCOUNT_SERVICES[s.id],
           oauthProviders: s.id === "pi" ? this.piProviders : [],
-          injection: this.injection(s.id, nativeAccounts),
+          injection: accountsOnly ? { models: [], excludedProviders: [] } : this.injection(s.id, nativeAccounts),
           modelAccounts,
           credentialHome: this.state.credentialHomes[s.id] || "",
           credentialSources: native.map(({ file, status, message }) => ({

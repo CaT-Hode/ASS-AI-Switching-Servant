@@ -50,7 +50,8 @@ export function SupplierQuota({ p, state }) {
       if (document.hidden) return;
       setLoading(true);
       try {
-        await api.call("supplier-refresh", p.id, account?.id, true);
+        const result = await api.call("supplier-refresh", p.id, account?.id, true);
+        if (mounted) setError(result?.ok === false ? result.message || "额度暂不可用" : "");
       } catch {
         if (mounted) setError("额度暂不可用");
       } finally {
@@ -67,7 +68,6 @@ export function SupplierQuota({ p, state }) {
     p.id,
     queryable,
     account?.id,
-    profile?.updatedAt,
     state.modelDirectoryRevisions?.[p.id],
   ]);
   if (!queryable && !time) return null;
@@ -116,7 +116,8 @@ export function SupplierQuota({ p, state }) {
             setLoading(true);
             setError("");
             try {
-              await api.call("supplier-refresh", p.id, account?.id);
+              const result = await api.call("supplier-refresh", p.id, account?.id);
+              if (result?.ok === false) setError(result.message || "额度查询失败");
             } catch {
               setError("额度查询失败");
             } finally {
@@ -183,6 +184,7 @@ export function SupplierQuota({ p, state }) {
             {time ? "刷新失败 · 保留上次" : "查询失败"}
           </span>
         )}
+        {!warning && profile?.warning && <span className="muted" title={profile.warning}>更新成功 · 未保存</span>}
       </div>
     </div>
   );

@@ -3,8 +3,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const JSONC = require("jsonc-parser");
+const { memoRead } = require("./read-scope.cjs");
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 function readConfig(file) {
+  return memoRead(readConfig, [file], () => readUncachedConfig(file));
+}
+function readUncachedConfig(file) {
   try {
     if (fs.statSync(file).size > 2 * 1024 * 1024) throw Error();
     return parse(fs.readFileSync(file, "utf8"));

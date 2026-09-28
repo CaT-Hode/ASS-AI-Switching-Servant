@@ -63,6 +63,8 @@ const accountTransactions = require("../core/account-transactions.cjs");
 const { modelSources, nativeModels } = require("../core/model-inventory.cjs");
 const { nativeOfficialProvider: resolveNativeOfficialProvider } = require("../core/native-official.cjs");
 const { apiIdentity } = require("../core/native-api-identity.cjs");
+const { withReadScope } = require("../core/read-scope.cjs");
+const { SnapshotPublisher } = require("../core/snapshot-publisher.cjs");
 function nativeOfficialProvider(client, account) {
   return resolveNativeOfficialProvider(client, account, { home: harnesses.nativeHome, env: harnesses.nativeEnv });
 }
@@ -218,14 +220,14 @@ function accountProvider(id) {
     return configured;
   const saved = /^native-info:(codex|claude|pi|kimi|zcode):oauth-record:([a-f0-9]{24})$/.exec(id);
   if (saved) return oauthInfoProvider(oauthHistory, harnesses, saved[1], saved[2]);
-  for (const c of harnesses.snapshot().clients)
+  for (const c of harnesses.snapshot({ accountsOnly: true }).clients)
     for (const a of (c.modelAccounts || c.accounts)) {
       if (id !== "native-info:" + c.id + ":" + a.id) continue;
       return nativeOfficialProvider(c, a) || nativeSubscriptionProvider(c, a);
     }
 }
 function informationClient(id) {
-  const client = harnesses.snapshot().clients.find((c) => c.id === id);
+  const client = harnesses.snapshot({ accountsOnly: true }).clients.find((c) => c.id === id);
   if (client) oauthHistory?.decorate(client);
   return client;
 }
@@ -344,18 +346,14 @@ async function fillVerifiedSupplier(provider) {
   if (models.length) store.updateProvider({ ...current, models, nativeCatalogInitialized: true });
 }
 async function refreshAccountInfo(id, options) {
-  const result = await accountInfo.refresh(id, options);
-  if (!result.ok) return result;
-  const provider = accountProvider(id);
-  if (!provider || !accountInfo.public(provider).remote || accountInfo.public(provider).error) return result;
-  if (id.startsWith("native-info:")) {
-    const client = harnesses.snapshot().clients.find((c) => (c.modelAccounts || c.accounts)
-      .some((a) => nativeOfficialProvider(c, a)?.id === id));
-    if (client) { try { await readModelMetadata("native-" + client.id, true); } catch {} }
-  } else { try { await fillVerifiedSupplier(provider); } catch {} }
-  return result;
+  // Quota refresh is independent of model discovery. A cached quota must not
+  // trigger another full client scan and a forced /models request.
+  return accountInfo.refresh(id, options);
 }
 function snapshot() {
+  return withReadScope(buildSnapshot);
+}
+function buildSnapshot() {
   const publicState = store.public(),
     clientState = harnesses.snapshot();
   const nativeApiModels = [];
@@ -493,10 +491,14 @@ function snapshot() {
     dataDir: store.dataDir,
   };
 }
-function push() {
-  if (window && !window.isDestroyed())
-    window.webContents.send("ass:state", snapshot());
-}
+const publisher = new SnapshotPublisher({ read: snapshot,
+  canSend: () => !!window && !window.isDestroyed() && window.isVisible() && !window.isMinimized(),
+  send: (value) => window.webContents.send("ass:state", value),
+  onError: () => {
+    if (window && !window.isDestroyed()) window.webContents.send("ass:state-error",
+      "客户端状态读取失败，保留当前画面；请刷新重试。");
+  } });
+function push() { publisher.push(); }
 function register(name, handler) {
   ipcMain.handle("ass:" + name, async (event, ...args) => {
     const url = event.senderFrame?.url || "";
@@ -506,13 +508,15 @@ function register(name, handler) {
       !url.startsWith("file://")
     )
       throw new Error("Invalid caller");
+    let result;
     try {
-      const result = await handler(...args);
+      result = await handler(...args);
       // Saving an account/catalog preference never rewrites a running client's
       // configuration. Connection preview/apply is the explicit commit point.
       return result;
     } finally {
-      push();
+      if ((name === "snapshot" || name === "client-refresh") && result?.sequence) publisher.publish(result);
+      else push();
     }
   });
 }
@@ -804,6 +808,8 @@ function showWindow() {
     },
   });
   window.loadFile(path.join(__dirname, "../dist/index.html"));
+  window.on("show", push);
+  window.on("restore", push);
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   window.on("close", (event) => {
@@ -1579,6 +1585,7 @@ else {
       return;
     }
     quitting = true;
+    publisher.clear();
     updates?.stop();
     oauthHistory?.stop();
     modelDirectory.invalidate();

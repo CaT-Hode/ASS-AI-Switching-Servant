@@ -5,6 +5,7 @@ const crypto = require("node:crypto");
 const { atomic } = require("./config.cjs");
 const { parseSubscription } = require("./subscription-usage.cjs");
 const oauthInfo = require("./oauth-info.cjs");
+const { withReadScope } = require("./read-scope.cjs");
 
 const ACCOUNT_DOCS = {
   "kimi-info": { label: "Kimi Code 账户与额度接口", url: "https://github.com/MoonshotAI/kimi-code/blob/6451f1e056e90037bbf832f3578955cf8e55db64/packages/oauth/src/managed-usage.ts" },
@@ -432,6 +433,23 @@ function cachedModelEntitlement(entry) {
   if (value.status === "pending" && iso(value.effectiveAt)) result.effectiveAt = iso(value.effectiveAt);
   return result;
 }
+function queryError(error, label = "资料") {
+  // Classify only known error codes; raw network messages may contain secrets.
+  const code = String(error?.code || error?.cause?.code || "");
+  const message = String(error?.message || "");
+  if (["TimeoutError", "AbortError"].includes(error?.name) || /^(?:ETIMEDOUT|UND_ERR_(?:CONNECT|HEADERS|BODY)_TIMEOUT)$/.test(code) || /net::ERR_TIMED_OUT\b/.test(message))
+    return `${label}查询超时，请稍后重试`;
+  if (/^(?:ERR_CERT_|CERT_|DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE)/.test(code) || /net::ERR_CERT_/.test(message))
+    return `${label}查询的证书验证失败，请检查系统证书和代理`;
+  if (/^(?:ENOTFOUND|EAI_AGAIN)$/.test(code) || /net::ERR_NAME_NOT_RESOLVED\b/.test(message))
+    return `${label}接口域名解析失败，请检查网络`;
+  if (/net::ERR_(?:PROXY_CONNECTION_FAILED|TUNNEL_CONNECTION_FAILED)\b/.test(message))
+    return `${label}查询无法连接系统代理，请检查代理设置`;
+  if (/^HTTP \d{3}$/.test(message)) return `${label}查询失败 · ${message}`;
+  if (error instanceof SyntaxError) return `${label}接口返回无效 JSON`;
+  if (["资料响应为空", "资料响应过大", "接口未返回可识别的账户资料", "未返回订阅额度窗口"].includes(message)) return message;
+  return `${label}查询失败，请检查网络或接口权限`;
+}
 class AccountInfo {
   constructor({
     dataDir,
@@ -448,6 +466,7 @@ class AccountInfo {
     this.cache = {};
     this.jobs = new Map();
     this.errors = new Map();
+    this.warnings = new Map();
     this.attempts = new Map();
     try {
       if (fs.statSync(this.file).size <= 2 * 1024 * 1024) {
@@ -462,12 +481,17 @@ class AccountInfo {
   }
   save() {
     if (!this.vault.isEncryptionAvailable()) throw Error("资料缓存加密不可用");
-    const active = Object.fromEntries(
+    const active = withReadScope(() => Object.fromEntries(
       Object.entries(this.cache).filter(([id, r]) => {
-        const p = this.getProvider(id);
-        return p && r.fingerprint === fingerprint(p);
+        try {
+          const p = this.getProvider(id);
+          return p && r?.fingerprint === fingerprint(p);
+        } catch {
+          // An unavailable old account must not poison another account's save.
+          return false;
+        }
       }),
-    );
+    ));
     atomic(
       this.file,
       JSON.stringify({
@@ -477,6 +501,10 @@ class AccountInfo {
       }),
     );
     this.cache = active;
+  }
+  saveResult(key) {
+    try { this.save(); this.warnings.clear(); }
+    catch { this.warnings.set(key, "资料已更新，但未保存到本机；重启后将重新查询"); }
   }
   public(provider) {
     const base = apiProfile(provider),
@@ -497,6 +525,7 @@ class AccountInfo {
           }
         : {}),
       error: this.errors.get(key),
+      warning: this.warnings.get(key),
       refreshing: this.jobs.has(key),
     };
   }
@@ -513,7 +542,7 @@ class AccountInfo {
         : 0;
     const checked = Math.max(cached || 0, this.attempts.get(key) || 0);
     if (automatic && this.now() - checked < 5 * 60000)
-      return { ok: true, cached: true };
+      return { ok: !this.errors.has(key), cached: true, message: this.errors.get(key), warning: this.warnings.get(key) };
     this.attempts.set(key, this.now());
     const job = this.query(p, kind, key);
     this.jobs.set(key, job);
@@ -555,12 +584,8 @@ class AccountInfo {
         updatedAt: new Date(this.now()).toISOString(),
       };
       this.errors.delete(key);
-      try {
-        this.save();
-      } catch {
-        this.errors.set(key, "已获取资料，但加密缓存保存失败");
-      }
-      return { ok: true };
+      this.saveResult(key);
+      return { ok: true, warning: this.warnings.get(key) };
     } catch (e) {
       // Never expose body, auth headers, network error URLs or raw exception strings.
       const message =
@@ -574,11 +599,7 @@ class AccountInfo {
             : ["opencode", "opencode-go"].includes(kind) &&
                 e.message === "HTTP 403"
               ? "此 Key 未获 Go 订阅查询权限（HTTP 403）；Zen 余额请在控制台查看"
-              : /^HTTP \d{3}$/.test(e.message)
-                ? "资料查询失败 · " + e.message
-                : e instanceof SyntaxError
-                  ? "资料接口返回无效 JSON"
-                  : "资料查询失败，请检查网络或接口权限";
+              : queryError(e);
       this.errors.set(key, message);
       return { ok: false, message };
     }
@@ -620,7 +641,7 @@ class AccountInfo {
         const label = request.label || (section === "identity" ? "账户资料" : "额度");
         const message = ["HTTP 401", "HTTP 403"].includes(e.message)
           ? `${label}未获授权（${e.message}），请在原生客户端确认登录`
-          : /^HTTP \d{3}$/.test(e.message) ? `${label}查询失败 · ${e.message}` : `${label}查询失败，请检查网络或接口权限`;
+          : queryError(e, label);
         return { section, error: message };
       }
     }));
@@ -639,9 +660,9 @@ class AccountInfo {
       const items = Object.values(sections);
       this.cache[p.id] = { fingerprint: key, sections, fields: items.flatMap((s) => s.fields),
         updatedAt: items.map((s) => s.updatedAt).sort()[0] };
-      try { this.save(); } catch { this.errors.set(key, "已获取资料，但加密缓存保存失败"); }
+      this.saveResult(key);
     }
-    return { ok: errors.length === 0, partial: errors.length > 0 && results.some((r) => !r.error), message: errors.join("；") || undefined };
+    return { ok: errors.length === 0, partial: errors.length > 0 && results.some((r) => !r.error), message: errors.join("；") || undefined, warning: this.warnings.get(key) };
   }
 }
 module.exports = {
