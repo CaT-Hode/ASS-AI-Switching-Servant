@@ -9,6 +9,8 @@ const allowed = [
   "client-native-variant",
   "client-model-launch",
   "client-accountless-launch",
+  "claude-desktop-copy",
+  "claude-desktop-configure",
   "client-credentials",
   "import",
   "save-provider",

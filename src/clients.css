@@ -763,6 +763,19 @@
 .accountless-control strong { font-size: 13px; font-weight: 600; }
 .accountless-control small { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; }
 .accountless-control .provider-injection-switch { position: relative; inset: auto; flex: none; }
+.claude-desktop-setup { margin: -4px 0 14px; padding: 11px 14px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
+.claude-desktop-setup summary { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12px; font-weight: 600; list-style: none; }
+.claude-desktop-setup summary::-webkit-details-marker { display: none; }
+.claude-desktop-setup summary svg { margin-left: auto; transition: transform 180ms ease; }
+.claude-desktop-setup summary small { color: var(--accent); font-size: 11px; }
+.claude-desktop-setup[open] summary svg { transform: rotate(90deg); }
+.claude-desktop-setup-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.claude-desktop-setup-toggle strong { font-size: 12px; }
+.claude-desktop-setup-toggle small { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
+.claude-desktop-setup-toggle .provider-injection-switch { position: relative; inset: auto; flex: none; }
+.claude-desktop-setup-body p { margin: 11px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.claude-desktop-setup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.claude-desktop-setup-body small { display: block; margin-top: 10px; color: var(--muted); font-size: 11px; }
 .client-injection > header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .client-injection h3 { display: flex; align-items: baseline; gap: 13px; margin: 0; font-size: 16px; }
 .injection-count { font-size: 13px; font-weight: 400; color: light-dark(#6e8099, #a9b5c7); font-variant-numeric: tabular-nums; }

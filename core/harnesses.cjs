@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
-const { spawn } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
 const { atomic } = require("./config.cjs");
 const { legacyBaseline } = require("./injection-files.cjs");
 const { DIRECT, locations, providerId } = require("./native-config.cjs");
@@ -1135,6 +1135,9 @@ class HarnessManager {
         throw Error("独立启动目录已有登录信息，请先在该窗口退出登录，原账户未修改");
     }
     plan.hint = "无账号模式：仅使用已注入模型，按其供应商 API 计费。";
+    // A terminal that exits during startup has not actually launched a usable
+    // accountless session, even if PowerShell itself spawned successfully.
+    plan.expectInteractive = true;
     return plan;
   }
   async launchAccountless(harness, token) {
@@ -1156,7 +1159,7 @@ class HarnessManager {
       `Set-Location -LiteralPath ${q(workspace)}\n` +
       (plan.hint ? `Write-Host ${q(plan.hint)}\n` : "") +
       `& ${q(launcher.executable)} ${[...launcher.args, ...plan.args].map(q).join(" ")}\n` +
-      (plan.pauseOnFailure ? `if (-not $?) { Read-Host 'Login failed. Press Enter to close' }\n` : "");
+      `if (-not $?) { ${plan.pauseOnFailure ? "Read-Host 'Launch failed. Press Enter to close'; " : ""}exit 1 }\n`;
     const terminal = path.join(
       process.env.SystemRoot || "C:\\Windows",
       "System32",
@@ -1164,29 +1167,39 @@ class HarnessManager {
       "v1.0",
       "powershell.exe",
     );
-    const child = (this.options.spawn || spawn)(
-      terminal,
-      [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        Buffer.from(script, "utf16le").toString("base64"),
-      ],
-      {
-        env: plan.env,
-        cwd: workspace,
-        detached: true,
-        stdio: "ignore",
-        windowsHide: false,
-      },
-    );
-    await new Promise((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", reject);
-    });
-    plan.onSpawn?.(child);
-    child.unref();
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    let pid;
+    if (plan.expectInteractive) {
+      // Electron's detached + ignored-stdio PowerShell can exit successfully
+      // before running the encoded command on Windows. A hidden parent uses
+      // Start-Process to create a real interactive console and checks its PID.
+      const helper = `$ErrorActionPreference = 'Stop'\n` +
+        `$session = Start-Process -FilePath ${q(terminal)} -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','${encoded}') -WindowStyle Normal -PassThru\n` +
+        `Start-Sleep -Milliseconds 1800\n` +
+        `$session.Refresh()\n` +
+        `if ($session.HasExited) { Write-Output ('EXIT ' + $session.ExitCode) } else { Write-Output ('PID ' + $session.Id) }\n`;
+      const status = await new Promise((resolve, reject) => {
+        execFile(terminal, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(helper, "utf16le").toString("base64")],
+          { env: plan.env, cwd: workspace, windowsHide: true, timeout: 10000, maxBuffer: 4096 },
+          (error, stdout) => error ? reject(Error("无法打开客户端终端：" + (error.killed ? "启动超时" : error.code || "启动器出错"), { cause: error })) : resolve(stdout.trim()));
+      });
+      const result = /^(PID|EXIT) (\d+)$/.exec(status);
+      if (result?.[1] === "EXIT")
+        throw Error(`${this.spec(harness).name} 启动后立即退出（代码 ${result[2]}）。请在终端运行 ${this.spec(harness).command} 查看具体错误`);
+      if (result?.[1] !== "PID") throw Error("无法确认客户端终端已打开，请在终端手动运行 " + this.spec(harness).command);
+      pid = Number(result[2]);
+    } else {
+      const child = (this.options.spawn || spawn)(terminal,
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+        { env: plan.env, cwd: workspace, detached: true, stdio: "ignore", windowsHide: false });
+      await new Promise((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
+      plan.onSpawn?.(child);
+      pid = child.pid;
+      child.unref();
+    }
     let tracking = "";
     if (this.options.processes) {
       try {
@@ -1196,7 +1209,7 @@ class HarnessManager {
           account,
           transport: plan.routed ? "proxy" : "native",
           label: this.spec(harness).name + " · " + action,
-          pid: child.pid,
+          pid,
           marker,
         });
       } catch {

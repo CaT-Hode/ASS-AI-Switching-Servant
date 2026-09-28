@@ -23,6 +23,7 @@ const { exportConfig } = require("../core/config-export.cjs");
 const { BALANCE_PRESETS, queryBalance } = require("../core/balance.cjs");
 const { PROVIDER_PRESETS } = require("../core/presets.cjs");
 const { HarnessManager } = require("../core/harnesses.cjs");
+const { ClaudeDesktopGateway } = require("../core/claude-desktop-gateway.cjs");
 const { NativeConfig } = require("../core/native-config.cjs");
 const { ProxyConfig } = require("../core/proxy-config.cjs");
 const {
@@ -89,6 +90,7 @@ let window,
   harnesses,
   nativeConfig,
   proxyConfig,
+  claudeDesktop,
   nativeKeys,
   oauthHistory,
   nativeLogin,
@@ -429,6 +431,8 @@ function snapshot() {
       store.state.providers.map((p) => [p.id, accountInfo.public(p)]),
     ),
     connections: connections.snapshot(),
+    claudeDesktop: (() => { try { return claudeDesktop.status(proxyConfig.clients.claude?.localToken, servicePort); }
+      catch { return { configured: false, owned: false, current: false, conflict: true }; } })(),
     providerPresets: PROVIDER_PRESETS,
     officialServices: OFFICIAL_SERVICES,
     officialProviderIds: Object.fromEntries(
@@ -911,6 +915,9 @@ else {
       harnesses.options.nativeConfig = nativeConfig;
       proxyConfig = new ProxyConfig(dataDir, safeStorage, harnesses, store, config);
       harnesses.options.proxyConfig = proxyConfig;
+      claudeDesktop = new ClaudeDesktopGateway(dataDir,
+        testMode ? `HKCU\\SOFTWARE\\ASS-QA-Claude-${require("node:crypto").createHash("sha256").update(dataDir).digest("hex").slice(0, 16)}` : undefined,
+        undefined, testMode ? path.join(dataDir, "claude-3p-meta.json") : undefined);
       router = new Router({
         getState: (id) => proxyConfig.routingState(id),
         fetchUpstream: upstream,
@@ -1011,6 +1018,16 @@ else {
         for (const controller of diagnosticControllers.values())
           controller.abort();
         const result = await connections.apply(input);
+        const desktop = claudeDesktop.status(proxyConfig.clients.claude?.localToken, servicePort);
+        if (desktop.owned) {
+          try {
+            if (!connections.snapshot().clients.claude?.accountless) claudeDesktop.disable();
+            else if (!desktop.current && !desktop.conflict)
+              claudeDesktop.enable(proxyConfig.clients.claude.localToken, servicePort);
+          } catch (error) {
+            result.message += "；Claude 桌面版配置未同步：" + error.message;
+          }
+        }
         if (result.quit) {
           quitting = true;
           setImmediate(() => app.quit());
@@ -1146,6 +1163,26 @@ else {
         if (!router.server) await router.start(servicePort);
         return harnesses.launchAccountless(id, router.clientToken);
       }));
+      register("claude-desktop-configure", async (enabled) => {
+        if (enabled !== true && enabled !== false) throw Error("无效的桌面版接入操作");
+        if (!enabled) return claudeDesktop.disable();
+        const applied = proxyConfig.clients.claude;
+        if (!connections.snapshot().clients.claude?.accountlessAvailable || !applied?.accountless)
+          throw Error("请先完成 Claude Code 的模型接入和无账号配置");
+        if (!router.server) await router.start(servicePort);
+        return claudeDesktop.enable(applied.localToken, servicePort);
+      });
+      register("claude-desktop-copy", async (kind) => {
+        if (!["url", "key"].includes(kind)) throw Error("无效的桌面版接入信息");
+        const applied = proxyConfig.clients.claude;
+        if (!connections.enabled.claude || !applied?.accountless || !proxyConfig.status("claude", true).applied)
+          throw Error("请先完成 Claude Code 的模型接入和无账号配置");
+        if (!router.server) await router.start(servicePort);
+        clipboard.writeText(kind === "url"
+          ? `http://127.0.0.1:${servicePort}/clients/claude/models`
+          : applied.localToken);
+        return { ok: true };
+      });
       register("client-credentials", async (id, reset = false) => {
         if (reset) return harnesses.setCredentialHome(id, "");
         const result = await dialog.showOpenDialog(window, {

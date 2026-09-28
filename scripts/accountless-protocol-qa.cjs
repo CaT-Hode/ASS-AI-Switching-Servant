@@ -1,6 +1,8 @@
 // Synthetic upstream only; independent encrypted profile and no real clients restarted.
 const { _electron } = require("playwright");
-const fs = require("node:fs"), path = require("node:path"), assert = require("node:assert/strict");
+const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto"), assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
+const { readPolicy } = require("../core/claude-desktop-gateway.cjs");
 const root = path.resolve(__dirname, ".."), out = path.join(process.env.LOCALAPPDATA, "ASS-validation");
 const data = fs.mkdtempSync(path.join(out, "protocol-ui-")), codex = path.join(data, "codex");
 fs.mkdirSync(codex); fs.writeFileSync(path.join(codex, "config.toml"), 'model = "official-original"\n');
@@ -71,25 +73,64 @@ async function confirm(button) {
     await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
     snapshot = await call("snapshot");
     assert.equal(snapshot.connections.clients.claude.runtimeStatus, "terminal-ready");
-    await page.getByText("终端 claude 同样免登录 · ASS 需保持运行", { exact: true }).waitFor();
+    await page.getByText("Claude Code 终端免登录 · ASS 需保持运行", { exact: true }).waitFor();
     assert.equal(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude/settings.json"))).env.ANTHROPIC_BASE_URL, "http://127.0.0.1:25839/clients/claude/models");
     assert.equal(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude.json"))).hasCompletedOnboarding, true);
     assert.deepEqual(snapshot.harnesses.clients.find(c => c.id === "claude").injection.models.map(m => m.protocol), ["anthropic", "openai-chat"]);
+    if (claudeLauncher === claudeFixture) {
+      // This fixture returns 9 for an interactive launch. A spawned shell must
+      // never be reported to the user as a successfully opened Claude session.
+      await page.getByRole("button", { name: "启动终端" }).click();
+      await page.locator(".toast.error").getByText(/启动后立即退出/).waitFor();
+      const launched = path.join(data, "claude-terminal-started.txt");
+      fs.writeFileSync(claudeFixture, `@echo off\r\nif "%~1"=="--version" (echo 2.1.283 ^(Claude Code^) & exit /b 0)\r\necho started>"${launched}"\r\nping -n 6 127.0.0.1 >nul\r\n`);
+      await page.getByRole("button", { name: "启动终端" }).click();
+      await page.locator(".toast:not(.error)").getByText("已打开 Claude Code 终端").waitFor();
+      assert.equal(fs.readFileSync(launched, "utf8").trim(), "started");
+    }
+    await page.locator(".claude-desktop-setup summary").click();
+    await page.getByRole("button", { name: "复制网关地址" }).waitFor();
+    await page.getByRole("button", { name: "复制本机密钥" }).waitFor();
+    const desktopSwitch = page.getByRole("switch", { name: "Claude 桌面版第三方推理" });
+    assert.equal(await desktopSwitch.getAttribute("aria-checked"), "false");
+    await desktopSwitch.click();
+    assert.equal((await call("snapshot")).claudeDesktop.current, true);
+    await page.getByText("已配置", { exact: true }).waitFor();
+    const testPolicy = "HKCU\\SOFTWARE\\ASS-QA-Claude-" + crypto.createHash("sha256").update(data).digest("hex").slice(0, 16);
+    const gatewayKey = readPolicy(testPolicy).inferenceGatewayApiKey.value;
+    const gatewayUrl = readPolicy(testPolicy).inferenceGatewayBaseUrl.value;
+    const discovered = await fetch(gatewayUrl + "/v1/models", { headers: { authorization: "Bearer " + gatewayKey } });
+    assert.equal(discovered.status, 200);
+    assert.deepEqual((await discovered.json()).data.map(model => model.id), ["fixture::dual", "fixture::chat-only"]);
+    const response = await fetch(gatewayUrl + "/v1/messages", { method: "POST",
+      headers: { authorization: "Bearer " + gatewayKey, "content-type": "application/json" },
+      body: JSON.stringify({ model: "fixture::dual", messages: [{ role: "user", content: "Say OK" }], max_tokens: 16, stream: true }) });
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /OK/);
     await page.locator(".client-provider summary").click();
     await page.screenshot({ path: path.join(out, "accountless-claude-protocols.png") });
     await stop(); await start();
     snapshot = await call("snapshot");
     assert.equal(snapshot.connections.clients.codex.accountless, true); assert.equal(snapshot.connections.clients.claude.accountless, true);
+    assert.equal(snapshot.claudeDesktop.current, true);
     assert.equal(Object.keys(snapshot.capabilities).length, 2);
     await choose("Codex"); await confirm(page.getByRole("switch", { name: "Codex 无账号启动" }));
     assert.equal((await call("snapshot")).connections.clients.codex.accountless, false);
     assert.equal((await call("snapshot")).connections.clients.claude.accountless, true);
-    await choose("Claude Code"); await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
+    await choose("Claude Code");
+    await page.locator(".claude-desktop-setup summary").click();
+    await page.getByRole("switch", { name: "Claude 桌面版第三方推理" }).click();
+    assert.equal((await call("snapshot")).claudeDesktop.current, false);
+    await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
     assert.equal((await call("snapshot")).connections.clients.claude.accountless, false);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude/settings.json"))), {});
     assert.equal(fs.readFileSync(path.join(codex, "auth.json"), "utf8"), auth);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ passed: true, accountlessEligibility: true, productionVersionGate: true, oldVersionRejected: true,
       claudeLauncher, bothClients: true, automaticProtocols: true, restartPersistence: true, oauthPreserved: true, screenshots: out, errors }));
-  } finally { await stop(); }
+  } finally {
+    await stop();
+    const testPolicy = "HKCU\\SOFTWARE\\ASS-QA-Claude-" + crypto.createHash("sha256").update(data).digest("hex").slice(0, 16);
+    try { execFileSync("reg.exe", ["delete", testPolicy, "/f"], { stdio: "ignore", windowsHide: true }); } catch {}
+  }
 })().catch(e => { console.error(e.stack); process.exitCode = 1; });

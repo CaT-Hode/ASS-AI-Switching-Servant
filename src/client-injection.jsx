@@ -10,7 +10,7 @@ export function ClientInjection({ client, state, act, busy, onManage }) {
   const connection = state.connections.clients[client.id];
   const accountlessHint = !connection?.accountless ? "注入模型后可开启"
     : !connection.applied ? connection.syncError ? "无账号配置异常 · 请修复接入" : "无账号配置待同步"
-    : client.id === "claude" ? "终端 claude 同样免登录 · ASS 需保持运行"
+    : client.id === "claude" ? "Claude Code 终端免登录 · ASS 需保持运行"
     : "仅使用注入模型 · 已运行的 Codex 需重启";
   const excluded = new Set(injection.excludedProviders || []);
   const enabled = [...groups].filter(([id, models]) => !excluded.has(id) && models.some((m) => !m.issue)).length;
@@ -23,14 +23,30 @@ export function ClientInjection({ client, state, act, busy, onManage }) {
     {["codex", "claude"].includes(client.id) && <div className="accountless-control">
       <div><strong>无账号启动</strong><small>{accountlessHint}</small></div>
       {connection?.accountless && <button className="button" disabled={!!busy || !connection.accountlessAvailable || !(client.launcher?.ready || (client.id === "codex" && client.desktop))}
-        title={client.id === "codex" && client.desktop ? "打开桌面端；已运行的窗口需重启加载配置" : "以独立配置启动，不读取官方 OAuth"}
-        onClick={() => act("accountless-launch", () => api.call(client.id === "codex" && client.desktop ? "client-open-desktop" : "client-accountless-launch", client.id))}>
-        <Terminal size={15} />启动</button>}
+        title={client.id === "codex" && client.desktop ? "打开桌面端；已运行的窗口需重启加载配置" : client.id === "claude" ? "启动 Claude Code 命令行终端；Claude 桌面版使用独立的第三方推理配置" : "以独立配置启动，不读取官方 OAuth"}
+        onClick={() => act("accountless-launch", () => api.call(client.id === "codex" && client.desktop ? "client-open-desktop" : "client-accountless-launch", client.id), client.id === "claude" ? "已打开 Claude Code 终端" : "已启动客户端")}>
+        <Terminal size={15} />{client.id === "claude" ? "启动终端" : "启动"}</button>}
       <button type="button" role="switch" className="provider-injection-switch" aria-label={client.name + " 无账号启动"}
         aria-checked={!!connection?.accountless} disabled={!!busy || state.connections.busy || (!connection?.accountless && !connection?.accountlessAvailable)}
         title={!connection?.accountlessAvailable && !connection?.accountless ? "请先开启接入并同步至少一个模型" : "仅影响此客户端，官方登录保留"}
         onClick={() => onManage({ scope: client.id, enabled: true, accountless: !connection?.accountless, name: client.name })}><i /></button>
     </div>}
+    {client.id === "claude" && (connection?.accountless || state.claudeDesktop?.owned) && <details className="claude-desktop-setup">
+      <summary>Claude 桌面版免登录设置{state.claudeDesktop?.current && <small>已配置</small>}<ChevronRight size={15} /></summary>
+      <div className="claude-desktop-setup-body">
+        <div className="claude-desktop-setup-toggle"><span><strong>桌面版第三方推理</strong><small>{state.claudeDesktop?.conflict ? "检测到其他生效配置，ASS 不会覆盖" : state.claudeDesktop?.current ? "已接入；重新打开 Claude 后生效" : state.claudeDesktop?.owned ? "配置待同步，可关闭后重新开启" : "开启后无需 Anthropic 账户"}</small></span>
+          <button type="button" role="switch" className="provider-injection-switch" aria-label="Claude 桌面版第三方推理"
+            aria-checked={!!state.claudeDesktop?.owned} disabled={!!busy || (!state.claudeDesktop?.owned && (!!state.claudeDesktop?.conflict || !connection?.accountlessAvailable))}
+            onClick={() => act("claude-desktop-configure", () => api.call("claude-desktop-configure", !state.claudeDesktop?.owned),
+              state.claudeDesktop?.owned ? "桌面版接入已关闭；重新打开 Claude 后恢复原生登录" : "桌面版已配置；重新打开 Claude 后选择第三方推理")}><i /></button></div>
+        <p>也可在 Claude 桌面版登录页打开 ☰ → 帮助 → 故障排除 → 启用开发者模式，再到 开发者 → 配置第三方推理，选择 Gateway 和 Static API key，填入下方信息并应用。</p>
+        <div className="claude-desktop-setup-actions">
+          <button className="button" onClick={() => act("claude-desktop-url", () => api.call("claude-desktop-copy", "url"), "网关地址已复制")}>复制网关地址</button>
+          <button className="button" onClick={() => act("claude-desktop-key", () => api.call("claude-desktop-copy", "key"), "本机密钥已复制")}>复制本机密钥</button>
+        </div>
+        <small>应用后重新打开 Claude 桌面版，从登录页选择第三方推理。使用时 ASS 需保持运行。</small>
+      </div>
+    </details>}
     {client.injectionUnsupported ? <p className="client-support-note">{client.injectionUnsupported}</p> :
       groups.size ? <div className="client-provider-list">{[...groups].map(([id, models]) => {
         const provider = state.providers.find((p) => p.id === id);
