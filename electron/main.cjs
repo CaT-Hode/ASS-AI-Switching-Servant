@@ -432,7 +432,7 @@ function snapshot() {
     ),
     connections: connections.snapshot(),
     claudeDesktop: (() => { try { return claudeDesktop.status(proxyConfig.clients.claude?.localToken, servicePort); }
-      catch { return { configured: false, owned: false, current: false, conflict: true }; } })(),
+      catch (error) { return { configured: false, owned: false, current: false, conflict: true, error: error.message }; } })(),
     providerPresets: PROVIDER_PRESETS,
     officialServices: OFFICIAL_SERVICES,
     officialProviderIds: Object.fromEntries(
@@ -915,9 +915,8 @@ else {
       harnesses.options.nativeConfig = nativeConfig;
       proxyConfig = new ProxyConfig(dataDir, safeStorage, harnesses, store, config);
       harnesses.options.proxyConfig = proxyConfig;
-      claudeDesktop = new ClaudeDesktopGateway(dataDir,
-        testMode ? `HKCU\\SOFTWARE\\ASS-QA-Claude-${require("node:crypto").createHash("sha256").update(dataDir).digest("hex").slice(0, 16)}` : undefined,
-        undefined, testMode ? path.join(dataDir, "claude-3p-meta.json") : undefined);
+      claudeDesktop = new ClaudeDesktopGateway(dataDir, testMode
+        ? { directory: path.join(dataDir, "claude-desktop"), policyReader: () => ({}) } : {});
       router = new Router({
         getState: (id) => proxyConfig.routingState(id),
         fetchUpstream: upstream,

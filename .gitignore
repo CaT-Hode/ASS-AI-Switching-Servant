@@ -31,6 +31,9 @@ launch.patch.yml
 route-injections.json
 client-processes.json
 codex-attachment.json
+claude-desktop-gateway.json
+claude_desktop_config.json
+configLibrary/
 backups/
 requests.jsonl*
 test-results/

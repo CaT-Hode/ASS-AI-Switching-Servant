@@ -13,7 +13,7 @@ function verify(relative) {
   }
 }
 for (const dir of ["core", "electron", "dist"]) verify(dir);
-const forbidden = asar.listPackage(archive).filter((n) => /^[/\\](?:qa|tests|design|release|\.git)(?:[/\\]|$)/.test(n) ||
+const forbidden = asar.listPackage(archive).filter((n) => /(?:^|[/\\])configLibrary(?:[/\\]|$)/i.test(n) || /(?:^|[/\\])(?:claude-desktop-gateway|claude_desktop_config)\.json$/i.test(n) || /^[/\\](?:qa|tests|design|release|\.git)(?:[/\\]|$)/.test(n) ||
   /^[/\\](?:auth\.json|clients(?:\.before-[^/\\]+)?\.json|settings\.json|preferences\.json|[^/\\]+\.enc\.json|[^/\\]+\.aimami-relay\.json|\.env(?:\..*)?)$/.test(n));
 if (forbidden.length) throw Error("Forbidden packaged files: " + forbidden.join(", "));
 const suspect = [];

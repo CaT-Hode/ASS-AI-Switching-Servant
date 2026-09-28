@@ -34,7 +34,7 @@ export function ClientInjection({ client, state, act, busy, onManage }) {
     {client.id === "claude" && (connection?.accountless || state.claudeDesktop?.owned) && <details className="claude-desktop-setup">
       <summary>Claude 桌面版免登录设置{state.claudeDesktop?.current && <small>已配置</small>}<ChevronRight size={15} /></summary>
       <div className="claude-desktop-setup-body">
-        <div className="claude-desktop-setup-toggle"><span><strong>桌面版第三方推理</strong><small>{state.claudeDesktop?.conflict ? "检测到其他生效配置，ASS 不会覆盖" : state.claudeDesktop?.current ? "已接入；重新打开 Claude 后生效" : state.claudeDesktop?.owned ? "配置待同步，可关闭后重新开启" : "开启后无需 Anthropic 账户"}</small></span>
+        <div className="claude-desktop-setup-toggle"><span><strong>桌面版第三方推理</strong><small>{state.claudeDesktop?.error || (state.claudeDesktop?.conflict ? "检测到其他生效配置，ASS 不会覆盖" : state.claudeDesktop?.current ? "已接入；重新打开 Claude 后生效" : state.claudeDesktop?.owned ? "配置待同步，可关闭后重新开启" : "开启后无需 Anthropic 账户")}</small></span>
           <button type="button" role="switch" className="provider-injection-switch" aria-label="Claude 桌面版第三方推理"
             aria-checked={!!state.claudeDesktop?.owned} disabled={!!busy || (!state.claudeDesktop?.owned && (!!state.claudeDesktop?.conflict || !connection?.accountlessAvailable))}
             onClick={() => act("claude-desktop-configure", () => api.call("claude-desktop-configure", !state.claudeDesktop?.owned),

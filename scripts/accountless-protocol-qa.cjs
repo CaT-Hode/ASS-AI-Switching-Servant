@@ -1,8 +1,6 @@
 // Synthetic upstream only; independent encrypted profile and no real clients restarted.
 const { _electron } = require("playwright");
-const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto"), assert = require("node:assert/strict");
-const { execFileSync } = require("node:child_process");
-const { readPolicy } = require("../core/claude-desktop-gateway.cjs");
+const fs = require("node:fs"), path = require("node:path"), assert = require("node:assert/strict");
 const root = path.resolve(__dirname, ".."), out = path.join(process.env.LOCALAPPDATA, "ASS-validation");
 const data = fs.mkdtempSync(path.join(out, "protocol-ui-")), codex = path.join(data, "codex");
 fs.mkdirSync(codex); fs.writeFileSync(path.join(codex, "config.toml"), 'model = "official-original"\n');
@@ -96,9 +94,12 @@ async function confirm(button) {
     await desktopSwitch.click();
     assert.equal((await call("snapshot")).claudeDesktop.current, true);
     await page.getByText("已配置", { exact: true }).waitFor();
-    const testPolicy = "HKCU\\SOFTWARE\\ASS-QA-Claude-" + crypto.createHash("sha256").update(data).digest("hex").slice(0, 16);
-    const gatewayKey = readPolicy(testPolicy).inferenceGatewayApiKey.value;
-    const gatewayUrl = readPolicy(testPolicy).inferenceGatewayBaseUrl.value;
+    const library = path.join(data, "claude-desktop/configLibrary");
+    const desktopMeta = JSON.parse(fs.readFileSync(path.join(library, "_meta.json"), "utf8"));
+    const desktopProfile = JSON.parse(fs.readFileSync(path.join(library, desktopMeta.appliedId + ".json"), "utf8"));
+    const gatewayKey = desktopProfile.inferenceGatewayApiKey;
+    const gatewayUrl = desktopProfile.inferenceGatewayBaseUrl;
+    assert.equal(JSON.parse(fs.readFileSync(path.join(data, "claude-desktop/claude_desktop_config.json"), "utf8")).deploymentMode, "3p");
     const discovered = await fetch(gatewayUrl + "/v1/models", { headers: { authorization: "Bearer " + gatewayKey } });
     assert.equal(discovered.status, 200);
     assert.deepEqual((await discovered.json()).data.map(model => model.id), ["fixture::dual", "fixture::chat-only"]);
@@ -127,10 +128,8 @@ async function confirm(button) {
     assert.equal(fs.readFileSync(path.join(codex, "auth.json"), "utf8"), auth);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ passed: true, accountlessEligibility: true, productionVersionGate: true, oldVersionRejected: true,
-      claudeLauncher, bothClients: true, automaticProtocols: true, restartPersistence: true, oauthPreserved: true, screenshots: out, errors }));
+      claudeLauncher, bothClients: true, automaticProtocols: true, desktopLocalConfig: true, restartPersistence: true, oauthPreserved: true, screenshots: out, errors }));
   } finally {
     await stop();
-    const testPolicy = "HKCU\\SOFTWARE\\ASS-QA-Claude-" + crypto.createHash("sha256").update(data).digest("hex").slice(0, 16);
-    try { execFileSync("reg.exe", ["delete", testPolicy, "/f"], { stdio: "ignore", windowsHide: true }); } catch {}
   }
 })().catch(e => { console.error(e.stack); process.exitCode = 1; });

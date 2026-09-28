@@ -27,7 +27,7 @@ if (process.env.ASS_AUDIT_EXPORT)
   collect(JSON.parse(fs.readFileSync(process.env.ASS_AUDIT_EXPORT, "utf8")));
 function check(name, buffer, packaged = false) {
   const normalized = name.replaceAll("\\", "/");
-  if (forbidden.test(normalized) || /(?:^|\/)protocols\.enc\.json$/i.test(normalized))
+  if (forbidden.test(normalized) || /(?:^|\/)(?:protocols\.enc\.json|claude-desktop-gateway\.json|claude_desktop_config\.json)$/i.test(normalized) || /(?:^|\/)configLibrary\//i.test(normalized))
     throw Error("Private filename found: " + normalized);
   if (/^\/?backups\//.test(normalized)) throw Error("Private backup found: " + normalized);
   if (packaged && /^\/?(?:qa|design|tests|scripts)\//.test(normalized))
