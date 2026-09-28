@@ -7,6 +7,20 @@ function textOf(content) {
         .map((c) => c.text || "")
         .join("\n");
 }
+function contentParts(content, kind) {
+  if (typeof content === "string") return kind === "anthropic" ? [{ type: "text", text: content || " " }] : content;
+  const parts = (content || []).map(c => {
+    if (["input_text", "output_text", "text"].includes(c.type)) return { type: "text", text: c.text || " " };
+    if (c.type === "input_image" && typeof c.image_url === "string") {
+      if (kind !== "anthropic") return { type: "image_url", image_url: { url: c.image_url, ...(c.detail ? { detail: c.detail } : {}) } };
+      const data = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(c.image_url);
+      if (data) return { type: "image", source: { type: "base64", media_type: data[1], data: data[2] } };
+      if (/^https?:\/\//.test(c.image_url)) return { type: "image", source: { type: "url", url: c.image_url } };
+    }
+    throw Object.assign(Error("该协议无法转换输入类型 " + c.type + "；请使用支持此能力的原生接口"), { status: 400 });
+  });
+  return kind !== "anthropic" && parts.every(c => c.type === "text") ? parts.map(c => c.text).join("\n") : parts;
+}
 function inputMessages(body, kind) {
   const input =
     typeof body.input === "string"
@@ -68,21 +82,9 @@ function inputMessages(body, kind) {
         system.push(textOf(i.content));
         continue;
       }
-      if (
-        Array.isArray(i.content) &&
-        i.content.some(
-          (c) => !["input_text", "output_text", "text"].includes(c.type),
-        )
-      )
-        throw new Error(
-          "该协议适配目前仅支持文本和函数工具；图片/文件请使用 Responses 模型",
-        );
       messages.push({
         role: i.role === "assistant" ? "assistant" : "user",
-        content:
-          kind === "anthropic"
-            ? [{ type: "text", text: textOf(i.content) || " " }]
-            : textOf(i.content),
+        content: contentParts(i.content, kind),
       });
     } else throw new Error(`该协议暂不支持输入类型 ${i.type || "unknown"}`);
   }
@@ -101,7 +103,9 @@ function inputMessages(body, kind) {
   for (const message of messages) {
     const previous = merged.at(-1);
     if (message.role === "assistant" && previous?.role === "assistant") {
-      previous.content = [previous.content, message.content].filter(Boolean).join("\n") || null;
+      if (Array.isArray(previous.content) || Array.isArray(message.content))
+        previous.content = [previous.content, message.content].flatMap(v => Array.isArray(v) ? v : v ? [{ type: "text", text: v }] : []);
+      else previous.content = [previous.content, message.content].filter(Boolean).join("\n") || null;
       if (message.tool_calls) previous.tool_calls = [...(previous.tool_calls || []), ...message.tool_calls];
     } else merged.push(message);
   }
@@ -143,6 +147,7 @@ function convertRequest(body, model, protocol) {
     stream: true,
   };
   if (tools.length) request.tools = tools;
+  for (const key of ["temperature", "top_p"]) if (body[key] !== undefined) request[key] = body[key];
   if (protocol === "anthropic") {
     request.max_tokens =
       body.max_output_tokens || model.maxOutputTokens || 16384;
@@ -154,6 +159,8 @@ function convertRequest(body, model, protocol) {
       request.tool_choice = { type: "any" };
     else if (body.tool_choice?.name)
       request.tool_choice = { type: "tool", name: body.tool_choice.name };
+    if (body.parallel_tool_calls === false && request.tools?.length)
+      request.tool_choice = { ...(request.tool_choice || { type: "auto" }), disable_parallel_tool_use: true };
   } else {
     request.stream_options = { include_usage: true };
     if (typeof body.parallel_tool_calls === "boolean") request.parallel_tool_calls = body.parallel_tool_calls;
@@ -349,8 +356,10 @@ async function* translateStream(stream, protocol, model) {
         out.usage(data.message?.usage?.input_tokens, data.message?.usage?.output_tokens);
       if (data.type === "content_block_start") {
         const c = data.content_block;
-        if (c.type === "tool_use")
+        if (c.type === "tool_use") {
           yield* out.add(data.index, "tool", { id: c.id, name: c.name });
+          if (c.input && Object.keys(c.input).length) yield out.delta(data.index, JSON.stringify(c.input));
+        }
         else if (c.type === "text") {
           yield* out.add(data.index, "text");
           if (c.text) yield out.delta(data.index, c.text);

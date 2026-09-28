@@ -8,6 +8,7 @@ const allowed = [
   "client-injection",
   "client-native-variant",
   "client-model-launch",
+  "client-accountless-launch",
   "client-credentials",
   "import",
   "save-provider",

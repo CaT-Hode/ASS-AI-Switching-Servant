@@ -78,6 +78,8 @@ else
   );
 app.setName("ASS");
 app.setAppUserModelId("local.ass.desktop");
+const { ProtocolNegotiation } = require("../core/protocol-negotiation.cjs");
+let protocols;
 let window,
   tray,
   store,
@@ -453,7 +455,8 @@ function snapshot() {
     providerModels,
     modelDirectoryJobs: modelDirectory.jobs(),
     modelDirectoryRevisions: modelDirectory.revisions,
-    capabilities,
+    capabilities: { ...protocols?.public(), ...capabilities },
+    protocolError: protocols?.error,
     capabilityJobs,
     balances,
     startupError,
@@ -497,7 +500,7 @@ async function diagnose(providerId, modelName, signal) {
     throw new Error("请选择具体的已启用模型进行检测");
   const name = selected.model,
     key = modelKey(providerId, name);
-  const metrics = diagnosticMetrics(native?.request.protocol || selected.wireApi || "openai-responses", native ? "native" : "router");
+  let metrics = diagnosticMetrics(native?.request.protocol || selected.wireApi || "openai-responses", native ? "native" : "router");
   if (diagnosticControllers.has(key)) throw Error("此模型正在检测");
   const fingerprint = native ? diagnosticFingerprint(native) : diagnosticHistory.fingerprint(providerId, name);
   const controller = new AbortController();
@@ -528,6 +531,10 @@ async function diagnose(providerId, modelName, signal) {
   };
   try {
     requestSignal.throwIfAborted();
+    if (!official && !native) {
+      await protocols.ensure(p, selected, { force: true, signal: requestSignal });
+      metrics = diagnosticMetrics(protocols.select(p, selected, "codex"), "router");
+    }
     if (native) {
       const checked = await checkNativeConnection(native, upstream, requestSignal, metrics);
       result = { providerId, model: name, ok: true, ms: Date.now() - start,
@@ -622,6 +629,18 @@ function invalidateReports(id, metadata = true) {
   for (const [key, controller] of probeControllers)
     if (!id || JSON.parse(key)[0] === id) controller.abort();
 }
+async function prepareProtocols(scope) {
+  const ids = connections.ids(scope);
+  const selected = new Set(ids.flatMap(id => harnesses.injection(id).models.filter(m => m.included).map(m => modelKey(m.providerId, m.model))));
+  await protocols.ensureProviders(store.state.providers.map(p => ({ ...p,
+    models: p.models.filter(m => selected.has(modelKey(p.id, m.model))) })));
+}
+let protocolQueue = Promise.resolve();
+function queueProtocolChecks(id, name) {
+  protocolQueue = protocolQueue.then(() => protocols.ensureProviders(store.state.providers
+    .filter(p => !id || p.id === id).map(p => ({ ...p, models: p.models.filter(m => !name || m.model === name) }))))
+    .catch(() => { /* Preserve configuration; explicit injection/test reports failures. */ });
+}
 function readModelMetadata(id, refresh = false) {
   return modelDirectory.read(id, { refresh: refresh === true });
 }
@@ -648,7 +667,10 @@ async function probeModel(id, name) {
         push();
       },
     });
-    if (!controller.signal.aborted) capabilities[key] = report;
+    if (!controller.signal.aborted) {
+      capabilities[key] = report;
+      protocols.record(provider, model, report);
+    }
     return report;
   } finally {
     clearTimeout(timer);
@@ -798,6 +820,8 @@ else {
       await systemSession.setProxy({ mode: "system" });
       await directSession.setProxy({ mode: "direct" });
       store = new Store(dataDir, codexDir, safeStorage);
+      protocols = new ProtocolNegotiation({ dataDir, crypto: safeStorage,
+        getProviders: () => store.state.providers, fetcher: upstream, onChange: () => { if (connections) push(); } });
       diagnosticHistory = new DiagnosticHistory({
         dataDir,
         crypto: safeStorage,
@@ -856,6 +880,7 @@ else {
           port: servicePort,
           injections,
           processes,
+          protocols,
           isConnected: (id) => connections.allow(id),
           ...(testMode
             ? { home: path.join(dataDir, "test-home"), env: {} }
@@ -959,10 +984,14 @@ else {
             : balance(sourceId, automatic === true);
         },
       );
-      register("connection-preview", (scope, enabled, quit) =>
-        connections.preview(scope, enabled, quit),
-      );
-      register("connection-repair-preview", (scope) => connections.repairPreview(scope));
+      register("connection-preview", async (scope, enabled, quit, accountless) => {
+        if (enabled && !quit && accountless !== false) await prepareProtocols(scope);
+        return connections.preview(scope, enabled, quit, accountless);
+      });
+      register("connection-repair-preview", async (scope) => {
+        await prepareProtocols(scope);
+        return connections.repairPreview(scope);
+      });
       register("connection-repair", async (input) => {
         for (const id of connections.tickets.get(input?.ticket)?.ids || [])
           await nativeLogin.assertIdle(id);
@@ -1105,6 +1134,11 @@ else {
           await router.start(servicePort);
         return harnesses.launchModel(id, ref, router.clientToken);
       }));
+      register("client-accountless-launch", (id) => connections.launch(async () => {
+        harnesses.accountlessPlan(id, router.clientToken);
+        if (!router.server) await router.start(servicePort);
+        return harnesses.launchAccountless(id, router.clientToken);
+      }));
       register("client-credentials", async (id, reset = false) => {
         if (reset) return harnesses.setCredentialHome(id, "");
         const result = await dialog.showOpenDialog(window, {
@@ -1131,7 +1165,8 @@ else {
         return {
           ok: true,
           message:
-            "已打开 " + harnesses.spec(id).name + " 桌面端；沿用其原生账户，没有注入或切换凭据。",
+            proxyConfig.clients[id]?.accountless ? "已打开 Codex 桌面端。若已有窗口仍使用旧配置，请结束任务后通过接入菜单重启。"
+              : "已打开 " + harnesses.spec(id).name + " 桌面端；沿用其原生账户，没有注入或切换凭据。",
         };
       });
       register("client-location", async (id, location) => {
@@ -1208,11 +1243,13 @@ else {
           throw new Error("配置文件超过 5 MiB");
         const result = store.import(JSON.parse(fs.readFileSync(file, "utf8")));
         invalidateReports();
+        queueProtocolChecks();
         return result;
       });
       register("save-provider", (input) => {
         const id = store.updateProvider(input);
         invalidateReports(id);
+        queueProtocolChecks(id);
         return id;
       });
       register("delete-provider", async (id) => {
@@ -1244,6 +1281,7 @@ else {
           expected,
         );
         invalidateReports(provider, false);
+        queueProtocolChecks(provider, model.model);
       });
       register("delete-model", (provider, name, expected) => {
         // The trusted renderer confirms next to the model's delete button.
@@ -1430,6 +1468,8 @@ else {
           syncNativeSuppliers,
           refreshAccountInfo,
           probeModel,
+          protocols,
+          prepareProtocols,
           balance,
           snapshot,
           upstream,

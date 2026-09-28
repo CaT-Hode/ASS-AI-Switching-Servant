@@ -289,11 +289,11 @@ function InlineModel({
           />
         </label>
         <label>
-          接口类型
+          初始接口
           <select
             aria-label={model.model + " 接口类型"}
             title={
-              p.id === "official" ? "官方订阅接口固定为 Responses" : undefined
+                p.id === "official" ? "官方订阅接口固定为 Responses" : "未取得实测结果时的初始接口；注入时按模型检测结果自动选择"
             }
             value={value.wireApi}
             onChange={(e) => update("wireApi", e.target.value)}

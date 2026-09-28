@@ -17,6 +17,7 @@ class ProxyConfig {
     Object.assign(this, { crypto, manager, store, config });
     this.file = path.join(dataDir, "proxy-applied.json");
     this.clients = {};
+    this.modeTokens = {};
     this.pending = null;
     this.error = "";
     try {
@@ -28,7 +29,9 @@ class ProxyConfig {
         const payload = JSON.parse(crypto.decryptString(Buffer.from(record.encrypted, "base64")));
         const clients = payload.clients;
         if (!clients || typeof clients !== "object" || Array.isArray(clients) ||
-            Object.entries(clients).some(([id, plan]) => !IDS.includes(id) || !Array.isArray(plan.providers))) throw Error();
+            Object.entries(clients).some(([id, plan]) => !IDS.includes(id) || !Array.isArray(plan.providers) ||
+              (plan.accountless !== undefined && typeof plan.accountless !== "boolean") ||
+              (plan.accountless && (!/^[a-f0-9]{64}$/.test(plan.localToken || "") || !plan.providers.some((p) => p.models?.length))))) throw Error();
         this.clients = clients;
         if (payload.pending) {
           const allowed = [config.file, config.record, config.catalog];
@@ -43,21 +46,26 @@ class ProxyConfig {
     }
   }
   supports(id) { return IDS.includes(id); }
-  desired(id) {
+  desired(id, accountless = this.clients[id]?.accountless === true) {
     if (!this.supports(id)) return null;
     const injection = this.manager.injection(id);
     const refs = new Set(injection.models.filter((m) => m.included).map((m) => m.ref));
-    const providers = this.store.state.providers.flatMap((p) => {
+    const providers = (this.manager.effectiveProviders?.(id) || this.store.state.providers).flatMap((p) => {
       const models = p.models.filter((m) => refs.has(modelRef(p.id, m.model)));
       if (!models.length) return [];
       // Balance configuration is not a routing change.
       const { balance, ...provider } = p;
       return [{ ...provider, models }];
     });
+    if (accountless && !providers.length) throw Error("无账号启动需要至少一个已接入的模型");
+    const catalog = id === "codex" ? makeCatalog(this.store.officialModels, providers, this.store.state.officialOverrides) : null;
+    if (accountless && catalog) catalog.models = catalog.models.filter((m) => m.slug.includes("::"));
+    const first = providers[0]?.models[0];
     return {
       providers,
-      defaultModel: null,
-      ...(id === "codex" ? { catalog: makeCatalog(this.store.officialModels, providers, this.store.state.officialOverrides) } : {}),
+      defaultModel: accountless ? { model: providers[0].id + "::" + first.model, effort: first.defaultEffort } : null,
+      ...(accountless ? { accountless: true, localToken: this.clients[id]?.localToken || (this.modeTokens[id] ||= require("node:crypto").randomBytes(32).toString("hex")) } : {}),
+      ...(catalog ? { catalog } : {}),
     };
   }
   checkFiles(id) {
@@ -86,7 +94,7 @@ class ProxyConfig {
     return hash(JSON.stringify([read(this.file)?.toString("base64"), ids.filter((id) => this.supports(id)).map((id) =>
       [id, enabled ? this.desired(id) : null, id === "codex" ? [read(this.config.catalog)?.toString("base64"), read(this.config.record)?.toString("base64")] : null])]));
   }
-  preflight(ids, enabled) {
+  preflight(ids, enabled, accountless) {
     if (!enabled) {
       if (this.pending && ids.includes("codex")) throw Error("路由配置事务待恢复，请先重新同步");
       return;
@@ -94,9 +102,9 @@ class ProxyConfig {
     for (const id of ids.filter((id) => this.supports(id))) {
       if (this.pending) { this.recoveryCheck(); continue; }
       this.checkFiles(id);
-      const plan = this.desired(id);
+      const plan = this.desired(id, accountless);
       if (!plan.providers.length && !this.clients[id]) throw Error("没有可接入的兼容模型，请先配置供应商与模型");
-      if (id === "codex") this.config.prepareAttach(plan.defaultModel);
+      if (id === "codex") this.config.prepareAttach(plan.defaultModel, plan.localToken);
     }
   }
   persist(clients, pending = null) {
@@ -129,14 +137,14 @@ class ProxyConfig {
     }
     this.persist(this.clients);
   }
-  sync(id) {
+  sync(id, accountless) {
     if (!this.supports(id)) return;
     this.recover();
-    this.preflight([id], true);
-    const plan = this.desired(id);
+    this.preflight([id], true, accountless);
+    const plan = this.desired(id, accountless);
     const files = [];
     if (id === "codex") {
-      const attachment = this.config.prepareAttach(plan.defaultModel);
+      const attachment = this.config.prepareAttach(plan.defaultModel, plan.localToken);
       const backup = path.join(this.config.dataDir, "backups", "config-" + Date.now() + "-proxy.toml");
       safePath(backup); atomic(backup, attachment.old);
       const values = [
@@ -145,7 +153,7 @@ class ProxyConfig {
         [this.config.file, attachment.text],
       ];
       for (const [file, after] of values) { safePath(file); files.push({ file, before: read(file)?.toString() ?? null, after }); }
-      if (files.at(-1).before !== attachment.old) throw Error("Codex 配置同时被修改，请重新确认");
+      if ((files.at(-1).before ?? "") !== attachment.old) throw Error("Codex 配置同时被修改，请重新确认");
     }
     try {
       this.persist(this.clients, { files });
@@ -224,8 +232,9 @@ class ProxyConfig {
     return { backup, files: plan.files.length };
   }
   routingState(id) {
-    if (!this.supports(id)) return this.store.state; // Diagnostics use drafts.
-    return { providers: this.error ? [] : (this.clients[id]?.providers || []) };
+    if (!this.supports(id)) return { ...this.store.state, providers: this.manager.effectiveProviders?.(id) || this.store.state.providers }; // Diagnostics use drafts.
+    const plan = this.clients[id];
+    return { providers: this.error ? [] : (plan?.providers || []), accountless: plan?.accountless === true, localToken: this.error ? undefined : plan?.localToken };
   }
   requireApplied(id) {
     if (!this.status(id, true).applied) throw Error("模型接入配置尚未同步，请先在接入控制中同步后再启动");

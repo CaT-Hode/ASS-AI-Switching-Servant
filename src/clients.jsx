@@ -288,6 +288,7 @@ function AccountCard({
             disabled={
               !client.executable ||
               !!busy ||
+              state.connections.clients[client.id]?.accountless ||
               (a.kind === "api" && !a.ready)
             }
             onClick={() => run(a, "launch")}

@@ -1,6 +1,13 @@
 const { randomUUID } = require("node:crypto");
 const { convertRequest, translateStream, sseMessages } = require("./adapters.cjs");
 const unsupported = (type) => Object.assign(Error("此跨协议模型不支持 " + type + "，请选择 Messages 模型"), { status: 400 });
+function normalizeMessages(body) {
+  if (!body.messages?.some(m => ["system", "developer"].includes(m.role))) return body;
+  const blocks = value => typeof value === "string" ? (value ? [{ type: "text", text: value }] : []) : value || [];
+  return { ...body, system: [...blocks(body.system), ...body.messages
+    .filter(m => ["system", "developer"].includes(m.role)).flatMap(m => blocks(m.content))],
+    messages: body.messages.filter(m => !["system", "developer"].includes(m.role)) };
+}
 function contentText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) throw unsupported("内容格式");
@@ -8,11 +15,22 @@ function contentText(content) {
 }
 function messagesRequest(body, model, protocol) {
   const input = [];
+  const system = [contentText(body.system || "")];
   for (const message of body.messages || []) {
+    // Current CC gateways may send a system turn in addition to top-level
+    // system. Preserve it as instructions instead of rejecting the whole turn.
+    if (["system", "developer"].includes(message.role)) { system.push(contentText(message.content)); continue; }
     if (!["user", "assistant"].includes(message.role)) throw unsupported("消息角色");
     const blocks = typeof message.content === "string" ? [{ type: "text", text: message.content }] : message.content;
     for (const block of blocks || []) {
       if (block.type === "text") input.push({ role: message.role, content: block.text });
+      else if (block.type === "image" && block.source) {
+        const source = block.source;
+        const image = source.type === "url" ? source.url : source.type === "base64" && source.media_type && source.data
+          ? `data:${source.media_type};base64,${source.data}` : null;
+        if (!image) throw unsupported("image");
+        input.push({ role: message.role, content: [{ type: "input_image", image_url: image }] });
+      }
       else if (block.type === "tool_use") input.push({ type: "function_call", call_id: block.id, name: block.name, arguments: JSON.stringify(block.input || {}) });
       else if (block.type === "tool_result") input.push({ type: "function_call_output", call_id: block.tool_use_id,
         output: (block.is_error ? "Tool error: " : "") + contentText(block.content || "") });
@@ -20,12 +38,12 @@ function messagesRequest(body, model, protocol) {
     }
   }
   const tools = (body.tools || []).map((tool) => {
-    if ((tool.type && !["custom", "custom_20250924"].includes(tool.type)) || !tool.name) throw unsupported("服务端工具");
+    if ((tool.type && !/^custom(?:_\d+)?$/.test(tool.type)) || !tool.name) throw unsupported("服务端工具");
     return { type: "function", name: tool.name, description: tool.description, parameters: tool.input_schema };
   });
   const choice = body.tool_choice;
-  const request = { model: model.model, input, instructions: contentText(body.system || ""), stream: true, store: false,
-    ...(body.max_tokens ? { max_output_tokens: body.max_tokens } : {}),
+  const request = { model: model.model, input, instructions: system.filter(Boolean).join("\n\n"), stream: true, store: false,
+    ...(body.max_tokens ? { max_output_tokens: Math.max(16, body.max_tokens) } : {}),
     ...(tools.length ? { tools } : {}),
     ...(choice ? { tool_choice: choice.type === "tool" ? { type: "function", name: choice.name }
       : choice.type === "any" ? "required" : choice.type } : {}),
@@ -123,4 +141,4 @@ async function messagesJSON(events) {
   message.content = [...blocks.values()].map(({ json, ...block }) => block.type === "tool_use" ? { ...block, input: JSON.parse(json || "{}") } : block);
   return message;
 }
-module.exports = { messagesRequest, messagesEvents, messagesJSON };
+module.exports = { messagesRequest, messagesEvents, messagesJSON, normalizeMessages };

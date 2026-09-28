@@ -101,7 +101,8 @@ test("real tool structure is observed, effort acceptance requires an invalid-val
   });
   assert.equal(report.tools.status, "observed");
   assert.equal(report.efforts.max.status, "validated");
-  assert.equal(report.requestCount, 5);
+  assert.equal(report.requestCount, 6);
+  assert.ok(report.protocols.anthropic, "Messages is checked even after Responses succeeds");
   assert.ok(!JSON.stringify(report).includes(p.apiKey));
 });
 test("HTTP 200 for invalid effort does not prove intensity support", async () => {

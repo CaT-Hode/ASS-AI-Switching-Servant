@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const { atomic } = require("./config.cjs");
 const TOML = require("@iarna/toml");
 const IDS = ["codex", "claude", "opencode", "pi", "dsh"];
-const NAMES = new Set(["config.toml", "catalog.json", "models.json", "settings.yaml"]);
+const NAMES = new Set(["config.toml", "catalog.json", "models.json", "settings.yaml", "settings.json"]);
 const hash = (s) => crypto.createHash("sha256").update(s).digest("hex");
 const LEGACY_OFFICIAL = 'cli_auth_credentials_store = "file"\nmodel_provider = "ass_official"\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = "http://127.0.0.1:25819/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n';
 function legacyBaseline(harness, name, text) {

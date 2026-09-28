@@ -20,7 +20,7 @@ function withoutOwn(text) {
     "",
   );
 }
-function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/codex/v1", defaultModel = null) {
+function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/codex/v1", defaultModel = null, localToken = "") {
   if (text.includes("aimami-relay codex-router top start"))
     throw new Error(
       "检测到其他路由工具仍接管 Codex。请先关闭旧路由，再点击接入。",
@@ -46,7 +46,8 @@ function prepareConfig(text, catalog, baseUrl = "http://127.0.0.1:25819/clients/
   }
   const model = defaultModel ? `model = ${JSON.stringify(defaultModel.model)}\nmodel_reasoning_effort = ${JSON.stringify(defaultModel.effort)}\n` : "";
   const block = `${START}\nmodel_provider = "ass_router"\nmodel_catalog_json = ${JSON.stringify(catalog)}\n${model}${END}\n`;
-  const providers = `\n${START}\n[model_providers.ass_router]\nname = "ASS"\nbase_url = ${JSON.stringify(baseUrl)}\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n${END}\n`;
+  const auth = localToken ? `requires_openai_auth = false\nexperimental_bearer_token = ${JSON.stringify(localToken)}\n` : "requires_openai_auth = true\n";
+  const providers = `\n${START}\n[model_providers.ass_router]\nname = "ASS"\nbase_url = ${JSON.stringify(baseUrl)}\nwire_api = "responses"\n${auth}supports_websockets = false\n${END}\n`;
   const result = block + top + rest + providers;
   TOML.parse(result);
   return { text: result, replaced };
@@ -75,12 +76,12 @@ class ConfigManager {
       return { attached: false, provider: "unknown" };
     }
   }
-  prepareAttach(defaultModel = null) {
+  prepareAttach(defaultModel = null, localToken = "") {
     const old = fs.existsSync(this.file) ? fs.readFileSync(this.file, "utf8") : "";
     // Validate ownership, restore the baseline in memory, then apply the new
     // desired default. Never strip an externally edited managed block.
     const baseline = old.includes(START) ? this.preflightDetach().next : old;
-    return { old, ...prepareConfig(baseline, this.catalog, this.baseUrl, defaultModel) };
+    return { old, ...prepareConfig(baseline, this.catalog, this.baseUrl, defaultModel, localToken) };
   }
   attach(defaultModel = null) {
     const { old, text, replaced } = this.prepareAttach(defaultModel);

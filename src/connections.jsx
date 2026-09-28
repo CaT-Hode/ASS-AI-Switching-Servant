@@ -76,13 +76,13 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
     async function preview() {
       let failed = false;
       try {
-        const value = await api.call("connection-preview", request.scope, request.enabled, !!request.quit);
+        const value = await api.call("connection-preview", request.scope, request.enabled, !!request.quit, request.accountless);
         if (active) setPlan(value);
       } catch (e) {
         failed = true;
         if (active) setError(cleanError(e));
       }
-      if (active && (failed || request.issue) && request.scope !== "all" && !request.quit) {
+      if (active && request.accountless === undefined && (failed || request.issue) && request.scope !== "all" && !request.quit) {
         try {
           const value = await api.call("connection-repair-preview", request.scope);
           if (active) setRepair(value);
@@ -95,20 +95,23 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
     return () => {
       active = false;
     };
-  }, [request.scope, request.enabled, request.quit, request.issue]);
+  }, [request.scope, request.enabled, request.quit, request.issue, request.accountless]);
   const target = plan?.names.join("、") || repair?.names.join("、") || request.name || "客户端";
-  const hasIssue = !request.quit && request.scope !== "all" && (!!request.issue || !!error);
+  const hasIssue = request.accountless === undefined && !request.quit && request.scope !== "all" && (!!request.issue || !!error);
   const restartPlan = hasIssue ? repair?.restart : plan?.restart;
-  const title = hasIssue ? `${target} 接入异常` : request.quit
+  const title = request.accountless !== undefined ? `${request.accountless ? "开启" : "关闭"} ${target} 无账号启动？` : hasIssue ? `${target} 接入异常` : request.quit
     ? "退出 ASS？"
     : request.scope === "all"
       ? "停止全部接入？"
       : request.enabled
         ? `${request.sync ? "同步" : "开启"} ${target} 接入？`
         : `断开 ${target} 接入？`;
-  let warning = "正在检查接入状态…";
+  let warning = request.enabled && request.accountless !== false ? "正在检查模型协议与接入状态…" : "正在检查接入状态…";
   if (plan) {
-    if (plan.enabled) {
+    if (request.accountless !== undefined) {
+      warning = request.accountless ? "仅使用已注入模型，按供应商 API 计费。原有官方登录保留。"
+        : "恢复正常账户启动；已有窗口需重启后生效。";
+    } else if (plan.enabled) {
       warning = plan.codexConfig
         ? "将更新 Codex 接入配置，保留原有登录与会话。"
         : plan.native

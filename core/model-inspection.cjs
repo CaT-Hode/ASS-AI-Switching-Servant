@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 const { endpoint, EFFORTS, PROTOCOLS } = require("./models.cjs");
 const { convertRequest, sseMessages } = require("./adapters.cjs");
+const { protocolEndpoint, providerSessionHeaders } = require("./provider-transport.cjs");
 const modelKey = (provider, model) => JSON.stringify([provider, model]);
 const strings = (value) =>
   Array.isArray(value)
@@ -288,11 +289,12 @@ async function nativeProbe(
         ? body
         : convertRequest(body, model, protocol);
     const response = await fetchUpstream(
-      endpoint(provider.baseUrl, protocol),
+      protocolEndpoint(provider, protocol),
       {
         method: "POST",
         headers: {
           ...headersFor(provider, protocol),
+          ...providerSessionHeaders(provider, { session_id: "ass-protocol-" + nonce }),
           "content-type": "application/json",
           accept: "text/event-stream",
         },
@@ -310,6 +312,8 @@ async function nativeProbe(
       const raw = await limitedText(response, 128 * 1024).catch(() => "");
       return {
         status: "rejected",
+        unsupported: [404, 405, 415].includes(response.status) ||
+          ([400, 422].includes(response.status) && /(?:unsupported|not supported|不支持).{0,60}(?:protocol|endpoint|api format|responses api|messages api)|(?:protocol|endpoint|responses api|messages api).{0,60}(?:unsupported|not supported|不支持)/i.test(raw)),
         httpStatus: response.status,
         effortError:
           [400, 422].includes(response.status) &&
@@ -365,16 +369,15 @@ async function probeCapabilities(
   try {
     let working;
     for (const protocol of [
-      model.wireApi,
-      ...PROTOCOLS.filter((p) => p !== model.wireApi),
+      "openai-responses", "anthropic", "openai-chat",
     ]) {
       const result = await run(protocol, {}, "验证 " + protocol);
       report.protocols[protocol] = result;
       if (result.status === "passed") {
-        working = protocol;
-        break;
+        working ||= protocol;
       }
-      if (![400, 404, 405, 415, 422].includes(result.httpStatus)) break;
+      if (result.httpStatus === 429) break;
+      if (protocol === "anthropic" && working) break;
     }
     if (!working) return report;
     const tool = await run(working, { tool: true }, "验证工具调用");

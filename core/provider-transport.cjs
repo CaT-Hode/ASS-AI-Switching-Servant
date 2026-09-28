@@ -1,10 +1,14 @@
 const { endpoint } = require("./models.cjs");
 function messagesTransport(provider, model) {
   const url = new URL(provider.baseUrl);
-  if (model.wireApi !== "anthropic" && url.protocol === "https:" && url.hostname === "api.deepseek.com" &&
+  if (url.protocol === "https:" && url.hostname === "api.deepseek.com" &&
       !url.port && ["", "/v1", "/beta"].includes(url.pathname.replace(/\/$/, "")))
     return { protocol: "anthropic", url: "https://api.deepseek.com/anthropic/v1/messages", adapted: false };
   return { protocol: model.wireApi, url: endpoint(provider.baseUrl, model.wireApi), adapted: model.wireApi !== "anthropic" };
+}
+function protocolEndpoint(provider, protocol, suffix = "") {
+  return protocol === "anthropic" ? messagesTransport(provider, { wireApi: "anthropic" }).url + suffix
+    : endpoint(provider.baseUrl, protocol, suffix);
 }
 function providerSessionHeaders(provider, incoming = {}) {
   if (new URL(provider.baseUrl).hostname !== "opencode.ai") return {};
@@ -15,4 +19,4 @@ function providerSessionHeaders(provider, incoming = {}) {
   if (!headers["x-opencode-session"]) delete headers["x-opencode-session"];
   return headers;
 }
-module.exports = { messagesTransport, providerSessionHeaders };
+module.exports = { messagesTransport, providerSessionHeaders, protocolEndpoint };

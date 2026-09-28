@@ -181,8 +181,10 @@ export function ModelCapabilities({ provider, model, state, act, busy }) {
               <div key={protocol}>
                 <span>{protocol}</span>
                 <strong>
-                  {statusText[result.status]}
+                  {result.status === "unsupported" ? "此接口不支持" : statusText[result.status]}
                   {result.httpStatus ? " · HTTP " + result.httpStatus : ""}
+                  {Number.isFinite(result.ms) ? " · " + result.ms + " ms" : ""}
+                  {result.status === "passed" && result.lastStatus === "unknown" ? " · 保留上次成功" : ""}
                 </strong>
               </div>
             ))}
@@ -200,8 +202,8 @@ export function ModelCapabilities({ provider, model, state, act, busy }) {
               </div>
             ))}
             <p className="hint">
-              {report.requestCount} 条请求 ·{" "}
-              {new Date(report.time).toLocaleTimeString()}
+              {report.requestCount ? report.requestCount + " 条请求 · " : ""}
+              {new Date(report.time).toLocaleString()}
               {report.cancelled ? " · 已取消，仅保留部分结果" : ""}
             </p>
           </div>
@@ -215,7 +217,7 @@ export function ModelCapabilities({ provider, model, state, act, busy }) {
       <p className="capability-warning">
         不会修改配置或执行工具。上下文上限、图像 / 音频 /
         视频输入只显示明确声明，不进行大请求盲测。原生 API 能力不等同于 Codex
-        跨协议工具兼容性。结果保留在本次应用会话中。
+        跨协议工具兼容性。协议结果已持久化；注入时自动选择原生接口或协议转换。
       </p>
     </>
   );

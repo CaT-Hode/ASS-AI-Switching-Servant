@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronRight, Layers3, RefreshCw, BrandMotion } from "./icons.jsx";
+import { ChevronRight, Layers3, RefreshCw, BrandMotion, Terminal } from "./icons.jsx";
 import { providerBrand } from "./provider-brand.mjs";
 const api = window.ass;
 const protocols = { "openai-chat": "Chat Completions", "openai-responses": "Responses", anthropic: "Anthropic Messages" };
@@ -16,6 +16,17 @@ export function ClientInjection({ client, state, act, busy, onManage }) {
         title="同步供应商接入" disabled={!!busy || state.connections.busy}
         onClick={() => onManage({ scope: client.id, enabled: true, sync: true })}><RefreshCw size={16} /></button>}
     </header>
+    {["codex", "claude"].includes(client.id) && <div className="accountless-control">
+      <div><strong>无账号启动</strong><small>{connection?.accountless ? "仅显示注入模型 · 不使用官方 OAuth" : "注入模型后可开启"}</small></div>
+      {connection?.accountless && <button className="button" disabled={!!busy || !connection.accountlessAvailable || !(client.launcher?.ready || (client.id === "codex" && client.desktop))}
+        title={client.id === "codex" && client.desktop ? "打开桌面端；已运行的窗口需重启加载配置" : "以独立配置启动，不读取官方 OAuth"}
+        onClick={() => act("accountless-launch", () => api.call(client.id === "codex" && client.desktop ? "client-open-desktop" : "client-accountless-launch", client.id))}>
+        <Terminal size={15} />启动</button>}
+      <button type="button" role="switch" className="provider-injection-switch" aria-label={client.name + " 无账号启动"}
+        aria-checked={!!connection?.accountless} disabled={!!busy || state.connections.busy || (!connection?.accountless && !connection?.accountlessAvailable)}
+        title={!connection?.accountlessAvailable && !connection?.accountless ? "请先开启接入并同步至少一个模型" : "仅影响此客户端，官方登录保留"}
+        onClick={() => onManage({ scope: client.id, enabled: true, accountless: !connection?.accountless, name: client.name })}><i /></button>
+    </div>}
     {client.injectionUnsupported ? <p className="client-support-note">{client.injectionUnsupported}</p> :
       groups.size ? <div className="client-provider-list">{[...groups].map(([id, models]) => {
         const provider = state.providers.find((p) => p.id === id);

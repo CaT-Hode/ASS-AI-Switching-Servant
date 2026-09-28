@@ -349,7 +349,7 @@ export function ModelEditor({
                 onChange={(e) => set("displayName", e.target.value)}
               />
             </Field>
-            <Field label="接口类型">
+            <Field label="初始接口（注入时自动检测）">
               <select
                 value={draft.wireApi}
                 disabled={provider.id === "official"}

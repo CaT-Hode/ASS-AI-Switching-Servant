@@ -52,6 +52,7 @@ function injectionCatalog(harness, providers, settings = {}) {
     return { ref, providerId: p.id, providerName: p.name, model: m.model,
       name: m.displayName, protocol: m.wireApi, issue,
       ...(harness === "claude" && m.wireApi !== "anthropic" ? { adapter: "Messages 兼容接入" } : {}),
+      ...(harness === "codex" && m.wireApi !== "openai-responses" ? { adapter: "Responses 转换接入" } : {}),
       included: !issue && !excludedProviders.has(p.id) && !excluded.has(ref) };
   }));
 }

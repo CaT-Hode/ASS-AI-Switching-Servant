@@ -118,6 +118,8 @@ class Connections {
               modelCount: native.modelCount,
               applied: native.applied,
               runtimeStatus: native.runtimeStatus,
+              accountless: this.proxyConfig?.clients[id]?.accountless === true,
+              accountlessAvailable: ["codex", "claude"].includes(id) && this.enabled[id] && native.applied === true && native.modelCount > 0,
               configAttached:
                 id === "codex" ? this.config.status().attached : undefined,
             },
@@ -151,11 +153,11 @@ class Connections {
       ]),
     );
   }
-  preflight(ids, enabled, quit = false) {
+  preflight(ids, enabled, quit = false, accountless) {
     if (this.error) throw Error(this.error);
     this.injections.preflight(ids);
     if (!quit) this.nativeConfig?.preflight(ids, enabled);
-    if (!quit) this.proxyConfig?.preflight(ids, enabled);
+    if (!quit) this.proxyConfig?.preflight(ids, enabled, accountless);
     if (ids.includes("codex")) {
       if (!enabled) this.config.preflightDetach();
       else if (!this.config.status().attached) {
@@ -168,7 +170,15 @@ class Connections {
       }
     }
   }
-  async preview(scope, enabled, quit = false) {
+  async preview(scope, enabled, quit = false, accountless) {
+    if (accountless !== undefined) {
+      if (typeof accountless !== "boolean" || !["codex", "claude"].includes(scope) || !enabled || quit || !this.enabled[scope])
+        throw Error("请先开启并同步此客户端的模型接入");
+      if (accountless) {
+        this.proxyConfig.requireApplied(scope);
+        if (!this.proxyConfig.clients[scope]?.providers.some((p) => p.models.length)) throw Error("请先注入至少一个模型");
+      }
+    }
     if (
       typeof enabled !== "boolean" ||
       (scope === "all" && enabled) ||
@@ -178,7 +188,7 @@ class Connections {
     if (this.busy) throw Error("正在切换或启动客户端，请稍后重试");
     await this.processes.refresh();
     const ids = this.ids(scope).filter((id) => !quit || this.needsRouter(id));
-    this.preflight(ids, enabled, quit);
+    this.preflight(ids, enabled, quit, accountless);
     const restart = !quit && this.restarter ? await this.restarter.preview(ids) : null;
     const snapshot = this.processes.snapshot();
     const ticket = crypto.randomBytes(24).toString("hex");
@@ -193,9 +203,11 @@ class Connections {
       fingerprint: this.fingerprint(ids, enabled, quit),
       expires: Date.now() + 180000,
       restart,
+      accountless,
     });
     return {
       ticket,
+      accountless,
       restart: this.restarter?.public(restart),
       scope,
       enabled,
@@ -251,7 +263,7 @@ class Connections {
         this.fingerprint(plan.ids, plan.enabled, plan.quit) !== plan.fingerprint
       )
         throw Error("配置或窗口清单已变化，请重新预览后确认");
-      this.preflight(plan.ids, plan.enabled, plan.quit);
+      this.preflight(plan.ids, plan.enabled, plan.quit, plan.accountless);
       if (restart) await this.restarter.validate(plan.restart);
       if (restartFirst) {
         this.blocked.add("codex");
@@ -273,7 +285,7 @@ class Connections {
         await this.processes.refresh();
         if (this.fingerprint(plan.ids, plan.enabled, plan.quit, false) !== before)
           throw Error("关闭期间配置已变化，请重新预览后确认");
-        this.preflight(plan.ids, plan.enabled, plan.quit);
+        this.preflight(plan.ids, plan.enabled, plan.quit, plan.accountless);
       }
       if (plan.enabled) {
         // Model/routing changes affect later requests of the same task too.
@@ -285,7 +297,7 @@ class Connections {
         for (const id of plan.ids) this.nativeConfig?.sync(id);
         if (plan.ids.some((id) => this.needsRouter(id)))
           await this.router.start(this.port);
-        for (const id of plan.ids) this.proxyConfig?.sync(id);
+        for (const id of plan.ids) this.proxyConfig?.sync(id, plan.accountless);
         if (plan.ids.includes("codex") && !this.proxyConfig) {
           this.writeCatalog();
           this.config.attach();

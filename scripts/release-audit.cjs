@@ -27,7 +27,7 @@ if (process.env.ASS_AUDIT_EXPORT)
   collect(JSON.parse(fs.readFileSync(process.env.ASS_AUDIT_EXPORT, "utf8")));
 function check(name, buffer, packaged = false) {
   const normalized = name.replaceAll("\\", "/");
-  if (forbidden.test(normalized))
+  if (forbidden.test(normalized) || /(?:^|\/)protocols\.enc\.json$/i.test(normalized))
     throw Error("Private filename found: " + normalized);
   if (/^\/?backups\//.test(normalized)) throw Error("Private backup found: " + normalized);
   if (packaged && /^\/?(?:qa|design|tests|scripts)\//.test(normalized))
@@ -59,7 +59,7 @@ function check(name, buffer, packaged = false) {
   const entries = listPackage(archive);
   for (const entry of entries) {
     const name = entry.replace(/^[\\/]/, "");
-    if (forbidden.test(name.replaceAll("\\", "/")))
+    if (forbidden.test(name.replaceAll("\\", "/")) || /(?:^|[/\\])protocols\.enc\.json$/i.test(name))
       throw Error("Private packaged filename found");
     if (
       /\.(?:json|c?js|mjs|jsx|ts|tsx|md|txt|toml|ya?ml|html|css|lock)$/.test(

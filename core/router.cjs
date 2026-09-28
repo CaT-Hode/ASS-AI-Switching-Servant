@@ -2,9 +2,10 @@ const http = require("node:http");
 const { endpoint, normalizeEffort } = require("./models.cjs");
 const { convertRequest, translateStream } = require("./adapters.cjs");
 const { SseMonitor } = require("./sse-monitor.cjs");
-const { forwardHarness } = require("./harness-route.cjs");
-const { providerSessionHeaders } = require("./provider-transport.cjs");
+const { forwardHarness, authorized } = require("./harness-route.cjs");
+const { providerSessionHeaders, protocolEndpoint } = require("./provider-transport.cjs");
 const crypto = require("node:crypto");
+const { toolBridge } = require("./tool-bridge.cjs");
 const forwarded = [
   "authorization",
   "chatgpt-account-id",
@@ -73,7 +74,7 @@ function routeFor(body, state, suffix = "") {
     };
   return {
     source: p.name,
-    url: endpoint(p.baseUrl, m.wireApi, suffix),
+    url: protocolEndpoint(p, m.wireApi, suffix),
     protocol: m.wireApi,
     network: p.network,
     provider: p,
@@ -227,7 +228,14 @@ class Router {
       } catch {
         throw Object.assign(new Error("请求不是有效 JSON"), { status: 400 });
       }
-      route = routeFor(body, this.getState(this.requests.get(req)?.client), match[1] || "");
+      const state = this.getState(this.requests.get(req)?.client);
+      if (state.accountless) {
+        if (!authorized(req.headers.authorization.replace(/^Bearer\s+/i, ""), state.localToken))
+          throw Object.assign(Error("无账号模式已启用，请重新启动客户端加载本机接入凭据"), { status: 401 });
+        if (typeof body.model !== "string" || !body.model.includes("::"))
+          throw Object.assign(Error("无账号模式仅允许使用已注入的模型"), { status: 403 });
+      }
+      route = routeFor(body, state, match[1] || "");
       if (route.official && req.headers.authorization.replace(/^Bearer\s+/i, "") === this.clientToken)
         throw Object.assign(new Error("此窗口使用模型 API 凭据，不能请求 ChatGPT 订阅模型；请从官方账户卡片启动"), { status: 403 });
       const headers = route.official
@@ -241,10 +249,11 @@ class Router {
           headers["anthropic-version"] = "2023-06-01";
         } else headers.authorization = "Bearer " + route.provider.apiKey;
       }
+      const bridge = route.protocol !== "openai-responses" ? toolBridge(route.body) : null;
       const request =
         route.protocol === "openai-responses"
           ? route.body
-          : convertRequest(route.body, route.model, route.protocol);
+          : convertRequest(bridge.request, route.model, route.protocol);
       this.active++;
       this.controllers.add(controller);
       timer = setTimeout(() => controller.abort(), 300000);
@@ -336,11 +345,11 @@ class Router {
         }
       } else if (body.stream === false) {
         let final;
-        for await (const event of translateStream(
+        for await (const event of bridge.restore(translateStream(
           response.body,
           route.protocol,
           body.model,
-        ))
+        )))
           if (
             event.response?.status === "completed" ||
             event.response?.status === "incomplete"
@@ -354,11 +363,11 @@ class Router {
           "cache-control": "no-cache",
         });
         res.flushHeaders();
-        for await (const event of translateStream(
+        for await (const event of bridge.restore(translateStream(
           response.body,
           route.protocol,
           body.model,
-        ))
+        )))
           await write(
             res,
             `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,

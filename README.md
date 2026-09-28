@@ -11,6 +11,8 @@ ASS（Agent-Switching-Servant）是你的 Windows 桌面 AI 路由与账户助�
 - 首页汇总已有客户端账户、订阅额度 / API 余额及本机 Token 用量；本周每小时、本月每 4 小时，近一年保持 365 日热力图和逐日 Token 趋势；按客户端或模型分类，日账本不虚构小时数据，筛选与统计缓存跨重启保留。读取范围与计数口径见 [用量总览](docs/USAGE-OVERVIEW.md)。
 - 导入包含 `providers` 的旧版路由 JSON，保留供应商 ID、模型协议及显式上下文设置。
 - Codex 官方请求与第三方 API 严格分流；第三方失败不会自动切到官方账户。
+- 模型自动检测 Responses / Anthropic Messages，必要时检测 Chat Completions；按客户端选择实测协议，兼容接入转换请求、流式回复与工具历史。协议结果按模型持久化，临时 502 不抹掉此前成功记录。
+- Codex 桌面端 / Claude Code 可在模型接入后启用“无账号启动”，仅展示已注入模型，不需要官方 OAuth；原有登录保留。Claude Code 的自定义模型列表需要 2.1.242+。
 - 通过 Electron / Chromium 网络栈使用 Windows 信任证书和系统代理，不关闭 TLS 校验。
 - 按供应商、模型名称推导上下文默认值，支持手动覆盖。
 - 双滑块选择 `low / medium / high / xhigh / max / ultra` 范围，也可逐项勾选。非 GPT 模型默认不启用 ultra。

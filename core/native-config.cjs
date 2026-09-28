@@ -4,6 +4,7 @@ const { createHash } = require("node:crypto");
 const { NativeFields, document, read, hash } = require("./native-fields.cjs");
 const { nativeLocations } = require("./credential-status.cjs");
 const { endpoint } = require("./models.cjs");
+const { protocolEndpoint } = require("./provider-transport.cjs");
 const { injectionCatalog, modelRef } = require("./client-policy.cjs");
 const { target: kimiTarget } = require("./kimi-config.cjs");
 const zcode = require("./zcode-config.cjs");
@@ -82,7 +83,7 @@ function profileLocations(harness, dir, base) {
   throw Error("不支持的原生配置目录");
 }
 function baseUrl(harness, p, wire) {
-  const url = endpoint(p.baseUrl, wire).replace(
+  const url = protocolEndpoint(p, wire).replace(
     /\/(?:responses|chat\/completions|messages)$/,
     "",
   );
@@ -108,7 +109,7 @@ function compose(harness, manager, selection, targetOverride) {
   }
   const field = (file, format, keys, value, extra = {}) =>
     fields.push({ harness, file, format, path: keys, value, ...extra });
-  const providers = manager.getState().providers;
+  const providers = manager.effectiveProviders?.(harness) || manager.getState().providers;
   const settings = manager.state.injections?.[harness] || {};
   const catalog = injectionCatalog(harness, providers, settings);
   const included = new Set(catalog.filter((m) => m.included).map((m) => m.ref));

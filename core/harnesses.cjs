@@ -13,6 +13,7 @@ const additionalOAuth = require("./additional-oauth.cjs");
 const kimiConfig = require("./kimi-config.cjs");
 const { officialAccountPlan } = require("./official-account-plan.cjs");
 const { assertClaudeAccount } = require("./claude-launch-policy.cjs");
+const { configureClaudeModels, assertClaudePicker } = require("./accountless.cjs");
 const { safePath, read: readNative, document: nativeDocument } = require("./native-fields.cjs");
 const { ACCOUNT_SERVICES, officialApiService, acceptsApiAccount, acceptsNativeAccount,
   modelRef, injectionCatalog } = require("./client-policy.cjs");
@@ -159,7 +160,7 @@ function isolatedEnv(harness, dir, env = process.env) {
   const result = { ...env };
   for (const key of Object.keys(result))
     if (
-      /^(ANTHROPIC_|CLAUDE_CODE_OAUTH|CLAUDE_CODE_USE_|CLAUDE_CONFIG_DIR|OPENAI_|CODEX_HOME|PI_CODING_AGENT_DIR|PI_CODING_AGENT_SESSION_DIR|OPENCODE_|DSH_HOME|DEEPSEEK_|ASS_LOCAL_TOKEN|ASS_PI_AUTH_REQUIRED|ELECTRON_RUN_AS_NODE|NODE_TLS_REJECT_UNAUTHORIZED|XDG_(CONFIG|DATA|STATE|CACHE)_HOME$)/i.test(
+      /^(ANTHROPIC_|CLAUDE_CODE_OAUTH|CLAUDE_CODE_USE_|CLAUDE_CONFIG_DIR|OPENAI_|CODEX_(HOME|API_KEY|ACCESS_TOKEN)|PI_CODING_AGENT_DIR|PI_CODING_AGENT_SESSION_DIR|OPENCODE_|DSH_HOME|DEEPSEEK_|ASS_LOCAL_TOKEN|ASS_PI_AUTH_REQUIRED|ELECTRON_RUN_AS_NODE|NODE_TLS_REJECT_UNAUTHORIZED|XDG_(CONFIG|DATA|STATE|CACHE)_HOME$)/i.test(
         key,
       ) ||
       /^(GEMINI|GOOGLE|GROQ|MISTRAL|CEREBRAS|XAI|OPENROUTER|KIMI|MINIMAX|ZAI|SILICONFLOW)_API_KEY$/i.test(
@@ -731,7 +732,10 @@ class HarnessManager {
   injection(harness) {
     this.spec(harness);
     const settings = this.state.injections[harness];
-    return { ...settings, models: injectionCatalog(harness, this.getState().providers, settings) };
+    return { ...settings, models: injectionCatalog(harness, this.effectiveProviders(harness), settings) };
+  }
+  effectiveProviders(harness) {
+    return this.options.protocols?.providers(harness) || this.getState().providers;
   }
   setInjection(harness, changes) {
     if (this.spec(harness).injectionUnsupported) throw Error("此客户端尚未支持供应商接入");
@@ -830,6 +834,8 @@ class HarnessManager {
   }
   plan(harness, accountId, action = "launch", modelName, token = "") {
     this.assertManaged(harness);
+    if (action === "launch" && this.options.proxyConfig?.clients[harness]?.accountless)
+      throw Error("无账号启动已开启，请使用注入模型启动，或先关闭无账号模式");
     if (!["launch", "login", "logout"].includes(action))
       throw new Error("未知操作");
     const client = this.snapshot().clients.find((s) => s.id === harness);
@@ -1038,7 +1044,7 @@ class HarnessManager {
     if (!this.options.isConnected?.(harness)) throw Error("请先开启此客户端的模型接入");
     const row = this.injection(harness).models.find((m) => m.ref === ref && m.included);
     if (!row) throw Error("请选择已纳入接入的兼容模型");
-    const p = this.getState().providers.find((p) => p.id === row.providerId);
+    const p = this.effectiveProviders(harness).find((p) => p.id === row.providerId);
     const m = p.models.find((m) => m.model === row.model);
     if (DIRECT.includes(harness)) {
       if (harness !== "opencode" && !["low", "medium", "high", "xhigh", "max"].includes(m.defaultEffort))
@@ -1075,6 +1081,8 @@ class HarnessManager {
         hint: "使用模型所属供应商的凭据；不切换官方登录账户。" };
     }
     this.options.proxyConfig?.requireApplied(harness);
+    const applied = this.options.proxyConfig?.clients[harness];
+    if (applied?.accountless) token = applied.localToken;
     const id = crypto.createHash("sha256").update("model\0" + ref).digest("hex").slice(0, 24);
     const dir = this.root(harness, id);
     const config = routeConfig(harness, p, m, dir, token,
@@ -1096,6 +1104,7 @@ class HarnessManager {
       for (const key of ["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"])
         config.env[key] = name;
       config.args = ["--model", name];
+      configureClaudeModels(config, applied?.providers || this.getState().providers, name, dir);
     }
     return { ...config, harness, dir, env: { ...isolatedEnv(harness, dir), ...config.env },
       routed: true, accountKind: "model", hint: "使用模型所属供应商的凭据；官方订阅账户不变。" };
@@ -1104,6 +1113,34 @@ class HarnessManager {
     const launcher = this.launcher(harness);
     if (!launcher.ready) throw Error(launcher.message);
     return this.launchPlan(harness, this.modelPlan(harness, ref, token), "model:" + ref, "launch", launcher);
+  }
+  accountlessPlan(harness, token) {
+    const applied = this.options.proxyConfig?.clients[harness];
+    if (!["codex", "claude"].includes(harness) || !applied?.accountless)
+      throw Error("请先开启无账号启动");
+    this.options.proxyConfig.requireApplied(harness);
+    const p = applied.providers.find((p) => p.models.some((m) => m.enabled));
+    const m = p?.models.find((m) => m.enabled);
+    if (!p || !m) throw Error("没有已注入的模型");
+    const plan = this.modelPlan(harness, modelRef(p.id, m.model), token);
+    // Do not silently reuse a model home into which the user later logged in.
+    for (const name of harness === "codex" ? ["auth.json"] : [".credentials.json", ".claude.json"]) {
+      const file = path.join(plan.dir, name);
+      if (!fs.existsSync(file)) continue;
+      let value;
+      try { value = JSON.parse(fs.readFileSync(file, "utf8")); }
+      catch { throw Error("独立启动目录含无法识别的登录信息，未覆盖"); }
+      if (value.tokens || value.OPENAI_API_KEY || value.claudeAiOauth || value.oauthAccount || value.primaryApiKey)
+        throw Error("独立启动目录已有登录信息，请先在该窗口退出登录，原账户未修改");
+    }
+    plan.hint = "无账号模式：仅使用已注入模型，按其供应商 API 计费。";
+    return plan;
+  }
+  async launchAccountless(harness, token) {
+    const launcher = this.launcher(harness);
+    if (!launcher.ready) throw Error(launcher.message);
+    if (harness === "claude") await assertClaudePicker(launcher);
+    return this.launchPlan(harness, this.accountlessPlan(harness, token), "accountless", "launch", launcher);
   }
   async launchPlan(harness, plan, account, action, launcher) {
     this.materialize(plan);

@@ -108,7 +108,8 @@ test("Claude global Messages range works without account binding; switching mode
   assert.match(plan.env.ANTHROPIC_BASE_URL, /clients\/claude\/models$/);
   assert.equal(plan.env.ANTHROPIC_API_KEY, undefined);
   assert.equal(plan.env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
-  assert.deepEqual(plan.args, ["--model", "relay::two"]);
+  assert.deepEqual(plan.args.slice(0, 2), ["--model", "relay::two"]);
+  assert.ok(plan.args.includes("--settings"));
   const body = { model: "relay::two" };
   const route = harnessRoute("/models/v1/messages", body, f.proxy.routingState("claude"));
   assert.equal(body.model, "two");

@@ -3,7 +3,7 @@ const { endpoint } = require("./models.cjs");
 const { sseMessages } = require("./adapters.cjs");
 const { once } = require("node:events");
 const { messagesTransport, providerSessionHeaders } = require("./provider-transport.cjs");
-const { messagesRequest, messagesEvents, messagesJSON } = require("./messages-adapter.cjs");
+const { messagesRequest, messagesEvents, messagesJSON, normalizeMessages } = require("./messages-adapter.cjs");
 function authorized(value, token) {
   const a = Buffer.from(value || ""),
     b = Buffer.from(token || "");
@@ -24,8 +24,15 @@ function harnessRoute(url, body, state) {
       url,
     );
   if (!match) throw Object.assign(new Error("未知客户端路由"), { status: 404 });
-  const p = state.providers.find((p) => p.id === match[1] && p.enabled),
-    m = p?.models.find((m) => m.enabled && m.model === body.model);
+  const p = state.providers.find((p) => p.id === match[1] && p.enabled);
+  // Claude's Default/long-context choice can append a documented UI suffix.
+  // It is not part of the provider's model ID; only normalize to an exact
+  // enabled entry, never choose another model or a built-in fallback.
+  let m = p?.models.find((m) => m.enabled && m.model === body.model);
+  if (!m && match[2].startsWith("messages") && typeof body.model === "string" && /\[1m\]$/i.test(body.model)) {
+    m = p?.models.find((m) => m.enabled && m.model === body.model.replace(/\[1m\]$/i, ""));
+    if (m) body.model = m.model;
+  }
   if (!p || !m)
     throw Object.assign(new Error("该账户或模型未启用"), { status: 404 });
   if (!p.apiKey)
@@ -74,11 +81,20 @@ async function forwardHarness(router, req, res) {
     const credential =
       req.headers["x-api-key"] ||
       req.headers.authorization?.replace(/^Bearer /i, "");
-    if (!authorized(credential, router.clientToken))
+    const state = router.getState(router.requests.get(req)?.client);
+    if (!authorized(credential, state.accountless ? state.localToken : router.clientToken))
       throw Object.assign(
         new Error("客户端路由凭据已失效，请从 ASS 重新启动客户端"),
         { status: 401 },
       );
+    if (req.method === "GET" && /^\/models\/v1\/models(?:\?[^#]*)?$/.test(req.url)) {
+      const data = state.providers.filter((p) => p.enabled && p.apiKey).flatMap((p) => p.models.filter((m) => m.enabled).map((m) => ({
+        id: p.id + "::" + m.model, type: "model", display_name: p.name + " · " + (m.displayName || m.model), created_at: "2026-01-01T00:00:00Z",
+      })));
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ data, has_more: false, first_id: data[0]?.id || null, last_id: data.at(-1)?.id || null }));
+      return;
+    }
     if (req.method !== "POST")
       throw Object.assign(new Error("仅支持 POST"), { status: 405 });
     let size = 0;
@@ -95,7 +111,7 @@ async function forwardHarness(router, req, res) {
     } catch {
       throw Object.assign(new Error("请求 JSON 无效"), { status: 400 });
     }
-    route = harnessRoute(req.url, body, router.getState(router.requests.get(req)?.client));
+    route = harnessRoute(req.url, body, state);
     const { p, m, protocol } = route;
     const headers = {
       ...p.extraHeaders,
@@ -120,7 +136,7 @@ async function forwardHarness(router, req, res) {
       {
         method: "POST",
         headers,
-        body: JSON.stringify(route.adapted ? messagesRequest(body, m, protocol) : body),
+        body: JSON.stringify(route.adapted ? messagesRequest(body, m, protocol) : protocol === "anthropic" ? normalizeMessages(body) : body),
         redirect: "error",
         credentials: "omit",
         signal: controller.signal,

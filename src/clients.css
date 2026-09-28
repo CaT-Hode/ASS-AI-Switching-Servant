@@ -758,6 +758,11 @@
 .client-accounts-heading { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 18px; }
 .client-accounts-heading h3 { margin: 0; font-size: 16px; }
 .client-injection { margin: 20px 0 22px; }
+.accountless-control { display: flex; align-items: center; gap: 14px; padding: 13px 15px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.accountless-control > div { flex: 1; }
+.accountless-control strong { font-size: 13px; font-weight: 600; }
+.accountless-control small { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; }
+.accountless-control .provider-injection-switch { position: relative; inset: auto; flex: none; }
 .client-injection > header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .client-injection h3 { display: flex; align-items: baseline; gap: 13px; margin: 0; font-size: 16px; }
 .injection-count { font-size: 13px; font-weight: 400; color: light-dark(#6e8099, #a9b5c7); font-variant-numeric: tabular-nums; }
