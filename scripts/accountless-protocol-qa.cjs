@@ -5,6 +5,12 @@ const root = path.resolve(__dirname, ".."), out = path.join(process.env.LOCALAPP
 const data = fs.mkdtempSync(path.join(out, "protocol-ui-")), codex = path.join(data, "codex");
 fs.mkdirSync(codex); fs.writeFileSync(path.join(codex, "config.toml"), 'model = "official-original"\n');
 const auth = '{"tokens":{"access_token":"synthetic-official"}}'; fs.writeFileSync(path.join(codex, "auth.json"), auth);
+// Exercise the production version gate with a Windows shim, not a test bypass.
+const claudeFixture = path.join(data, "launcher with spaces", "claude.cmd");
+const claudeLauncher = process.env.ASS_QA_CLAUDE_ENTRY || claudeFixture;
+fs.mkdirSync(path.dirname(claudeFixture), { recursive: true });
+const writeClaudeVersion = version => fs.writeFileSync(claudeFixture, `@echo off\r\nif not "%~1"=="--version" exit /b 9\r\necho ${version} ^(Claude Code^)\r\n`);
+writeClaudeVersion("2.1.283");
 let app, page; const errors = [];
 const call = (name, ...args) => page.evaluate(([name, args]) => window.ass.call(name, ...args), [name, args]);
 async function start() {
@@ -13,6 +19,7 @@ async function start() {
   page = await app.firstWindow(); page.setDefaultTimeout(20000); page.on("pageerror", e => errors.push(e.message));
   page.on("console", m => { if (["error", "warning"].includes(m.type())) errors.push(m.text()); });
   await page.waitForSelector("h1");
+  await app.evaluate((_, file) => global.assTest.harnesses.setExecutable("claude", file), claudeLauncher);
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0].setSize(1420, 960);
     global.assTest.setFetch(async (url, init) => {
@@ -52,6 +59,15 @@ async function confirm(button) {
     await page.screenshot({ path: path.join(out, "accountless-codex-light.png") });
     await choose("Claude Code");
     await confirm(page.getByRole("switch", { name: "Claude Code ASS 接入", exact: true }));
+    // Fail if QA ever bypasses this production check again. Only the test shim
+    // is rewritten; the optional real installed launcher is read/started only.
+    await app.evaluate((_, file) => global.assTest.harnesses.setExecutable("claude", file), claudeFixture);
+    writeClaudeVersion("2.1.223");
+    await assert.rejects(call("connection-preview", "claude", true, false, true), /2\.1\.242/);
+    assert.equal((await call("snapshot")).connections.clients.claude.accountless, false);
+    assert.ok(!fs.existsSync(path.join(data, "test-home/.claude/settings.json")));
+    writeClaudeVersion("2.1.283");
+    await app.evaluate((_, file) => global.assTest.harnesses.setExecutable("claude", file), claudeLauncher);
     await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
     snapshot = await call("snapshot");
     assert.equal(snapshot.connections.clients.claude.runtimeStatus, "terminal-ready");
@@ -73,6 +89,7 @@ async function confirm(button) {
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude/settings.json"))), {});
     assert.equal(fs.readFileSync(path.join(codex, "auth.json"), "utf8"), auth);
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ passed: true, accountlessEligibility: true, bothClients: true, automaticProtocols: true, restartPersistence: true, oauthPreserved: true, screenshots: out, errors }));
+    console.log(JSON.stringify({ passed: true, accountlessEligibility: true, productionVersionGate: true, oldVersionRejected: true,
+      claudeLauncher, bothClients: true, automaticProtocols: true, restartPersistence: true, oauthPreserved: true, screenshots: out, errors }));
   } finally { await stop(); }
 })().catch(e => { console.error(e.stack); process.exitCode = 1; });

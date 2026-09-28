@@ -990,7 +990,7 @@ else {
       // Injection consumes durable observations only. It must never await a
       // provider request; testing belongs to model creation/the lightning button.
       register("connection-preview", async (scope, enabled, quit, accountless) => {
-        if (!testMode && scope === "claude" && enabled && !quit &&
+        if (scope === "claude" && enabled && !quit &&
             (accountless === true || (accountless === undefined && proxyConfig.clients.claude?.accountless))) {
           const launcher = harnesses.launcher("claude");
           if (!launcher.ready) throw Error(launcher.message);
