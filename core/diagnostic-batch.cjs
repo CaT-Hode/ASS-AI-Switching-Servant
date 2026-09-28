@@ -51,6 +51,9 @@ class DiagnosticBatch {
       entries: entries.map((e) => ({ ...e })),
     };
   }
+  restore(state) {
+    if (state && !this.state.running) this.state = structuredClone(state);
+  }
   start() {
     if (this.state.running) throw Error("一键测试正在进行");
     const targets = this.targets();

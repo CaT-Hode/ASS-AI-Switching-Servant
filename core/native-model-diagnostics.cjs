@@ -13,6 +13,7 @@ const { claims } = require("./account-info.cjs");
 const zcodeCatalog = require("./zcode-catalog.cjs");
 const zcodeInfo = require("./zcode-account-info.cjs");
 const { inspectStream } = require("./model-inspection.cjs");
+const { providerSessionHeaders } = require("./provider-transport.cjs");
 const object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const secret = (v) => typeof v === "string" && v.trim() && v.length <= 65536 && !/[\r\n\0]/.test(v) ? v.trim() : "";
 const protocols = { kimi: "openai-chat", openai: "openai-chat", openai_legacy: "openai-chat",
@@ -214,20 +215,22 @@ function resolveNativeDiagnostic(id, name, snapshot, { home, env = {}, directori
         ...(target.codexOAuth ? { reasoning: { effort: "low" } } : { max_output_tokens: 512 }) }
       : { model: name, messages: [{ role: "user", content: "Reply exactly OK." }], stream: true, max_tokens: 512,
         ...(target.thinkingOff ? { thinking: { type: "disabled" } } : {}) };
-    return { model: { ...m, wireApi: target.protocol }, native: true,
+    return { model: { ...m, wireApi: target.protocol }, native: true, client, account: a,
       provider: { id, baseUrl: url, apiKey: target.apiKey, network: "system", extraHeaders, enabled: true,
         nativeRequest: body }, request: { url, body, headers: extraHeaders, protocol: target.protocol } };
   }
   throw Error("原生模型已变化或不存在，请刷新目录后重试");
 }
-async function checkNativeConnection(context, fetchUpstream, signal) {
+async function checkNativeConnection(context, fetchUpstream, signal, metrics) {
   const { url, body, headers: auth, protocol } = context.request;
   signal?.throwIfAborted();
   const response = await fetchUpstream(url, { method: "POST", headers: { ...auth,
+    ...providerSessionHeaders(context.provider || { baseUrl: url }, { "user-agent": "ASS/native-model-check", "x-opencode-session": "ass-diagnostic-" + require("node:crypto").randomUUID() }),
     "content-type": "application/json", accept: "text/event-stream" }, body: JSON.stringify(body),
     redirect: "error", credentials: "omit", signal }, "system");
+  metrics?.headers(response);
   if (!response.ok) { await response.body?.cancel(); throw Error("HTTP " + response.status); }
-  const inspected = await inspectStream(response.body, protocol);
+  const inspected = await inspectStream(response.body, protocol, undefined, metrics?.observe);
   if (!inspected.completed || !inspected.text) throw Error("未收到完整结束事件");
   return { message: "连接成功 · 完整流式响应", protocol };
 }

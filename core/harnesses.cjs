@@ -201,8 +201,6 @@ function routeConfig(harness, p, m, dir, token, catalog, port = 25819) {
     input: ["text"],
   };
   if (harness === "claude") {
-    if (m.wireApi !== "anthropic")
-      throw new Error("Claude Code 只能接入 Anthropic Messages 协议");
     Object.assign(env, {
       ANTHROPIC_BASE_URL: base,
       ANTHROPIC_AUTH_TOKEN: token,

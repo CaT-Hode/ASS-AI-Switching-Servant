@@ -10,6 +10,9 @@ ASS 是独立实现，不是原产品的官方版本。界面不沿用旧产品�
 
 ## 官方文档和原生实现
 
+- [DeepSeek 与 Claude Code 集成](https://api-docs.deepseek.com/zh-cn/quick_start/agent_integrations/claude_code/)：DeepSeek 的原生 Anthropic 兼容入口。ASS 在 Claude 请求中使用该入口，不用修改官方账户归属。
+- [OpenCode Go](https://opencode.ai/docs/go/)、[Zen](https://opencode.ai/docs/zen/)：编码客户端接入范围、逐模型协议与原生会话标识。ASS 保留原客户端已有的会话头与 User-Agent，诊断使用自己的会话标识；不伪装原生客户端身份来绕过权限。不同模型按其协议接入，不将整个供应商强制标为同一个协议。
+
 - [Electron net](https://www.electronjs.org/docs/latest/api/net)、[safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)：网络与本地 Key 保护。
 - [Codex config reference](https://learn.chatgpt.com/docs/config-file/config-reference)、[authentication](https://learn.chatgpt.com/docs/auth)：provider 及账户目录。
 - [Codex model protocol](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)：catalog enum，含 `tool_mode=direct`、保留 provider 与工具能力声明。

@@ -60,7 +60,7 @@ test("native injection uses all compatible models without accounts; selection ca
     assert.equal(plan.selected, undefined);
     assert.ok(plan.fields.length > 0);
   }
-  assert.equal(f.manager.injection("claude").models.filter((m) => m.included).length, 1);
+  assert.equal(f.manager.injection("claude").models.filter((m) => m.included).length, 2);
   f.manager.select("dsh", "api:deep");
   assert.equal(compose("dsh", f.manager).selected, undefined);
   f.manager.setInjection("dsh", { excludedProviders: ["relay"] });

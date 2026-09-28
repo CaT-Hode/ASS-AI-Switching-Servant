@@ -8,6 +8,7 @@ const {
   Tray,
   Menu,
   nativeImage,
+  nativeTheme,
   shell,
   clipboard,
 } = require("electron");
@@ -40,6 +41,7 @@ const {
   DiagnosticBatch,
   diagnosticTargets,
 } = require("../core/diagnostic-batch.cjs");
+const { diagnosticMetrics } = require("../core/diagnostic-metrics.cjs");
 const {
   OFFICIAL_SERVICES,
   serviceForProvider,
@@ -58,6 +60,7 @@ const { UsageHistory } = require("../core/usage-history.cjs");
 const accountTransactions = require("../core/account-transactions.cjs");
 const { modelSources, nativeModels } = require("../core/model-inventory.cjs");
 const { nativeOfficialProvider } = require("../core/native-official.cjs");
+const { promoteNativeSupplier } = require("../core/native-suppliers.cjs");
 const { resolveNativeDiagnostic, checkNativeConnection } = require("../core/native-model-diagnostics.cjs");
 const {
   nativeSubscriptionProvider,
@@ -123,7 +126,10 @@ const diagnosticControllers = new Map();
 const diagnosticBatch = new DiagnosticBatch({
   targets: () => diagnosticTargets(store.public(), authReady()),
   run: diagnose,
-  onChange: push,
+  onChange: () => {
+    diagnosticHistory?.recordBatch(diagnosticBatch.state);
+    push();
+  },
 });
 const iconPath = path.join(__dirname, "../public/ass-app-icon.png");
 let systemSession, directSession, testFetch;
@@ -204,7 +210,7 @@ function accountProvider(id) {
   const saved = /^native-info:(codex|claude|pi|kimi|zcode):oauth-record:([a-f0-9]{24})$/.exec(id);
   if (saved) return oauthInfoProvider(oauthHistory, harnesses, saved[1], saved[2]);
   for (const c of harnesses.snapshot().clients)
-    for (const a of c.accounts) {
+    for (const a of (c.modelAccounts || c.accounts)) {
       if (id !== "native-info:" + c.id + ":" + a.id) continue;
       return nativeOfficialProvider(c, a) || nativeSubscriptionProvider(c, a);
     }
@@ -247,7 +253,7 @@ async function readNativeModelMetadata(id, signal) {
             displayName: cached?.displayName || m.displayName,
             wireApi:
               cached?.wireApi ||
-              (provider.nativeProvider === "deepseek" ? "openai-chat" : ""),
+              (provider.nativeProvider === "deepseek" ? "openai-chat" : require("../core/presets.cjs").inferProtocol(provider, m.model)),
             contextWindow:
               m.declared.contextWindow || cached?.contextWindow || null,
             efforts: m.declared.efforts.length
@@ -264,6 +270,10 @@ async function readNativeModelMetadata(id, signal) {
       }
     }
     accounts[a.id] = { models };
+    if (provider && nativeOfficialProvider(client, a)?.apiKey === provider.apiKey &&
+        accountInfo.public(provider).remote && !accountInfo.public(provider).error)
+      promoteNativeSupplier({ store, client, account: a, verified: true, models,
+        home: harnesses.nativeHome, env: harnesses.nativeEnv });
   }
   return {
     accounts,
@@ -272,6 +282,61 @@ async function readNativeModelMetadata(id, signal) {
     source: "原生账户模型目录（未实测）",
     error: [...new Set(errors)].join("；") || undefined,
   };
+}
+let supplierSync;
+async function syncNativeSuppliers() {
+  if (supplierSync) return supplierSync;
+  supplierSync = (async () => {
+    for (const client of harnesses.snapshot().clients) {
+      const accounts = (client.modelAccounts || client.accounts).filter((a) => nativeOfficialProvider(client, a));
+      let verified = false;
+      for (const account of accounts) {
+        const provider = nativeOfficialProvider(client, account);
+        try {
+          await accountInfo.refresh(provider.id, { automatic: true });
+          verified ||= accountInfo.public(provider).remote && !accountInfo.public(provider).error;
+        } catch {}
+      }
+      if (verified) {
+        try { await readModelMetadata("native-" + client.id, true); } catch {}
+      }
+    }
+    for (const provider of store.state.providers.filter((p) => p.apiKey && !p.models.length &&
+      !p.nativeCatalogInitialized && ["deepseek", "opencode", "opencode-go"].includes(require("../core/client-policy.cjs").officialApiService(p)))) {
+      try {
+        await accountInfo.refresh(provider.id, { automatic: true });
+        if (accountInfo.public(provider).remote && !accountInfo.public(provider).error)
+          await fillVerifiedSupplier(provider);
+      } catch {}
+    }
+    push();
+  })().finally(() => { supplierSync = null; });
+  return supplierSync;
+}
+async function fillVerifiedSupplier(provider) {
+  if (provider.models.length || provider.nativeCatalogInitialized) return;
+  const report = await discoverModels(provider, upstream, AbortSignal.timeout(15000));
+  const current = store.state.providers.find((p) => p.id === provider.id);
+  if (!current || current.apiKey !== provider.apiKey || current.baseUrl !== provider.baseUrl || current.models.length) return;
+  const models = report.models.flatMap((m) => {
+    try { return [normalizeModel({ model: m.model, displayName: m.displayName,
+      ...(require("../core/client-policy.cjs").officialApiService(current) === "deepseek" ? { wireApi: "openai-chat" } : {}),
+      ...(m.declared.contextWindow >= 4096 ? { contextWindow: m.declared.contextWindow } : {}) }, current, store.officialModels)]; }
+    catch { return []; }
+  });
+  if (models.length) store.updateProvider({ ...current, models, nativeCatalogInitialized: true });
+}
+async function refreshAccountInfo(id, options) {
+  const result = await accountInfo.refresh(id, options);
+  if (!result.ok) return result;
+  const provider = accountProvider(id);
+  if (!provider || !accountInfo.public(provider).remote || accountInfo.public(provider).error) return result;
+  if (id.startsWith("native-info:")) {
+    const client = harnesses.snapshot().clients.find((c) => (c.modelAccounts || c.accounts)
+      .some((a) => nativeOfficialProvider(c, a)?.id === id));
+    if (client) { try { await readModelMetadata("native-" + client.id, true); } catch {} }
+  } else { try { await fillVerifiedSupplier(provider); } catch {} }
+  return result;
 }
 function snapshot() {
   const publicState = store.public(),
@@ -285,6 +350,10 @@ function snapshot() {
           ? store.state.providers.find((p) => p.id === account.providerId)
           : nativeOfficialProvider(client, account);
       if (provider) {
+        if (account.kind !== "api") {
+          account.supplierId = store.state.providers.find((p) => p.apiKey === provider.apiKey &&
+            p.baseUrl.replace(/\/$/, "") === provider.baseUrl.replace(/\/$/, ""))?.id;
+        }
         const localProfile = account.profile;
         const remote = accountInfo.public(provider);
         const models =
@@ -336,6 +405,12 @@ function snapshot() {
   // model source or read credentials from their former file location. Build the
   // source list after decorating the current account so a successful ZCode
   // entitlement query can constrain only that account's Start Plan catalog.
+  for (const client of clientState.clients)
+    for (const account of client.modelAccounts || client.accounts) {
+      const native = nativeOfficialProvider(client, account);
+      if (native) account.supplierId = store.state.providers.find((p) => p.apiKey === native.apiKey &&
+        p.baseUrl.replace(/\/$/, "") === native.baseUrl.replace(/\/$/, ""))?.id;
+    }
   const sources = modelSources(publicState, clientState, {
     home: harnesses.nativeHome, env: harnesses.nativeEnv, directories: providerModels,
   });
@@ -422,6 +497,7 @@ async function diagnose(providerId, modelName, signal) {
     throw new Error("请选择具体的已启用模型进行检测");
   const name = selected.model,
     key = modelKey(providerId, name);
+  const metrics = diagnosticMetrics(native?.request.protocol || selected.wireApi || "openai-responses", native ? "native" : "router");
   if (diagnosticControllers.has(key)) throw Error("此模型正在检测");
   const fingerprint = native ? diagnosticFingerprint(native) : diagnosticHistory.fingerprint(providerId, name);
   const controller = new AbortController();
@@ -453,7 +529,7 @@ async function diagnose(providerId, modelName, signal) {
   try {
     requestSignal.throwIfAborted();
     if (native) {
-      const checked = await checkNativeConnection(native, upstream, requestSignal);
+      const checked = await checkNativeConnection(native, upstream, requestSignal, metrics);
       result = { providerId, model: name, ok: true, ms: Date.now() - start,
         time: new Date().toISOString(), ...checked };
     } else {
@@ -469,18 +545,21 @@ async function diagnose(providerId, modelName, signal) {
           ...headers,
           "content-type": "application/json",
           "x-ass-probe-token": router.clientToken,
+          "session_id": "ass-diagnostic-" + require("node:crypto").randomUUID(),
+          "user-agent": "ASS/model-diagnostics",
         },
         body: JSON.stringify(body),
         signal: requestSignal,
       },
     );
+    metrics.headers(r);
     if (!r.ok) {
       await r.body?.cancel();
       throw new Error(
         "HTTP " + r.status + "；请检查该模型的凭据、协议和网络出口",
       );
     }
-    const inspected = await inspectStream(r.body, "openai-responses");
+    const inspected = await inspectStream(r.body, "openai-responses", undefined, metrics.observe);
     if (!inspected.completed || !inspected.text)
       throw new Error("未收到完整结束事件");
     result = {
@@ -489,7 +568,7 @@ async function diagnose(providerId, modelName, signal) {
       ms: Date.now() - start,
       time: new Date().toISOString(),
       model: name,
-      message: "HTTP 200 · response.completed",
+      message: "连接成功 · 完整流式响应",
     };
     }
   } catch (error) {
@@ -509,6 +588,17 @@ async function diagnose(providerId, modelName, signal) {
     };
   } finally {
     diagnosticControllers.delete(key);
+  }
+  Object.assign(result, metrics.finish(result.ok));
+  if (result.ok && !signal?.aborted && !controller.signal.aborted && native?.client && native?.account) {
+    const current = nativeOfficialProvider(native.client, native.account);
+    if (current?.apiKey === native.provider.apiKey &&
+        new URL(native.request.url).origin === new URL(current.baseUrl).origin)
+      try {
+        promoteNativeSupplier({ store, client: native.client, account: native.account, verified: true,
+          models: providerModels["native-" + native.client.id]?.accounts?.[native.account.id]?.models,
+          home: harnesses.nativeHome, env: harnesses.nativeEnv });
+      } catch { result.supplierSaveFailed = true; }
   }
   if (signal?.aborted || controller.signal.aborted) result.cancelled = true;
   if (!result.cancelled && !diagnosticHistory.record(result, fingerprint)) {
@@ -642,7 +732,7 @@ function showWindow() {
     minHeight: 740,
     title: "ASS · 模型随你切",
     icon: iconPath,
-    backgroundColor: "#ffffff",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#161b23" : "#f3f5f8",
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -702,7 +792,9 @@ else {
         crypto: safeStorage,
         getContext: diagnosticContext,
       });
+      diagnosticBatch.restore(diagnosticHistory.batch);
       preferences = new Preferences(dataDir);
+      nativeTheme.themeSource = preferences.state.theme;
       updates = new UpdateChecker({
         dataDir,
         currentVersion: app.getVersion(),
@@ -822,7 +914,12 @@ else {
         startupError = "端口 " + servicePort + " 无法启动：" + error.message;
       }
       register("snapshot", () => snapshot());
-      register("ui-preferences", (input) => preferences.update(input));
+      register("ui-preferences", (input) => {
+        const result = preferences.update(input);
+        nativeTheme.themeSource = result.theme;
+        window?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#161b23" : "#f3f5f8");
+        return result;
+      });
       register("usage-refresh", (automatic) =>
         usageHistory.refresh({ automatic: automatic === true }),
       );
@@ -838,14 +935,14 @@ else {
             );
             const provider = informationProvider(client, account);
             if (!provider) throw Error("此账户没有可查询的额度接口");
-            return accountInfo.refresh(provider.id, {
+            return refreshAccountInfo(provider.id, {
               automatic: automatic === true,
             });
           }
           const provider = store.state.providers.find((p) => p.id === sourceId);
           if (!provider) throw Error("供应商不存在");
           return accountInfo.public(provider).canRefresh
-            ? accountInfo.refresh(provider.id, {
+            ? refreshAccountInfo(provider.id, {
                 automatic: automatic === true,
               })
             : balance(sourceId, automatic === true);
@@ -854,6 +951,12 @@ else {
       register("connection-preview", (scope, enabled, quit) =>
         connections.preview(scope, enabled, quit),
       );
+      register("connection-repair-preview", (scope) => connections.repairPreview(scope));
+      register("connection-repair", async (input) => {
+        for (const id of connections.tickets.get(input?.ticket)?.ids || [])
+          await nativeLogin.assertIdle(id);
+        return connections.repairApply(input);
+      });
       register("connection-apply", async (input) => {
         for (const id of connections.tickets.get(input?.ticket)?.ids || [])
           await nativeLogin.assertIdle(id);
@@ -879,13 +982,13 @@ else {
           throw Error("未知官方入口");
         return shell.openExternal(service[target]);
       });
-      register("account-info", (clientId, accountId) => {
+      register("account-info", async (clientId, accountId) => {
         const client = informationClient(clientId);
         const account = client?.accounts.find((a) => a.id === accountId);
         if (!account) throw Error("账户不存在");
         const provider = informationProvider(client, account);
         if (!provider) throw Error("此账户没有可查询的官方资料接口");
-        return accountInfo.refresh(provider.id);
+        return refreshAccountInfo(provider.id);
       });
       register("account-info-doc", (id) => {
         if (!Object.hasOwn(ACCOUNT_DOCS, id)) throw Error("未知资料文档");
@@ -928,6 +1031,7 @@ else {
         await processes.refresh();
         await harnesses.refreshOAuth();
         oauthHistory.scan({ immediate: true });
+        await syncNativeSuppliers();
         return snapshot();
       });
       register("native-login-preview", async (id) => {
@@ -1110,6 +1214,8 @@ else {
           cancelId: 0,
         });
         if (r.response === 1) {
+          if (/^native_api_[a-f0-9]{20}$/.test(id))
+            store.state.nativeSupplierExclusions = [...new Set([...(store.state.nativeSupplierExclusions || []), id])];
           store.state.providers = store.state.providers.filter(
             (p) => p.id !== id,
           );
@@ -1310,6 +1416,8 @@ else {
           diagnosticHistory,
           diagnosticBatch,
           readModelMetadata,
+          syncNativeSuppliers,
+          refreshAccountInfo,
           probeModel,
           balance,
           snapshot,
@@ -1322,6 +1430,7 @@ else {
           },
         };
       oauthHistory.start();
+      if (!testMode) void syncNativeSuppliers();
       if (!testMode) updates.start();
     })
     .catch((error) => {

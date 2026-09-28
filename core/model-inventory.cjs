@@ -306,7 +306,8 @@ function modelSources(
     ...store.providers,
   ];
   for (const client of harnesses.clients.filter((c) => c.id !== "codex")) {
-    const accounts = (client.modelAccounts || client.accounts).filter((a) => a.kind !== "api");
+    const accounts = (client.modelAccounts || client.accounts).filter((a) => a.kind !== "api" &&
+      !store.providers.some((p) => p.id === a.supplierId));
     if (!accounts.length) continue;
     const models = new Map();
     const directory = directories["native-" + client.id];

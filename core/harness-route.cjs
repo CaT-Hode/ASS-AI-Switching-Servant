@@ -2,6 +2,8 @@ const crypto = require("node:crypto");
 const { endpoint } = require("./models.cjs");
 const { sseMessages } = require("./adapters.cjs");
 const { once } = require("node:events");
+const { messagesTransport, providerSessionHeaders } = require("./provider-transport.cjs");
+const { messagesRequest, messagesEvents, messagesJSON } = require("./messages-adapter.cjs");
 function authorized(value, token) {
   const a = Buffer.from(value || ""),
     b = Buffer.from(token || "");
@@ -33,7 +35,7 @@ function harnessRoute(url, body, state) {
     : match[2] === "chat/completions"
       ? "openai-chat"
       : "openai-responses";
-  if (protocol !== m.wireApi)
+  if (protocol !== m.wireApi && protocol !== "anthropic")
     throw Object.assign(
       new Error("客户端协议与所选模型不一致，请重新选择兼容模型"),
       { status: 400 },
@@ -43,11 +45,15 @@ function harnessRoute(url, body, state) {
     : match[2].endsWith("/compact")
       ? "/compact"
       : "";
+  const transport = protocol === "anthropic" ? messagesTransport(p, m) : null;
+  if (transport?.adapted && suffix)
+    throw Object.assign(Error("此跨协议模型没有精确 token 计数接口"), { status: 501 });
   return {
     p,
     m,
-    protocol,
-    url: endpoint(p.baseUrl, protocol, suffix),
+    protocol: transport?.protocol || protocol,
+    adapted: transport?.adapted || false,
+    url: transport ? transport.url + suffix : endpoint(p.baseUrl, protocol, suffix),
     stream: body.stream === true && !suffix,
   };
 }
@@ -93,8 +99,9 @@ async function forwardHarness(router, req, res) {
     const { p, m, protocol } = route;
     const headers = {
       ...p.extraHeaders,
+      ...providerSessionHeaders(p, req.headers),
       "content-type": "application/json",
-      accept: route.stream ? "text/event-stream" : "application/json",
+      accept: route.stream || route.adapted ? "text/event-stream" : "application/json",
     };
     if (protocol === "anthropic") {
       headers["x-api-key"] = p.apiKey;
@@ -113,7 +120,7 @@ async function forwardHarness(router, req, res) {
       {
         method: "POST",
         headers,
-        body: JSON.stringify(body),
+        body: JSON.stringify(route.adapted ? messagesRequest(body, m, protocol) : body),
         redirect: "error",
         credentials: "omit",
         signal: controller.signal,
@@ -129,7 +136,18 @@ async function forwardHarness(router, req, res) {
         { status: response.status },
       );
     }
-    if (route.stream) {
+    if (route.adapted) {
+      const events = messagesEvents(response.body, protocol, m.model);
+      if (route.stream) {
+        res.writeHead(response.status, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+        res.flushHeaders();
+        for await (const event of events) await write("event: " + event.type + "\ndata: " + JSON.stringify(event) + "\n\n");
+      } else {
+        const result = await messagesJSON(events);
+        res.writeHead(response.status, { "content-type": "application/json" });
+        await write(JSON.stringify(result));
+      }
+    } else if (route.stream) {
       res.writeHead(response.status, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",

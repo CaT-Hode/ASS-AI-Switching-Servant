@@ -4,6 +4,7 @@ const { endpoint, normalizeEffort } = require("./models.cjs");
 const { convertRequest, translateStream } = require("./adapters.cjs");
 const { SseMonitor } = require("./sse-monitor.cjs");
 const { forwardHarness } = require("./harness-route.cjs");
+const { providerSessionHeaders } = require("./provider-transport.cjs");
 const crypto = require("node:crypto");
 const forwarded = [
   "authorization",
@@ -110,6 +111,7 @@ class Router {
     })
       .then(() => {
         this.server = server;
+        this.port = server.address().port;
       })
       .finally(() => {
         this.starting = null;
@@ -210,7 +212,7 @@ class Router {
         throw Object.assign(new Error("此窗口使用模型 API 凭据，不能请求 ChatGPT 订阅模型；请从官方账户卡片启动"), { status: 403 });
       const headers = route.official
         ? pickHeaders(req.headers)
-        : { ...route.provider.extraHeaders };
+        : { ...route.provider.extraHeaders, ...providerSessionHeaders(route.provider, req.headers) };
       headers["content-type"] = "application/json";
       headers.accept = "text/event-stream";
       if (!route.official) {

@@ -149,6 +149,7 @@ function normalizeProvider(raw, officialModels = []) {
       : [];
   p.models = list.map((m) => normalizeModel(m, p, officialModels));
   p.balance = normalizeBalance(raw.balance);
+  if (raw.nativeCatalogInitialized === true) p.nativeCatalogInitialized = true;
   if (new Set(p.models.map((m) => m.model)).size !== p.models.length)
     throw new Error("同一供应商中存在重复模型");
   return p;

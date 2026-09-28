@@ -435,6 +435,18 @@ class NativeConfig {
       }
     }
   }
+  repairPlan(id) {
+    if (!this.isDirect(id)) throw Error("此客户端暂不支持受管字段修复");
+    const plan = this.fields.repairPlan(id);
+    return { files: plan.files.map((f) => f.file) };
+  }
+  repair(id) {
+    if (!this.isDirect(id)) throw Error("此客户端暂不支持受管字段修复");
+    const result = this.fields.repair(id);
+    delete this.errors[id];
+    this.activated.add(id);
+    return result;
+  }
   fingerprint(ids, enabled) {
     return hash(
       JSON.stringify(

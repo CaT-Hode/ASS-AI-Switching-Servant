@@ -281,6 +281,7 @@ test("UI preferences persist with an allowlist and do not accept secrets or inva
   });
   assert.deepEqual(new Preferences(dir).state, {
     view: "clients",
+    theme: "system",
     client: "dsh",
     provider: "fixture",
     officialService: "deepseek",

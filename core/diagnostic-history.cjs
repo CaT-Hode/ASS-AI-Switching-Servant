@@ -74,14 +74,23 @@ function normalizeResult(result) {
     result.ms < 0
   )
     return null;
-  const nativeProtocol = result.providerId.startsWith("native-test:") &&
+  const nativeProtocol =
     ["openai-chat", "openai-responses", "anthropic"].includes(result.protocol) ? result.protocol : undefined;
+  const metrics = {};
+  for (const key of ["headersMs", "firstEventMs", "firstTextMs", "streamMs", "eventCount", "responseBytes", "inputTokens", "outputTokens", "reasoningTokens"])
+    if (Number.isFinite(result[key]) && result[key] >= 0) metrics[key] = result[key];
+  if (Number.isInteger(result.httpStatus) && result.httpStatus >= 100 && result.httpStatus <= 599)
+    metrics.httpStatus = result.httpStatus;
+  if (["connect", "headers", "stream", "complete"].includes(result.phase)) metrics.phase = result.phase;
+  if (["native", "router"].includes(result.route)) metrics.route = result.route;
   return {
     providerId: result.providerId,
     model: result.model,
     ok: result.ok,
     ms: result.ms,
     time: new Date(result.time).toISOString(),
+    ...metrics,
+    ...(result.supplierSaveFailed === true ? { supplierSaveFailed: true } : {}),
     ...(nativeProtocol ? { protocol: nativeProtocol } : {}),
     message: result.ok
       ? nativeProtocol ? "连接成功 · 完整流式响应" : "HTTP 200 · response.completed"
@@ -96,17 +105,20 @@ class DiagnosticHistory {
     this.getContext = getContext;
     this.write = write;
     this.entries = new Map();
+    this.batch = null;
     this.error = "";
     try {
       if (!fs.existsSync(this.file)) return;
       if (fs.statSync(this.file).size > 16 * 1024 * 1024)
         throw Error("oversized");
       const stored = JSON.parse(fs.readFileSync(this.file, "utf8"));
-      if (stored.version !== 1 || typeof stored.encrypted !== "string")
+      if (![1, 2].includes(stored.version) || typeof stored.encrypted !== "string")
         throw Error("version");
-      const entries = JSON.parse(
+      const payload = JSON.parse(
         crypto.decryptString(Buffer.from(stored.encrypted, "base64")),
       );
+      const entries = stored.version === 1 ? payload : payload.entries;
+      if (stored.version === 2) this.batch = this.normalizeBatch(payload.batch);
       if (!Array.isArray(entries) || entries.length > 5000)
         throw Error("invalid");
       for (const entry of entries) {
@@ -128,17 +140,31 @@ class DiagnosticHistory {
     return diagnosticFingerprint(this.getContext(id, model));
   }
   reconcile() {
-    let changed = false;
-    for (const [key, entry] of this.entries) {
-      if (
-        entry.fingerprint !==
-        this.fingerprint(entry.result.providerId, entry.result.model)
-      ) {
-        this.entries.delete(key);
-        changed = true;
-      }
-    }
-    if (changed) this.save();
+    // Native catalogs and credentials may be unavailable during startup. Keep
+    // the last observation; public() marks it stale until the context matches.
+  }
+  normalizeBatch(input) {
+    if (!input || !Array.isArray(input.entries) || input.entries.length > 5000 ||
+        !Number.isFinite(Date.parse(input.startedAt))) return null;
+    const statuses = ["passed", "failed", "skipped", "cancelled", "queued", "running"];
+    const entries = input.entries.flatMap((e) => {
+      if (!e || !statuses.includes(e.status) ||
+          [e.providerId, e.model].some((v) => typeof v !== "string" || !v || v.length > 250)) return [];
+      const interrupted = ["queued", "running"].includes(e.status);
+      return [{ key: modelKey(e.providerId, e.model), providerId: e.providerId, model: e.model,
+        providerName: String(e.providerName || "").slice(0, 250), displayName: String(e.displayName || e.model).slice(0, 250),
+        status: interrupted ? "cancelled" : e.status,
+        message: interrupted ? "上次测试被中断" : e.status === "failed" ? failureMessage(e.message)
+          : e.status === "passed" ? "连接成功 · 完整流式响应" : e.status === "skipped" ? "上次测试未发送请求" : "已取消",
+        ...(Number.isFinite(e.ms) && e.ms >= 0 ? { ms: e.ms } : {}) }];
+    });
+    return { running: false, stopping: false, startedAt: input.startedAt,
+      ...(Number.isFinite(Date.parse(input.finishedAt)) ? { finishedAt: input.finishedAt } : {}),
+      interrupted: input.running === true || input.interrupted === true, restored: true, entries };
+  }
+  recordBatch(batch) {
+    this.batch = this.normalizeBatch(batch);
+    return this.save();
   }
   save() {
     try {
@@ -150,9 +176,9 @@ class DiagnosticHistory {
       this.write(
         this.file,
         JSON.stringify({
-          version: 1,
+          version: 2,
           encrypted: this.crypto
-            .encryptString(JSON.stringify(entries))
+            .encryptString(JSON.stringify({ entries, batch: this.batch }))
             .toString("base64"),
         }),
       );
@@ -189,12 +215,13 @@ class DiagnosticHistory {
     return true;
   }
   public() {
-    this.reconcile();
     return Object.fromEntries(
       [...this.entries].map(([key, entry]) => [
         key,
         {
           ...entry.result,
+          ...(entry.fingerprint !== this.fingerprint(entry.result.providerId, entry.result.model)
+            ? { stale: true } : {}),
           ...(entry.saveError ? { saveError: entry.saveError } : {}),
         },
       ]),

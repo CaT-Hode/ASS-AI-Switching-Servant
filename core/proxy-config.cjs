@@ -5,6 +5,8 @@ const { hash } = require("./injection-files.cjs");
 const { makeCatalog } = require("./models.cjs");
 const { modelRef } = require("./client-policy.cjs");
 const { safePath } = require("./native-fields.cjs");
+const { randomUUID } = require("node:crypto");
+const { isDeepStrictEqual: equal } = require("node:util");
 const IDS = ["codex", "claude"];
 const read = (file) => fs.existsSync(file) ? fs.readFileSync(file) : null;
 
@@ -82,7 +84,7 @@ class ProxyConfig {
   }
   fingerprint(ids, enabled) {
     return hash(JSON.stringify([read(this.file)?.toString("base64"), ids.filter((id) => this.supports(id)).map((id) =>
-      [id, enabled ? this.desired(id) : null, id === "codex" ? read(this.config.catalog)?.toString("base64") : null])]));
+      [id, enabled ? this.desired(id) : null, id === "codex" ? [read(this.config.catalog)?.toString("base64"), read(this.config.record)?.toString("base64")] : null])]));
   }
   preflight(ids, enabled) {
     if (!enabled) {
@@ -166,6 +168,60 @@ class ProxyConfig {
     const clients = { ...this.clients };
     for (const id of ids) delete clients[id];
     this.persist(clients);
+  }
+  repairPlan(id) {
+    if (!this.supports(id) || !this.clients[id]) throw Error("没有可信的已应用路由配置可供修复");
+    if (this.error) throw Error(this.error);
+    if (this.pending) throw Error("路由事务尚未完成，请先重新同步恢复");
+    safePath(this.file);
+    const saved = read(this.file), files = [];
+    if (hash(saved || "") !== this.persistedHash) {
+      // Recover this client from its trusted in-memory applied snapshot, but
+      // never undo a concurrent edit to another client's route in the same file.
+      try {
+        const envelope = JSON.parse(saved);
+        if (envelope.version !== 1) throw Error();
+        const actual = JSON.parse(this.crypto.decryptString(Buffer.from(envelope.encrypted, "base64")));
+        if (actual.pending || !actual.clients || Object.keys(actual.clients).some((k) => !IDS.includes(k)) ||
+            IDS.filter((k) => k !== id).some((k) => !equal(actual.clients[k], this.clients[k]))) throw Error();
+      } catch { throw Error("路由记录无法安全归属到此客户端，未覆盖"); }
+      files.push({ file: this.file, before: saved.toString(), after: null });
+    }
+    if (id === "codex") {
+      for (const file of [this.config.file, this.config.record, this.config.catalog]) safePath(file);
+      const attachment = this.config.prepareRepair();
+      if (attachment.before !== attachment.after) files.push(attachment);
+      const before = read(this.config.catalog)?.toString() ?? null, after = JSON.stringify(this.clients.codex.catalog, null, 2);
+      if (before !== after) files.push({ file: this.config.catalog, before, after });
+    }
+    return { files, routeOnly: !files.length };
+  }
+  repair(id) {
+    const plan = this.repairPlan(id);
+    if (!this.crypto.isEncryptionAvailable()) throw Error("系统凭据加密不可用，未修复配置");
+    const backup = path.join(path.dirname(this.file), "backups", `proxy-repair-${id}-${Date.now()}-${randomUUID()}.enc.json`);
+    const saved = read(this.file)?.toString() ?? null;
+    const payload = JSON.stringify({ kind: "proxy-repair", client: id, createdAt: new Date().toISOString(),
+      files: [...plan.files.filter((f) => f.file !== this.file).map(({ file, before }) => ({ file, before })), { file: this.file, before: saved }] });
+    const encoded = JSON.stringify({ version: 1, encrypted: this.crypto.encryptString(payload).toString("base64") });
+    if (Buffer.byteLength(encoded) > 32 * 1024 * 1024) throw Error("修复备份超过 32 MiB，未改动配置");
+    safePath(backup); atomic(backup, encoded);
+    for (const f of plan.files) if ((read(f.file)?.toString() ?? null) !== f.before) throw Error("修复前配置已变化，未覆盖");
+    if ((read(this.file)?.toString() ?? null) !== saved) throw Error("修复前路由记录已变化，未覆盖");
+    const files = plan.files.filter((f) => f.file !== this.file);
+    try {
+      this.persist(this.clients, { files });
+      for (const f of files) {
+        if ((read(f.file)?.toString() ?? null) !== f.before) throw Error("修复期间配置已变化，已停止");
+        atomic(f.file, f.after);
+      }
+      this.persist(this.clients);
+    } catch (error) {
+      try { this.recover(); }
+      catch { throw Error("修复未完成，已保留加密备份与事务恢复记录"); }
+      throw error;
+    }
+    return { backup, files: plan.files.length };
   }
   routingState(id) {
     if (!this.supports(id)) return this.store.state; // Diagnostics use drafts.

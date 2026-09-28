@@ -10,7 +10,7 @@
 }
 .inventory-toolbar > select {
   border: 1px solid var(--border);
-  background: white;
+  background: light-dark(white, #1e2530);
   color: var(--ink);
   border-radius: 8px;
   padding: 10px 12px;
@@ -32,7 +32,7 @@
 .supplier-card {
   cursor: pointer;
   position: relative;
-  background: #fff;
+  background: light-dark(#fff, #1e2530);
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 17px 18px;
@@ -42,7 +42,7 @@
 }
 .supplier-card:hover,
 .supplier-card:focus-within {
-  border-color: #9ebfee;
+  border-color: light-dark(#9ebfee, #3b526f);
 }
 .supplier-open {
   position: absolute;
@@ -87,17 +87,17 @@
   z-index: 20;
   pointer-events: none;
   opacity: 0.88;
-  box-shadow: 0 14px 34px #14243c2b;
-  border-color: #2783ed;
+  box-shadow: 0 14px 34px light-dark(#14243c2b, #0000002b);
+  border-color: light-dark(#2783ed, #2783ed);
   will-change: transform;
 }
 .supplier-card.dragging * {
   pointer-events: none;
 }
 .supplier-card.drop-target {
-  outline: 2px solid #2783ed;
+  outline: 2px solid light-dark(#2783ed, #2783ed);
   outline-offset: 3px;
-  background: #f2f7ff;
+  background: light-dark(#f2f7ff, #242e3c);
 }
 .supplier-symbol img {
   width: 29px;
@@ -114,9 +114,9 @@
   height: 42px;
   display: grid;
   place-items: center;
-  background: #edf3fc;
+  background: light-dark(#edf3fc, #242e3c);
   border-radius: 11px;
-  color: #345f96;
+  color: light-dark(#345f96, #87baff);
   font-size: 23px;
   font-weight: 650;
   flex: none;
@@ -159,7 +159,7 @@
 .supplier-quota {
   margin-top: 13px;
   padding-top: 10px;
-  border-top: 1px solid #eaf0f6;
+  border-top: 1px solid light-dark(#eaf0f6, #364253);
 }
 .supplier-quota-heading {
   display: flex;
@@ -181,7 +181,7 @@
   max-width: calc(100% - 38px);
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: white;
+  background: light-dark(white, #1e2530);
   padding: 4px 6px;
 }
 .supplier-quota-heading .model-icon {
@@ -211,7 +211,7 @@
   width: 100%;
   height: 4px;
   margin-top: 7px;
-  accent-color: #248568;
+  accent-color: light-dark(#248568, #70d8ac);
 }
 .supplier-amount {
   display: flex;
@@ -261,9 +261,9 @@
   max-width: 100%;
   padding: 4px 8px;
   border-radius: 5px;
-  background: #f4f6fa;
+  background: light-dark(#f4f6fa, #242e3c);
   font-size: 11px;
-  color: #53647b;
+  color: light-dark(#53647b, #a9b5c7);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -306,10 +306,10 @@
   z-index: 40;
   min-width: 172px;
   padding: 6px;
-  background: #fff;
+  background: light-dark(#fff, #1e2530);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 6px 28px #14243c22;
+  box-shadow: 0 6px 28px light-dark(#14243c22, #00000022);
 }
 .action-menu-panel > button {
   width: 100%;
@@ -326,7 +326,7 @@
 }
 .action-menu-panel > button:hover,
 .action-menu-panel > button:focus-visible {
-  background: #edf4ff;
+  background: light-dark(#edf4ff, #21334d);
 }
 .provider-dialog-toolbar {
   display: flex;
@@ -341,7 +341,7 @@
 }
 .configured-models {
   min-height: 270px;
-  background: #fff;
+  background: light-dark(#fff, #1e2530);
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 22px;
@@ -362,10 +362,10 @@
   position: relative;
 }
 .inline-model.dirty {
-  background: #f8fbff;
+  background: light-dark(#f8fbff, #1e2530);
   box-shadow:
-    12px 0 #f8fbff,
-    -12px 0 #f8fbff;
+    12px 0 light-dark(#f8fbff, #000000),
+    -12px 0 light-dark(#f8fbff, #000000);
 }
 .inline-model-fields {
   display: grid;
@@ -383,10 +383,10 @@
 .inline-model-fields input,
 .inline-model-fields select {
   width: 100%;
-  border: 1px solid #d8e1ec;
+  border: 1px solid light-dark(#d8e1ec, #3b526f);
   border-radius: 7px;
   padding: 9px 10px;
-  background: white;
+  background: light-dark(white, #1e2530);
   color: var(--ink);
   font-size: 12px;
   min-width: 0;
@@ -425,14 +425,14 @@
 }
 .inline-model-error {
   font-size: 12px;
-  color: #b63546;
+  color: light-dark(#b63546, #ff8f9c);
   margin-top: 9px;
 }
 .inline-model-saved {
   display: block;
   text-align: right;
   font-size: 11px;
-  color: #168157;
+  color: light-dark(#168157, #70d8ac);
   margin-top: 5px;
 }
 .native-model-row {
@@ -536,7 +536,7 @@
   border: 1px solid var(--border);
   padding: 8px;
   border-radius: 7px;
-  background: #fff;
+  background: light-dark(#fff, #1e2530);
   color: var(--ink);
   font-size: 12px;
 }

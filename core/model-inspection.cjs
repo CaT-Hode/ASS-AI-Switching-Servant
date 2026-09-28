@@ -142,7 +142,7 @@ async function discoverModels(provider, fetchUpstream, signal) {
     truncated: list.length > 2000 || !!body.has_more,
   };
 }
-async function inspectStream(stream, protocol, nonce) {
+async function inspectStream(stream, protocol, nonce, observe = () => {}) {
   let terminal = false,
     incomplete = false,
     text = false,
@@ -170,6 +170,7 @@ async function inspectStream(stream, protocol, nonce) {
     }
   };
   for await (const event of sseMessages(stream)) {
+    observe(event);
     bytes += JSON.stringify(event).length;
     if (bytes > 2 * 1024 * 1024) throw Error("检测响应过大");
     if (event.error || ["error", "response.failed"].includes(event.type))

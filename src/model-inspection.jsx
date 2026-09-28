@@ -33,7 +33,7 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
       type="button"
       className={
         "model-icon check-model " +
-        (result ? (result.ok ? "passed" : "failed") : "")
+        (result ? (result.stale ? "stale" : result.ok ? "passed" : "failed") : "")
       }
       aria-label={"检测模型 " + model.model}
       title={
@@ -41,6 +41,9 @@ export function ModelCheckButton({ provider, model, state, act, busy }) {
           ? result.message +
             " · 上次测试：" +
             exactTime(result.time) +
+            ` · 总耗时 ${Math.round(result.ms)} ms` +
+            (Number.isFinite(result.firstTextMs) ? ` · 首字 ${Math.round(result.firstTextMs)} ms` : "") +
+            (result.stale ? " · 配置已变化或目录待恢复" : "") +
             (result.saveError ? " · " + result.saveError : "") +
             " · 点击重新检测"
           : (model.diagnosticProviderId ? "使用此模型的原生配置直连检测（小请求，可能计费）" : "检测此模型连接（小请求，可能计费）")

@@ -28,7 +28,7 @@ export function ClientInjection({ client, state, act, busy, onManage }) {
               <strong>{models[0].providerName}</strong><small>{compatible.length} 个模型</small><ChevronRight className="provider-disclosure" size={16} /></summary>
             <div className="client-provider-models">{models.map((m) => <div key={m.ref} className={m.issue ? "unavailable" : ""}>
               <span title={m.model}>{m.name || m.model}<small>{m.name !== m.model ? m.model : ""}</small></span>
-              <small>{m.issue || protocols[m.protocol] || m.protocol}</small>
+              <small>{m.issue || m.adapter || protocols[m.protocol] || m.protocol}</small>
             </div>)}</div>
           </details>
           <button type="button" role="switch" className="provider-injection-switch" aria-label={models[0].providerName + " 供应商接入"}

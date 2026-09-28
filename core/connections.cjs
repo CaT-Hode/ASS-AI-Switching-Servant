@@ -233,6 +233,7 @@ class Connections {
     const plan = this.tickets.get(ticket);
     if (!plan || plan.expires < Date.now())
       throw Error("确认已过期，请重新打开接入菜单");
+    if (plan.kind === "repair") throw Error("请使用一键修复操作");
     if (this.busy) throw Error("已有接入操作正在执行");
     if (acknowledged !== true || !["safe", "terminate"].includes(mode))
       throw Error("请先阅读影响范围并确认");
@@ -345,6 +346,57 @@ class Connections {
               : "已开启接入，从 ASS 新启动客户端时生效。"
           : "已断开所选客户端、恢复其注入文件；账户与会话数据保留。",
       };
+    } finally {
+      this.busy = false;
+      this.blocked.clear();
+      this.onChange();
+    }
+  }
+  async repairPreview(scope) {
+    const [id] = this.ids(scope);
+    if (scope === "all") throw Error("请逐个客户端修复接入");
+    if (this.busy) throw Error("已有接入操作正在执行");
+    if (this.error) throw Error(this.error);
+    if (!this.enabled[id]) throw Error("此客户端尚未开启接入");
+    const adapter = this.proxyConfig?.supports(id) ? this.proxyConfig : this.nativeConfig;
+    if (!adapter?.repairPlan) throw Error("此客户端没有可恢复的接入记录");
+    this.injections.preflight([id]);
+    const plan = adapter.repairPlan(id);
+    if (!plan.files.length && !plan.routeOnly) throw Error("受管字段已经一致，无需修复");
+    const ticket = crypto.randomBytes(24).toString("hex");
+    for (const [key, p] of this.tickets)
+      if (p.expires < Date.now()) this.tickets.delete(key);
+    if (this.tickets.size > 20) this.tickets.clear();
+    this.tickets.set(ticket, { kind: "repair", scope, ids: [id],
+      fingerprint: this.fingerprint([id], false), expires: Date.now() + 180000 });
+    // Do not send credential values or encrypted-journal contents to the UI.
+    return { ticket, names: [NAMES[id]], files: plan.files.length };
+  }
+  async repairApply({ ticket, acknowledged } = {}) {
+    const plan = this.tickets.get(ticket);
+    if (!plan || plan.kind !== "repair" || plan.expires < Date.now())
+      throw Error("修复确认已过期，请重新打开接入菜单");
+    if (this.busy) throw Error("已有接入操作正在执行");
+    if (acknowledged !== true) throw Error("请先确认修复");
+    this.tickets.delete(ticket);
+    this.busy = true;
+    const id = plan.scope;
+    try {
+      if (this.error) throw Error(this.error);
+      if (!this.enabled[id] || this.fingerprint([id], false) !== plan.fingerprint)
+        throw Error("配置已变化，请重新打开弹窗后修复");
+      this.blocked.add(id);
+      if (this.router.clientActive(id)) throw Error("仍有请求正在进行，请等待任务结束后修复");
+      this.injections.preflight([id]);
+      const adapter = this.proxyConfig?.supports(id) ? this.proxyConfig : this.nativeConfig;
+      const result = adapter.repair(id);
+      // Ensure a stopped proxy is available again, without stopping or replacing
+      // an existing listener and without terminating any client processes.
+      if (this.proxyConfig?.supports(id)) await this.router.start(this.port);
+      this.revision++;
+      return { ok: true, files: result.files,
+        message: `已修复 ${NAMES[id]} 接入并保存加密备份。` +
+          (id === "dsh" ? "请刷新 DSH 页面加载模型。" : id === "claude" ? "后续从 ASS 打开的窗口使用修复后的接入。" : "客户端重新加载配置后生效。") };
     } finally {
       this.busy = false;
       this.blocked.clear();

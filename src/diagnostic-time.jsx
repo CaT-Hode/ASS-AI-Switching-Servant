@@ -49,6 +49,7 @@ export function DiagnosticTime({ result }) {
       {result.saveError && (
         <span className="danger"> · {result.saveError}</span>
       )}
+      {result.stale && <span> · 需重新检测</span>}
     </span>
   );
 }

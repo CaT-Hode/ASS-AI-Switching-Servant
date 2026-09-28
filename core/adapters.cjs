@@ -95,12 +95,22 @@ function inputMessages(body, kind) {
     }
     return { messages: merged, system: system.filter(Boolean).join("\n\n") };
   }
+  // Parallel calls belong to one assistant turn, before all corresponding tool
+  // results. Splitting them into assistant turns makes valid history invalid.
+  const merged = [];
+  for (const message of messages) {
+    const previous = merged.at(-1);
+    if (message.role === "assistant" && previous?.role === "assistant") {
+      previous.content = [previous.content, message.content].filter(Boolean).join("\n") || null;
+      if (message.tool_calls) previous.tool_calls = [...(previous.tool_calls || []), ...message.tool_calls];
+    } else merged.push(message);
+  }
   return {
     messages: [
       ...(system.some(Boolean)
         ? [{ role: "system", content: system.filter(Boolean).join("\n\n") }]
         : []),
-      ...messages,
+      ...merged,
     ],
   };
 }
@@ -146,6 +156,7 @@ function convertRequest(body, model, protocol) {
       request.tool_choice = { type: "tool", name: body.tool_choice.name };
   } else {
     request.stream_options = { include_usage: true };
+    if (typeof body.parallel_tool_calls === "boolean") request.parallel_tool_calls = body.parallel_tool_calls;
     if (body.reasoning?.effort)
       request.reasoning_effort = body.reasoning.effort;
     if (body.max_output_tokens) request.max_tokens = body.max_output_tokens;
@@ -198,12 +209,18 @@ class ResponseEvents {
       status: "in_progress",
       model,
       output: [],
-      usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+      usage: null,
     };
     this.items = new Map();
   }
   event(type, data = {}) {
     return { type, sequence_number: this.seq++, ...data };
+  }
+  usage(input, output, details) {
+    for (const [key, value] of Object.entries({ input_tokens: input, output_tokens: output }))
+      if (Number.isFinite(value) && value >= 0) (this.response.usage ||= {})[key] = value;
+    if (Number.isFinite(details?.reasoning_tokens) && details.reasoning_tokens >= 0)
+      (this.response.usage ||= {}).output_tokens_details = { reasoning_tokens: details.reasoning_tokens };
   }
   start() {
     return [
@@ -309,8 +326,9 @@ class ResponseEvents {
     this.response.status = incomplete ? "incomplete" : "completed";
     if (incomplete)
       this.response.incomplete_details = { reason: "max_output_tokens" };
-    this.response.usage.total_tokens =
-      this.response.usage.input_tokens + this.response.usage.output_tokens;
+    const usage = this.response.usage;
+    if (Number.isFinite(usage?.input_tokens) && Number.isFinite(usage?.output_tokens))
+      usage.total_tokens = usage.input_tokens + usage.output_tokens;
     ev.push(
       this.event(incomplete ? "response.incomplete" : "response.completed", {
         response: this.response,
@@ -328,8 +346,7 @@ async function* translateStream(stream, protocol, model) {
     if (data.error || data.type === "error") throw new Error("上游流返回错误");
     if (protocol === "anthropic") {
       if (data.type === "message_start")
-        out.response.usage.input_tokens =
-          data.message?.usage?.input_tokens || 0;
+        out.usage(data.message?.usage?.input_tokens, data.message?.usage?.output_tokens);
       if (data.type === "content_block_start") {
         const c = data.content_block;
         if (c.type === "tool_use")
@@ -346,7 +363,7 @@ async function* translateStream(stream, protocol, model) {
           yield out.delta(data.index, data.delta.partial_json);
       }
       if (data.type === "message_delta") {
-        out.response.usage.output_tokens = data.usage?.output_tokens || 0;
+        out.usage(data.usage?.input_tokens, data.usage?.output_tokens);
         limited = data.delta?.stop_reason === "max_tokens";
       }
       if (data.type === "message_stop") {
@@ -359,8 +376,7 @@ async function* translateStream(stream, protocol, model) {
         break;
       }
       if (data.usage) {
-        out.response.usage.input_tokens = data.usage.prompt_tokens || 0;
-        out.response.usage.output_tokens = data.usage.completion_tokens || 0;
+        out.usage(data.usage.prompt_tokens, data.usage.completion_tokens, data.usage.completion_tokens_details);
       }
       const c = data.choices?.[0],
         d = c?.delta;

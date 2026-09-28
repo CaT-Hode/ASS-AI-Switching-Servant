@@ -16,7 +16,8 @@ Codex 只接受 OpenAI 官方 OAuth / API，Claude 只接受 Anthropic，DSH 只
 - DSH / OpenCode / pi 直写原生模型字段与凭据；Codex / Claude 使用独立已应用路由快照。恢复记录使用 Windows DPAPI 加密。
 - 原生只读目录聚合与账户卡片白名单独立：被隐藏的其他供应商原生记录不会被删除，其声明的模型仍可查看。但不把其他 harness 的 OAuth 自动当作通用 API Key 注入。
 - ChatGPT OAuth 与第三方 Key 不混用。Codex API-only 窗口的目录不含订阅回退模型；本地路由令牌请求订阅端点会被拒绝。Claude API 模型窗口与官方账户窗口分开；原生账户启动若遇到已知密钥 / 端点覆盖项会报错而非静默改计费身份。
-- Claude 仅使用 Messages 协议；API 窗口通过完整 `供应商::模型` ID 在不同已接入模型之间选择。不能声称 Claude 原生界面自动枚举全部第三方模型。
+- Claude 客户端使用 Messages；ASS 优先转发原生 Messages，DeepSeek 使用其官方兼容入口，其他 Chat Completions / Responses 供应商适配文本与函数工具。API 窗口通过完整 `供应商::模型` ID 选择，不声称 Claude 原生界面自动枚举全部第三方模型。跨协议图片 / 服务端工具和精确 token 计数不静默模拟。
+- v0.1.24 起，DeepSeek / OpenCode Go / Zen 原生 API 凭据在资料查询或模型检测成功后可进入加密供应商目录，已配置的同地址同 Key 去重；对应原生目录卡片不重复展示。OAuth 不转换；不会因为发现供应商而自动同步到正在运行的客户端。
 
 ## 应用、启动、撤回
 

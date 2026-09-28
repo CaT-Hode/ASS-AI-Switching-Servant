@@ -169,6 +169,7 @@ class NativeFields {
     this.error = "";
     try {
       const text = read(this.file);
+      this.persistedHash = hash(text);
       if (text !== null) {
         if (!crypto.isEncryptionAvailable()) throw Error();
         const stored = JSON.parse(text);
@@ -203,6 +204,7 @@ class NativeFields {
   save(state) {
     if (!this.crypto.isEncryptionAvailable())
       throw Error("系统凭据加密不可用，未写入原生配置");
+    this.checkJournal();
     safePath(this.file);
     const serialized = JSON.stringify(state);
     const encoded = JSON.stringify({
@@ -212,10 +214,16 @@ class NativeFields {
     if (Buffer.byteLength(encoded) > 8 * 1024 * 1024)
       throw Error("原生配置恢复记录超过 8 MiB，未继续写入");
     atomic(this.file, encoded);
+    this.persistedHash = hash(encoded);
     this.state = JSON.parse(serialized);
   }
-  recoveryCheck() {
+  checkJournal() {
     if (this.error) throw Error(this.error);
+    if (hash(read(this.file)) !== this.persistedHash)
+      throw Error("原生接入记录被外部修改，请重启 ASS 后重新检查");
+  }
+  recoveryCheck() {
+    this.checkJournal();
     for (const f of this.state.pending?.files || []) {
       const now = read(f.file);
       if (now !== f.before && now !== f.after)
@@ -237,7 +245,7 @@ class NativeFields {
     }
     this.save({ entries: p.beforeEntries, pending: null });
   }
-  plan(harness, desired = []) {
+  plan(harness, desired = [], { repair = false } = {}) {
     this.recoveryCheck();
     if (this.state.pending) throw Error("原生接入事务待恢复，请点击重新同步");
     const previous = this.entries.filter((e) => e.harness === harness);
@@ -249,6 +257,11 @@ class NativeFields {
         throw Error("原生配置字段重复或客户端不匹配");
       requested.set(identity(d), d);
     }
+    // Repair is not a force-sync: it may only reapply the exact, previously
+    // confirmed fields. Never claim a new field or apply a pending draft here.
+    if (repair && (!previous.length || requested.size !== before.size ||
+        [...requested].some(([id, d]) => !before.has(id) || !equal(present(d.value), before.get(id).after))))
+      throw Error("没有可信的已接入字段可供修复");
     const files = new Map(),
       entries = this.entries.filter((e) => e.harness !== harness);
     for (const id of new Set([...before.keys(), ...requested.keys()])) {
@@ -259,6 +272,10 @@ class NativeFields {
       if (!file) {
         const text = read(e.file);
         file = { file: e.file, before: text, after: text, format: e.format };
+        if (repair && harness === "dsh" && previous.some((p) => p.file === e.file && p.credentialProvider)) {
+          const version = document(text, e.format).data.version;
+          if (version !== undefined && version !== 1) throw Error("DSH 凭据格式版本已变化，请先用 DSH 完成升级，未强制修复");
+        }
         if (harness === "zcode") {
           if (text === null) file.after = JSON.stringify(zcode.empty(), null, 2) + "\n";
           else zcode.validate(document(text, "json").data);
@@ -266,7 +283,7 @@ class NativeFields {
         files.set(e.file, file);
       }
       const { current } = fieldAt(document(file.after, e.format).data, e.path, e.selector);
-      if (old && !equal(current, old.after))
+      if (old && !equal(current, old.after) && !repair)
         throw Error(
           `原生配置的 ASS 字段已被外部修改：${path.basename(e.file)} · ${e.path.join(" / ")}`,
         );
@@ -307,7 +324,32 @@ class NativeFields {
   apply(harness, desired = []) {
     this.recover();
     const plan = this.plan(harness, desired);
+    this.commit(plan);
+  }
+  repairPlan(harness) {
+    const desired = this.entries.filter((e) => e.harness === harness)
+      .map((e) => ({ ...e, value: e.after.value }));
+    return this.plan(harness, desired, { repair: true });
+  }
+  repair(harness) {
+    const plan = this.repairPlan(harness);
+    if (!plan.files.length) throw Error("受管字段已经一致，无需修复");
+    if (!this.crypto.isEncryptionAvailable()) throw Error("系统凭据加密不可用，未修复配置");
+    const backup = path.join(path.dirname(this.file), "backups", `native-repair-${harness}-${Date.now()}-${randomUUID()}.enc.json`);
+    const payload = JSON.stringify({ kind: "native-repair", harness, createdAt: new Date().toISOString(),
+      entries: this.entries.filter((e) => e.harness === harness),
+      files: plan.files.map((f) => ({ file: f.file, before: f.before })) });
+    const encoded = JSON.stringify({ version: 1, encrypted: this.crypto.encryptString(payload).toString("base64") });
+    if (Buffer.byteLength(encoded) > 32 * 1024 * 1024) throw Error("修复备份超过 32 MiB，未改动配置");
+    // Save the externally edited version before touching any client file.
+    atomic(backup, encoded);
+    this.commit(plan);
+    return { backup, files: plan.files.length };
+  }
+  commit(plan) {
     if (!plan.files.length && equal(this.entries, plan.entries)) return;
+    for (const f of plan.files)
+      if (read(f.file) !== f.before) throw Error("原生配置在写入前被修改，已停止");
     const pending = { beforeEntries: this.entries, files: plan.files };
     this.save({ entries: this.entries, pending });
     try {
@@ -332,6 +374,7 @@ class NativeFields {
     return hash(
       JSON.stringify([
         this.state,
+        read(this.file),
         this.entries
           .filter((e) => e.harness === harness)
           .map((e) => [e.file, read(e.file)]),

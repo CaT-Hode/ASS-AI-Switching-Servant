@@ -99,6 +99,11 @@ function inferProtocol(provider, model) {
   try {
     host = new URL(provider.baseUrl).hostname;
   } catch {}
+  if (host === "opencode.ai") {
+    if (/^(claude|qwen|minimax)/.test(m)) return "anthropic";
+    if (/^(gpt|grok|muse-spark)/.test(m)) return "openai-responses";
+    return "openai-chat";
+  }
   if (host === "api.deepseek.com" && m === "deepseek-v4-flash")
     return "openai-responses";
   if (m.startsWith("gpt")) return "openai-responses";

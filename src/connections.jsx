@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { Power, Loader2 } from "lucide-react";
+import { Power, Loader2, Wrench } from "lucide-react";
 import { Modal } from "./editors.jsx";
 import "./connections.css";
 const api = window.ass;
 export function ConnectionPill({ client, state, onManage, busy }) {
-  const enabled = state.connections.clients[client.id].enabled;
+  const connection = state.connections.clients[client.id], enabled = connection.enabled;
   return (
     <button
       type="button"
@@ -12,13 +12,14 @@ export function ConnectionPill({ client, state, onManage, busy }) {
       aria-checked={enabled}
       aria-label={client.name + " ASS 接入"}
       title={
-        enabled
+        connection.syncError ? "查看并修复 " + client.name + " 接入" : enabled
           ? "断开 " + client.name + " 接入"
           : "开启 " + client.name + " 接入"
       }
       className="connection-switch"
+      data-error={connection.syncError ? "true" : undefined}
       disabled={!!busy || state.connections.busy}
-      onClick={() => onManage({ scope: client.id, enabled: !enabled })}
+      onClick={() => onManage({ scope: client.id, enabled: !enabled, issue: connection.syncError, name: client.name })}
     >
       <span>{enabled ? (state.connections.clients[client.id].syncError ? "接入异常" : state.connections.clients[client.id].pending ? "待同步" : "接入已开启") : "未接入"}</span>
       <span className="connection-pill-track" aria-hidden="true">
@@ -60,39 +61,44 @@ export function ConnectionStatus({ client, state, busy, onManage }) {
 }
 export function ConnectionDialog({ request, onClose, onComplete }) {
   const [plan, setPlan] = useState(null),
+    [repair, setRepair] = useState(null),
+    [repairReason, setRepairReason] = useState(""),
     [error, setError] = useState(""),
     [restart, setRestart] = useState(false),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     let active = true;
     setPlan(null);
+    setRepair(null);
+    setRepairReason("");
     setError("");
     setRestart(false);
-    api
-      .call(
-        "connection-preview",
-        request.scope,
-        request.enabled,
-        !!request.quit,
-      )
-      .then((p) => {
-        if (active) setPlan(p);
-      })
-      .catch((e) => {
-        if (active)
-          setError(
-            e.message.replace(
-              /^Error invoking remote method '[^']+': Error: /,
-              "",
-            ),
-          );
-      });
+    async function preview() {
+      let failed = false;
+      try {
+        const value = await api.call("connection-preview", request.scope, request.enabled, !!request.quit);
+        if (active) setPlan(value);
+      } catch (e) {
+        failed = true;
+        if (active) setError(cleanError(e));
+      }
+      if (active && (failed || request.issue) && request.scope !== "all" && !request.quit) {
+        try {
+          const value = await api.call("connection-repair-preview", request.scope);
+          if (active) setRepair(value);
+        } catch (e) {
+          if (active) setRepairReason(cleanError(e));
+        }
+      }
+    }
+    preview();
     return () => {
       active = false;
     };
-  }, [request.scope, request.enabled, request.quit]);
-  const target = plan?.names.join("、") || "客户端";
-  const title = request.quit
+  }, [request.scope, request.enabled, request.quit, request.issue]);
+  const target = plan?.names.join("、") || repair?.names.join("、") || request.name || "客户端";
+  const hasIssue = !request.quit && request.scope !== "all" && (!!request.issue || !!error);
+  const title = hasIssue ? `${target} 接入异常` : request.quit
     ? "退出 ASS？"
     : request.scope === "all"
       ? "停止全部接入？"
@@ -140,6 +146,20 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
       setBusy(false);
     }
   }
+  async function repairConnection() {
+    if (!repair || busy) return;
+    setBusy(true);
+    try {
+      const result = await api.call("connection-repair", { ticket: repair.ticket, acknowledged: true });
+      onComplete(result.message);
+      onClose();
+    } catch (e) {
+      setError(cleanError(e));
+      setRepair(null);
+      setRepairReason("请重新打开弹窗，检查最新配置后再修复。");
+      setPlan(null);
+    } finally { setBusy(false); }
+  }
   return (
     <Modal
       title={title}
@@ -152,8 +172,11 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
         className="connection-confirm-message"
         role={error ? "alert" : "status"}
       >
-        {error || warning}
+        {error || request.issue || warning}
       </p>
+      {hasIssue && <p className="connection-repair-note">
+        {repair ? `将备份并恢复上次接入配置${repair.files ? `（${repair.files} 个文件）` : ""}。不会关闭客户端；请先结束任务。` : repairReason || "正在检查可修复内容…"}
+      </p>}
       {plan?.restart?.applicable && !request.quit && <div className="connection-restart">
         <label>
           <input type="checkbox" checked={restart} disabled={busy || !plan.restart.available}
@@ -171,17 +194,24 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
         >
           取消
         </button>
-        <button
+        {(plan || !hasIssue) && <button
           className="button primary"
           disabled={!plan || busy}
           onClick={commit}
         >
           {busy && <Loader2 size={14} className="spin" />}
-          {request.quit ? "直接退出" : "确定"}
-        </button>
+          {request.quit ? "直接退出" : hasIssue ? request.enabled ? "同步" : "断开接入" : "确定"}
+        </button>}
+        {hasIssue && <button className="button primary connection-repair" disabled={!repair || busy} onClick={repairConnection}>
+          {busy ? <Loader2 size={14} className="spin" /> : <Wrench size={15} />}
+          {busy ? "修复中…" : "一键修复"}
+        </button>}
       </footer>
     </Modal>
   );
+}
+function cleanError(error) {
+  return error.message.replace(/^Error invoking remote method '[^']+': Error: /, "");
 }
 export function ConnectionService({ state, onManage, busy }) {
   return (

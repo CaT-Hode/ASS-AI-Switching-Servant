@@ -25,12 +25,17 @@ import "./clients.css";
 import "./sidebar.css";
 import { Clients } from "./clients.jsx";
 import { ConnectionDialog } from "./connections.jsx";
+import { useIconMotion } from "./icon-motion.jsx";
 import { Providers } from "./providers.jsx";
 import { Updates, UpdateBanner } from "./updates.jsx";
 import { modelKey, ModelCheckButton } from "./model-inspection.jsx";
 import { DiagnosticTime } from "./diagnostic-time.jsx";
 import { Overview } from "./overview.jsx";
 import { latestSnapshot } from "./state-snapshot.mjs";
+import { ThemeControl, applyTheme } from "./theme.jsx";
+import { DiagnosticDetails } from "./diagnostic-details.jsx";
+import "./theme.css";
+import "./motion.css";
 const api = window.ass;
 const date = (value) =>
   new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
@@ -156,7 +161,7 @@ function Diagnostics({ state, providers, act, busy }) {
         <div className="diagnostic-progress" role="status" aria-live="polite">
           <div>
             <strong>
-              {batch.running
+              {batch.restored ? "上次测试" : batch.running
                 ? "测试中"
                 : batch.cancelled
                   ? "测试已取消"
@@ -173,6 +178,8 @@ function Diagnostics({ state, providers, act, busy }) {
             value={batch.completed}
             max={batch.total || 1}
           />
+          {batch.startedAt && <DiagnosticTime result={{ time: batch.finishedAt || batch.startedAt }} />}
+          {batch.interrupted && <small className="muted">上次关闭时测试未完成，可重新测试。</small>}
         </div>
       )}
       <div className="diagnostic-list">
@@ -213,6 +220,7 @@ function Diagnostics({ state, providers, act, busy }) {
                       <DiagnosticTime result={d} />
                     </small>
                   )}
+                  {d && <DiagnosticDetails result={d} />}
                 </div>
                 <ModelCheckButton
                   provider={p}
@@ -271,6 +279,7 @@ function Diagnostics({ state, providers, act, busy }) {
   );
 }
 function App() {
+  const iconClick = useIconMotion();
   const [state, setState] = useState(null),
     [view, setViewLocal] = useState("overview"),
     [clientTarget, setClientTargetLocal] = useState("codex"),
@@ -319,7 +328,8 @@ function App() {
       .call("snapshot")
       .then((next) => {
         setState((current) => latestSnapshot(current, next));
-        setViewLocal(next.preferences.view);
+        setViewLocal("overview");
+        applyTheme(next.preferences.theme);
         setClientTargetLocal(next.preferences.client);
       })
       .catch((e) => setToast({ error: true, message: e.message }));
@@ -391,6 +401,7 @@ function App() {
     <div
       className="app-shell"
       data-input="keyboard"
+      onClickCapture={iconClick}
       onPointerDownCapture={(e) => {
         e.currentTarget.dataset.input = "pointer";
       }}
@@ -431,6 +442,7 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
+          <ThemeControl value={state.preferences.theme} onChange={(theme) => remember({ theme })} />
           <section
             className={
               "sidebar-service" + (!state.service.running ? " stopped" : "")

@@ -42,7 +42,6 @@ function modelIssue(harness, provider, model) {
   if (!provider.apiKey) return "供应商缺少 API Key";
   if (!model.enabled) return "模型已停用";
   if (!["openai-chat", "openai-responses", "anthropic"].includes(model.wireApi)) return "不支持的接口协议";
-  if (harness === "claude" && model.wireApi !== "anthropic") return "需要 Anthropic Messages 协议";
   return "";
 }
 function injectionCatalog(harness, providers, settings = {}) {
@@ -52,6 +51,7 @@ function injectionCatalog(harness, providers, settings = {}) {
     const ref = modelRef(p.id, m.model), issue = modelIssue(harness, p, m);
     return { ref, providerId: p.id, providerName: p.name, model: m.model,
       name: m.displayName, protocol: m.wireApi, issue,
+      ...(harness === "claude" && m.wireApi !== "anthropic" ? { adapter: "Messages 兼容接入" } : {}),
       included: !issue && !excludedProviders.has(p.id) && !excluded.has(ref) };
   }));
 }

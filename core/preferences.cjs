@@ -3,6 +3,7 @@ const path = require("node:path");
 const { atomic } = require("./config.cjs");
 const defaults = {
   view: "overview",
+  theme: "system",
   client: "codex",
   provider: "official",
   officialService: "openai",
@@ -22,6 +23,7 @@ class Preferences {
   }
   validate(input) {
     const next = { ...this.state };
+    if (["system", "light", "dark"].includes(input.theme)) next.theme = input.theme;
     if (input.usage && typeof input.usage === "object") {
       next.usage = { ...defaults.usage, ...next.usage };
       for (const [key, values] of Object.entries({

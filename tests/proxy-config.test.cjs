@@ -103,7 +103,7 @@ test("external ownership conflicts and persistence failure never overwrite user 
 test("Claude global Messages range works without account binding; switching models keeps namespaces separate", (t) => {
   const f = fixture(t);
   f.proxy.sync("claude");
-  assert.equal(f.proxy.status("claude", true).modelCount, 1);
+  assert.equal(f.proxy.status("claude", true).modelCount, 2);
   const plan = f.manager.modelPlan("claude", modelRef("relay", "two"), "local-only-token");
   assert.match(plan.env.ANTHROPIC_BASE_URL, /clients\/claude\/models$/);
   assert.equal(plan.env.ANTHROPIC_API_KEY, undefined);
@@ -113,7 +113,7 @@ test("Claude global Messages range works without account binding; switching mode
   const route = harnessRoute("/models/v1/messages", body, f.proxy.routingState("claude"));
   assert.equal(body.model, "two");
   assert.equal(route.p.id, "relay");
-  assert.throws(() => harnessRoute("/models/v1/messages", { model: "relay::one" }, f.proxy.routingState("claude")), /未启用/);
+  assert.equal(harnessRoute("/models/v1/messages", { model: "relay::one" }, f.proxy.routingState("claude")).adapted, true);
   assert.deepEqual(f.manager.state.accountBindings.claude || [], []);
 });
 test("Codex isolated OAuth launches receive the applied catalog without changing auth or applying drafts", (t) => {

@@ -128,7 +128,7 @@ test("native direct checks require visible text plus protocol terminal event, ke
   }
 });
 
-test("native successful result and time persist; config/key changes discard stale/in-flight results", (t) => {
+test("native results survive config changes as stale history and reject in-flight results", (t) => {
   const f = fixture(t); f.put(".kimi-code/config.toml", kimi()); const c = f.client("kimi"), m = f.rows(c)[0];
   const crypto = { isEncryptionAvailable: () => true, encryptString: (v) => Buffer.from(v), decryptString: (v) => v.toString() };
   const options = { dataDir: f.home, crypto, getContext: () => f.resolve(c, m) }, history = new DiagnosticHistory(options);
@@ -139,5 +139,6 @@ test("native successful result and time persist; config/key changes discard stal
   assert.equal(saved.protocol, "openai-chat"); assert.equal(saved.message, "连接成功 · 完整流式响应");
   assert.equal(saved.time, "2026-09-23T00:00:00.000Z"); assert.doesNotMatch(JSON.stringify(saved), /fixture/);
   f.put(".kimi-code/config.toml", kimi("changed-fixture-key"));
-  assert.equal(restored.record(result, fingerprint), false); assert.deepEqual(restored.public(), {});
+  assert.equal(restored.record(result, fingerprint), false);
+  assert.equal(restored.public()[modelKey(result.providerId, result.model)].stale, true);
 });

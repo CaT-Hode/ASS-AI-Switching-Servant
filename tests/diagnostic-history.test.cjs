@@ -119,7 +119,7 @@ test("first-time cancellation neither creates a result nor a file", (t) => {
   assert.equal(fs.existsSync(f.history.file), false);
 });
 
-test("connection edits invalidate only the affected model, persist removal and reject in-flight old results", (t) => {
+test("connection edits retain stale observations and reject in-flight old results", (t) => {
   const f = fixture(t),
     old = f.history.fingerprint("p", "alpha");
   f.save();
@@ -131,12 +131,12 @@ test("connection edits invalidate only the affected model, persist removal and r
   f.contexts.get(modelKey("p", "alpha")).model.defaultEffort = "high";
   assert.equal(f.history.record(result(), old), false);
   const active = f.history.public();
-  assert.equal(active[modelKey("p", "alpha")], undefined);
+  assert.equal(active[modelKey("p", "alpha")].stale, true);
   assert.ok(active[modelKey("p", "beta")]);
   assert.deepEqual(new DiagnosticHistory(f.options).public(), active);
   f.contexts.delete(modelKey("p", "beta"));
-  assert.deepEqual(f.history.public(), {});
-  assert.deepEqual(new DiagnosticHistory(f.options).public(), {});
+  assert.equal(f.history.public()[modelKey("p", "beta")].stale, true);
+  assert.deepEqual(new DiagnosticHistory(f.options).public(), f.history.public());
 });
 
 test("names, context hints, unrelated models and header order retain results; connection inputs change the fingerprint", () => {
