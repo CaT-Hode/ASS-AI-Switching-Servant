@@ -109,7 +109,9 @@ export function ConnectionDialog({ request, onClose, onComplete }) {
   let warning = "正在检查接入状态…";
   if (plan) {
     if (request.accountless !== undefined) {
-      warning = request.accountless ? "仅使用已注入模型，按供应商 API 计费。原有官方登录保留。"
+      warning = request.accountless ? request.scope === "claude"
+        ? "终端 claude 也将使用注入模型，按 API 计费；请保持 ASS 运行。原有登录保留。"
+        : "仅使用已注入模型，按供应商 API 计费。原有官方登录保留。"
         : "恢复正常账户启动；已有窗口需重启后生效。";
     } else if (plan.enabled) {
       warning = plan.codexConfig

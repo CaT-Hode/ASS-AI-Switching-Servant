@@ -81,8 +81,122 @@ test("Claude has a credential-isolated home, only injected model choices, no acc
   assert.equal(plan.env.ANTHROPIC_API_KEY, undefined);
   assert.ok(!plan.args.includes("--dangerously-skip-permissions"));
   assert.ok(!fs.existsSync(path.join(plan.dir, ".credentials.json")));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(plan.dir, ".claude.json"))).hasCompletedOnboarding, true);
   assert.deepEqual(f.manager.state.selected, {});
   assert.throws(() => f.manager.plan("claude", "anything"), /无账号启动已开启/);
+});
+
+test("Claude terminal overlay persists, preserves OAuth and unrelated settings, and restores fields on mode off", async t => {
+  const f = fixture(t), home = f.manager.nativeHome, settings = path.join(home, ".claude/settings.json"), profile = path.join(home, ".claude.json");
+  const original = { model: "original", apiKeyHelper: "my-vault", permissions: { deny: ["Bash(rm *)"] },
+    env: { ANTHROPIC_API_KEY: "synthetic-original-key", ANTHROPIC_BASE_URL: "https://original.example", KEEP: "keep" } };
+  atomic(settings, JSON.stringify(original));
+  atomic(profile, JSON.stringify({ hasCompletedOnboarding: false, oauthAccount: { emailAddress: "test@example.test" }, projects: {} }));
+  const oauth = path.join(home, ".claude/.credentials.json"), credentials = '{"claudeAiOauth":{"accessToken":"synthetic-private"}}';
+  atomic(oauth, credentials);
+  await f.apply("claude");
+  assert.deepEqual(JSON.parse(fs.readFileSync(settings)), original);
+  await f.apply("claude", true);
+  const injected = JSON.parse(fs.readFileSync(settings)), token = f.proxy.clients.claude.localToken;
+  assert.equal(injected.env.ANTHROPIC_AUTH_TOKEN, token);
+  assert.equal(injected.env.ANTHROPIC_API_KEY, "");
+  assert.equal(injected.apiKeyHelper, undefined);
+  assert.equal(injected.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:25819/clients/claude/models");
+  assert.deepEqual(injected.availableModels, ["relay::test-claude", "relay::test-chat"]);
+  assert.equal(fs.readFileSync(oauth, "utf8"), credentials);
+  assert.equal(f.proxy.status("claude", true).runtimeStatus, "terminal-ready");
+  const reloaded = new ProxyConfig(f.data, crypt, f.manager, f.store, f.config);
+  assert.equal(reloaded.status("claude", true).applied, true);
+  const current = JSON.parse(fs.readFileSync(profile)); current.projects.test = { hasTrustDialogAccepted: true }; atomic(profile, JSON.stringify(current));
+  injected.env.USER_EDIT = "survives"; atomic(settings, JSON.stringify(injected));
+  await f.apply("claude", false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(settings)), { ...original, env: { ...original.env, USER_EDIT: "survives" } });
+  const restored = JSON.parse(fs.readFileSync(profile));
+  assert.equal(restored.hasCompletedOnboarding, false); assert.equal(restored.oauthAccount.emailAddress, "test@example.test");
+  assert.equal(restored.projects.test.hasTrustDialogAccepted, true);
+  assert.equal(fs.readFileSync(oauth, "utf8"), credentials);
+});
+
+test("Claude native drift is visible, blocks disable/quit, and repair uses applied models rather than drafts", async t => {
+  const f = fixture(t); await f.apply("claude"); await f.apply("claude", true);
+  const settings = f.proxy.clients.claude.nativeClaude.targets.settings;
+  const value = JSON.parse(fs.readFileSync(settings)); value.env.ANTHROPIC_BASE_URL = "https://foreign.example";
+  value.theme = "dark"; atomic(settings, JSON.stringify(value));
+  assert.match(f.proxy.status("claude", true).error, /外部修改/);
+  await assert.rejects(f.apply("claude", false), /外部修改/);
+  await assert.rejects(f.connections.preview("all", false, true), /外部修改/);
+  f.store.updateProvider({ ...f.store.state.providers[0], models: [{ model: "draft-model" }] });
+  f.proxy.repair("claude");
+  const repaired = JSON.parse(fs.readFileSync(settings));
+  assert.deepEqual(repaired.availableModels, ["relay::test-claude", "relay::test-chat"]);
+  assert.equal(repaired.theme, "dark");
+  f.proxy.restore(["claude"]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(settings)), { theme: "dark" });
+});
+
+test("legacy Claude mode is pending until terminal injection is synced; toggles are scoped per client", async t => {
+  const f = fixture(t); await f.apply("claude");
+  f.proxy.persist({ claude: f.proxy.desired("claude", true) });
+  assert.equal(f.proxy.status("claude", true).pending, true);
+  await f.apply("claude");
+  assert.equal(f.proxy.status("claude", true).applied, true);
+  const settings = f.proxy.clients.claude.nativeClaude.targets.settings, cc = fs.readFileSync(settings, "utf8");
+  await f.apply("codex"); await f.apply("codex", true);
+  const codex = fs.readFileSync(f.config.file, "utf8");
+  assert.equal(fs.readFileSync(settings, "utf8"), cc);
+  await f.apply("claude", false);
+  assert.equal(fs.readFileSync(f.config.file, "utf8"), codex);
+  assert.equal(f.proxy.status("codex", true).applied, true);
+  await f.apply("claude", true);
+  const token = f.proxy.clients.claude.localToken;
+  await f.apply("codex", false);
+  assert.equal(JSON.parse(fs.readFileSync(settings)).env.ANTHROPIC_AUTH_TOKEN, token);
+  assert.equal(f.proxy.status("claude", true).applied, true);
+});
+
+test("Claude honors the actual native config home, never an account-import directory, and restores on safe exit", async t => {
+  const f = fixture(t), custom = path.join(f.dir, "custom-cc"), imported = path.join(f.dir, "account-import");
+  f.manager.nativeEnv.CLAUDE_CONFIG_DIR = custom; f.manager.state.credentialHomes.claude = imported;
+  await f.apply("claude"); await f.apply("claude", true);
+  assert.equal(f.proxy.clients.claude.nativeClaude.targets.profile, path.join(custom, ".claude.json"));
+  assert.ok(!fs.existsSync(imported));
+  const ticket = (await f.connections.preview("all", false, true)).ticket;
+  await f.connections.apply({ ticket, mode: "safe", acknowledged: true });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(custom, "settings.json"))), {});
+  assert.equal(f.connections.enabled.claude, false);
+});
+
+test("Claude confirmation notices native edits; external shell overrides and enforced login fail closed", async t => {
+  const f = fixture(t); await f.apply("claude");
+  const settings = path.join(f.manager.nativeHome, ".claude/settings.json");
+  const preview = await f.connections.preview("claude", true, false, true);
+  atomic(settings, '{"theme":"dark"}');
+  await assert.rejects(f.connections.apply({ ticket: preview.ticket, mode: "safe", acknowledged: true }), /已变化/);
+  f.manager.nativeEnv.ANTHROPIC_AUTH_TOKEN = "synthetic-conflict";
+  await assert.rejects(f.apply("claude", true), /终端环境/);
+  delete f.manager.nativeEnv.ANTHROPIC_AUTH_TOKEN;
+  atomic(settings, '{"forceLoginMethod":"claudeai"}');
+  await assert.rejects(f.apply("claude", true), /要求官方登录/);
+  atomic(settings, '{"env":"invalid-parent"}');
+  await assert.rejects(f.apply("claude", true), /不是对象/);
+  assert.equal(f.proxy.clients.claude.accountless, undefined);
+});
+
+test("failed native Claude transaction rolls back; write-ahead recovery remains available after restart", async t => {
+  const f = fixture(t); await f.apply("claude");
+  const persist = f.proxy.persist.bind(f.proxy);
+  let n = 0;
+  f.proxy.persist = (...args) => { if (++n === 2) throw Error("synthetic-final-commit"); return persist(...args); };
+  await assert.rejects(f.apply("claude", true), /synthetic-final-commit/);
+  const settings = path.join(f.manager.nativeHome, ".claude/settings.json");
+  assert.ok(!fs.existsSync(settings)); assert.equal(f.proxy.clients.claude.accountless, undefined);
+  f.proxy.persist = persist;
+  const native = require("../core/claude-native.cjs").plan(f.manager, f.proxy.desired("claude", true));
+  f.proxy.persist(f.proxy.clients, { files: native.files });
+  atomic(native.files[0].file, native.files[0].after);
+  const restart = new ProxyConfig(f.data, crypt, f.manager, f.store, f.config);
+  assert.ok(restart.pending); restart.recover();
+  assert.ok(!fs.existsSync(settings)); assert.equal(restart.pending, null);
 });
 test("in-flight requests block a mode change and configuration changes invalidate confirmation", async t => {
   const f = fixture(t); await f.apply("codex");

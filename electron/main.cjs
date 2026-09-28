@@ -989,8 +989,15 @@ else {
       );
       // Injection consumes durable observations only. It must never await a
       // provider request; testing belongs to model creation/the lightning button.
-      register("connection-preview", (scope, enabled, quit, accountless) =>
-        connections.preview(scope, enabled, quit, accountless));
+      register("connection-preview", async (scope, enabled, quit, accountless) => {
+        if (!testMode && scope === "claude" && enabled && !quit &&
+            (accountless === true || (accountless === undefined && proxyConfig.clients.claude?.accountless))) {
+          const launcher = harnesses.launcher("claude");
+          if (!launcher.ready) throw Error(launcher.message);
+          await require("../core/accountless.cjs").assertClaudePicker(launcher);
+        }
+        return connections.preview(scope, enabled, quit, accountless);
+      });
       register("connection-repair-preview", (scope) => connections.repairPreview(scope));
       register("connection-repair", async (input) => {
         for (const id of connections.tickets.get(input?.ticket)?.ids || [])

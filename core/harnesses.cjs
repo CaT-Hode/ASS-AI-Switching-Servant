@@ -13,7 +13,7 @@ const additionalOAuth = require("./additional-oauth.cjs");
 const kimiConfig = require("./kimi-config.cjs");
 const { officialAccountPlan } = require("./official-account-plan.cjs");
 const { assertClaudeAccount } = require("./claude-launch-policy.cjs");
-const { configureClaudeModels, assertClaudePicker } = require("./accountless.cjs");
+const { configureClaudeModels, assertClaudePicker, prepareClaudeOnboarding } = require("./accountless.cjs");
 const { safePath, read: readNative, document: nativeDocument } = require("./native-fields.cjs");
 const { ACCOUNT_SERVICES, officialApiService, acceptsApiAccount, acceptsNativeAccount,
   modelRef, injectionCatalog } = require("./client-policy.cjs");
@@ -1018,6 +1018,7 @@ class HarnessManager {
       }
     }
     fs.mkdirSync(plan.dir, { recursive: true });
+    if (plan.harness === "claude" && plan.accountKind === "model") prepareClaudeOnboarding(plan.dir);
     if (plan.routed && plan.files.length && this.options.injections)
       return this.options.injections.write(plan.harness, plan);
     for (const [name, content] of plan.files) {

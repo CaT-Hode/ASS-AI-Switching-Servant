@@ -13,7 +13,7 @@ ASS（Agent-Switching-Servant）是你的 Windows 桌面 AI 路由与账户助�
 - 在“供应商与模型”导出可重新导入的供应商配置。默认移除 API 密钥和额外请求头；可主动选择包含密钥，保存前显示明文泄露警告。OAuth 令牌、客户端账户与本地路由凭据不在导出范围。
 - Codex 官方请求与第三方 API 严格分流；第三方失败不会自动切到官方账户。
 - 模型自动检测 Responses / Anthropic Messages，必要时检测 Chat Completions；按客户端选择实测协议，兼容接入转换请求、流式回复与工具历史。协议结果按模型长期保存、不按时间过期，支持情况标记在模型行；普通接入不发起检测。临时 502 不抹掉此前成功记录，点闪电可手动更新。
-- Codex 桌面端 / Claude Code 可在模型接入后启用“无账号启动”，仅展示已注入模型，不需要官方 OAuth；原有登录保留。Claude Code 的自定义模型列表需要 2.1.242+。
+- Codex 桌面端 / Claude Code 可在模型接入后分别启用“无账号启动”，仅使用已注入模型，不需要官方 OAuth；原有登录保留。CC 开启后直接在系统终端运行 `claude` 也生效，关闭时恢复原生配置字段；Codex 已运行的窗口需重启。Claude Code 的自定义模型列表需要 2.1.242+。
 - 通过 Electron / Chromium 网络栈使用 Windows 信任证书和系统代理，不关闭 TLS 校验。
 - 按供应商、模型名称推导上下文默认值，支持手动覆盖。
 - 双滑块选择 `low / medium / high / xhigh / max / ultra` 范围，也可逐项勾选。非 GPT 模型默认不启用 ultra。
@@ -54,7 +54,13 @@ ASS 备份并向 `%USERPROFILE%\.codex\config.toml` 写入带标记的 `ass_rout
 
 Codex 新写入的入口为 `http://127.0.0.1:25819/clients/ASS/v1`（端口随本机设置）。旧 `clients/codex/v1` 暂保留同权限兼容；确认同步 Codex 接入后写入新地址，不为改名强行重启正在运行的客户端。
 
-关闭 ASS 主窗口只会隐藏到托盘。退出托盘或停止路由后，经 ASS 的请求无法继续；DSH / OpenCode / pi 的原生直连不受路由端口影响。ASS 重启会轮换本地令牌，仍使用代理的客户端需重新启动。更改模型目录后，Codex 需要重启刷新；新版 DSH 使用当前 profile 的 `cordis.patch.yml`，旧版使用 `settings.yaml`。后端热加载后，已打开页面的模型目录仍有连接级缓存，同步后需要刷新 DSH 页面。
+关闭 ASS 主窗口只会隐藏到托盘。退出托盘或停止路由后，经 ASS 的请求无法继续；DSH / OpenCode / pi 的原生直连不受路由端口影响。普通代理窗口的会话令牌在 ASS 重启后轮换；无账号模式使用单独加密持久化的本地令牌。更改模型目录后，Codex 需要重启刷新；新版 DSH 使用当前 profile 的 `cordis.patch.yml`，旧版使用 `settings.yaml`。后端热加载后，已打开页面的模型目录仍有连接级缓存，同步后需要刷新 DSH 页面。
+
+### CC 终端免登录
+
+先在“客户端与账户 → Claude Code”同步至少一个供应商，再开启“无账号启动”。ASS 将本地网关、注入模型列表写入 CC 原生用户 `settings.json`，并记录首次启动已完成；系统终端直接运行 `claude` 即可，不需要另建官方账户。关闭模式、断开 CC 或安全退出 ASS 时，只恢复所管理字段，不删除原来的 `.credentials.json`、账户资料、目录信任或其他设置。ASS 的本地令牌不等于供应商密钥；真实模型调用仍按供应商 API 计费。
+
+默认路径是 `%USERPROFILE%\.claude\settings.json` 和 `%USERPROFILE%\.claude.json`，设置 `CLAUDE_CONFIG_DIR` 时使用其原生目录；导入账户时选的搜索目录不会冒充终端的配置目录。旧版已开启的开关需先点击同步，补上原生配置。不同终端的环境覆盖、项目配置、`--settings` 参数或组织登录策略仍可能有更高优先级；ASS 不接管 shell、不覆盖组织策略，也不跳过工具权限和目录信任。请保持 ASS 在托盘运行，并新开 CC 会话加载配置。
 
 ### 接入开关与安全关闭
 

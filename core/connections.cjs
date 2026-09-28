@@ -141,7 +141,7 @@ class Connections {
         this.revision,
         this.injections.fingerprint(ids),
         quit ? null : this.nativeConfig?.fingerprint(ids, enabled),
-        quit ? null : this.proxyConfig?.fingerprint(ids, enabled),
+        this.proxyConfig?.fingerprint(ids, enabled),
         ids.includes("codex") && fs.existsSync(this.config.file)
           ? hash(fs.readFileSync(this.config.file))
           : null,
@@ -157,7 +157,7 @@ class Connections {
     if (this.error) throw Error(this.error);
     this.injections.preflight(ids);
     if (!quit) this.nativeConfig?.preflight(ids, enabled);
-    if (!quit) this.proxyConfig?.preflight(ids, enabled, accountless);
+    this.proxyConfig?.preflight(ids, enabled, accountless);
     if (ids.includes("codex")) {
       if (!enabled) this.config.preflightDetach();
       else if (!this.config.status().attached) {
@@ -378,8 +378,10 @@ class Connections {
             ? "已开启接入。Codex App 请在任务结束后手动重启。"
             : plan.ids.includes("dsh") && this.nativeConfig?.isDirect("dsh")
               ? "已同步 DSH 原生配置；后端会热加载，已打开页面需刷新后才能看到新模型。"
-            : plan.ids.some((id) => this.nativeConfig?.isDirect(id))
+          : plan.ids.some((id) => this.nativeConfig?.isDirect(id))
               ? "已同步原生配置；客户端直连供应商，不依赖 ASS 路由。"
+            : plan.ids.includes("claude") && this.proxyConfig?.clients.claude?.accountless
+              ? "无账号启动已生效；在系统终端运行 claude 即可使用注入模型。请保持 ASS 运行。"
               : "已开启接入，从 ASS 新启动客户端时生效。"
           : "已断开所选客户端、恢复其注入文件；账户与会话数据保留。",
       };

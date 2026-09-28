@@ -54,6 +54,10 @@ async function confirm(button) {
     await confirm(page.getByRole("switch", { name: "Claude Code ASS 接入", exact: true }));
     await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
     snapshot = await call("snapshot");
+    assert.equal(snapshot.connections.clients.claude.runtimeStatus, "terminal-ready");
+    await page.getByText("终端 claude 同样免登录 · ASS 需保持运行", { exact: true }).waitFor();
+    assert.equal(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude/settings.json"))).env.ANTHROPIC_BASE_URL, "http://127.0.0.1:25839/clients/claude/models");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude.json"))).hasCompletedOnboarding, true);
     assert.deepEqual(snapshot.harnesses.clients.find(c => c.id === "claude").injection.models.map(m => m.protocol), ["anthropic", "openai-chat"]);
     await page.locator(".client-provider summary").click();
     await page.screenshot({ path: path.join(out, "accountless-claude-protocols.png") });
@@ -63,6 +67,10 @@ async function confirm(button) {
     assert.equal(Object.keys(snapshot.capabilities).length, 2);
     await choose("Codex"); await confirm(page.getByRole("switch", { name: "Codex 无账号启动" }));
     assert.equal((await call("snapshot")).connections.clients.codex.accountless, false);
+    assert.equal((await call("snapshot")).connections.clients.claude.accountless, true);
+    await choose("Claude Code"); await confirm(page.getByRole("switch", { name: "Claude Code 无账号启动" }));
+    assert.equal((await call("snapshot")).connections.clients.claude.accountless, false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, "test-home/.claude/settings.json"))), {});
     assert.equal(fs.readFileSync(path.join(codex, "auth.json"), "utf8"), auth);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ passed: true, accountlessEligibility: true, bothClients: true, automaticProtocols: true, restartPersistence: true, oauthPreserved: true, screenshots: out, errors }));

@@ -35,4 +35,12 @@ function configureClaudeModels(config, providers, selected, dir) {
   // Managed organizational policy still applies; normal tool approval remains on.
   config.args.push("--setting-sources", "user", "--settings", path.join(dir, "settings.json"));
 }
-module.exports = { claudeModelSettings, configureClaudeModels, assertClaudePicker };
+function prepareClaudeOnboarding(dir) {
+  const { read, edit, atomic } = require("./native-fields.cjs");
+  const file = path.join(dir, ".claude.json"), before = read(file);
+  // This file is live CC state, not an injected document to remove on disconnect.
+  // Keep trust decisions, MCP entries and any later state written by the client.
+  const after = edit(before, "json", ["hasCompletedOnboarding"], { exists: true, value: true });
+  if (after !== before) atomic(file, after);
+}
+module.exports = { claudeModelSettings, configureClaudeModels, assertClaudePicker, prepareClaudeOnboarding };

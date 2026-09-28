@@ -7,6 +7,8 @@ const { modelRef } = require("./client-policy.cjs");
 const { safePath } = require("./native-fields.cjs");
 const { randomUUID } = require("node:crypto");
 const { isDeepStrictEqual: equal } = require("node:util");
+const claudeNative = require("./claude-native.cjs");
+const routeOnly = (plan) => { if (!plan) return null; const { nativeClaude, ...route } = plan; return route; };
 const IDS = ["codex", "claude"];
 const read = (file) => fs.existsSync(file) ? fs.readFileSync(file) : null;
 
@@ -33,8 +35,10 @@ class ProxyConfig {
               (plan.accountless !== undefined && typeof plan.accountless !== "boolean") ||
               (plan.accountless && (!/^[a-f0-9]{64}$/.test(plan.localToken || "") || !plan.providers.some((p) => p.models?.length))))) throw Error();
         this.clients = clients;
+        claudeNative.validate(clients.claude?.nativeClaude);
         if (payload.pending) {
-          const allowed = [config.file, config.record, config.catalog];
+          const allowed = [config.file, config.record, config.catalog, ...Object.values(claudeNative.targets(manager)),
+            ...Object.values(clients.claude?.nativeClaude?.targets || {})];
           if (!Array.isArray(payload.pending.files) || payload.pending.files.some((f) =>
             !allowed.includes(f.file) || (f.before !== null && typeof f.before !== "string") || typeof f.after !== "string")) throw Error();
           this.pending = payload.pending;
@@ -75,28 +79,42 @@ class ProxyConfig {
     if (id === "codex" && this.clients.codex &&
         hash(read(this.config.catalog) || "") !== hash(JSON.stringify(this.clients.codex.catalog, null, 2)))
       throw Error("Codex 已应用模型目录被外部修改；未覆盖");
+    if (id === "claude") claudeNative.check(this.clients.claude?.nativeClaude);
   }
   status(id, enabled) {
     if (!this.supports(id)) return {};
     let desired, error = "";
-    try { this.checkFiles(id); desired = this.desired(id); if (id === "codex" && enabled) this.config.preflightDetach(); }
+    let nativePending = false;
+    try {
+      this.checkFiles(id); desired = this.desired(id);
+      if (id === "codex" && enabled) this.config.preflightDetach();
+      if (id === "claude" && enabled && desired.accountless) {
+        const native = claudeNative.plan(this.manager, desired, this.clients.claude?.nativeClaude);
+        nativePending = !this.clients.claude?.nativeClaude || native.files.length > 0;
+      }
+    }
     catch (e) { error = e.message; }
-    const pending = !!enabled && (hash(JSON.stringify(desired || null)) !== hash(JSON.stringify(this.clients[id] || null)) ||
+    const pending = !!enabled && (nativePending || !equal(desired || null, routeOnly(this.clients[id])) ||
       (id === "codex" && !this.config.status().attached));
     const count = (desired?.providers || []).reduce((n, p) => n + p.models.length, 0);
     const files = id === "codex" && this.config.status().managed ? [this.config.file, this.config.catalog].filter(fs.existsSync)
-      : this.clients[id] ? [this.file] : [];
+      : this.clients[id] ? [this.file, ...Object.values(this.clients[id].nativeClaude?.targets || {})] : [];
     return { mode: "proxy", error, pending, modelCount: count, files,
       applied: !!enabled && !error && !pending,
-      runtimeStatus: enabled ? (id === "codex" ? "reload-required" : "new-window-only") : "inactive" };
+      runtimeStatus: enabled ? (id === "codex" ? "reload-required" : this.clients[id]?.nativeClaude ? "terminal-ready" : "new-window-only") : "inactive" };
   }
   fingerprint(ids, enabled) {
     return hash(JSON.stringify([read(this.file)?.toString("base64"), ids.filter((id) => this.supports(id)).map((id) =>
-      [id, enabled ? this.desired(id) : null, id === "codex" ? [read(this.config.catalog)?.toString("base64"), read(this.config.record)?.toString("base64")] : null])]));
+      [id, enabled ? this.desired(id) : null, id === "codex" ? [read(this.config.catalog)?.toString("base64"), read(this.config.record)?.toString("base64")]
+        : claudeNative.fingerprint(this.manager, this.clients.claude?.nativeClaude)])]));
   }
   preflight(ids, enabled, accountless) {
     if (!enabled) {
-      if (this.pending && ids.includes("codex")) throw Error("路由配置事务待恢复，请先重新同步");
+      if (this.pending && ids.some(id => this.supports(id))) throw Error("路由配置事务待恢复，请先重新同步");
+      if (ids.includes("claude") && this.clients.claude?.nativeClaude) {
+        this.checkFiles("claude");
+        claudeNative.plan(this.manager, null, this.clients.claude.nativeClaude);
+      }
       return;
     }
     for (const id of ids.filter((id) => this.supports(id))) {
@@ -105,6 +123,7 @@ class ProxyConfig {
       const plan = this.desired(id, accountless);
       if (!plan.providers.length && !this.clients[id]) throw Error("没有可接入的兼容模型，请先配置供应商与模型");
       if (id === "codex") this.config.prepareAttach(plan.defaultModel, plan.localToken);
+      if (id === "claude") claudeNative.plan(this.manager, plan, this.clients.claude?.nativeClaude);
     }
   }
   persist(clients, pending = null) {
@@ -143,6 +162,11 @@ class ProxyConfig {
     this.preflight([id], true, accountless);
     const plan = this.desired(id, accountless);
     const files = [];
+    if (id === "claude") {
+      const native = claudeNative.plan(this.manager, plan, this.clients.claude?.nativeClaude);
+      if (native.record) plan.nativeClaude = native.record;
+      files.push(...native.files);
+    }
     if (id === "codex") {
       const attachment = this.config.prepareAttach(plan.defaultModel, plan.localToken);
       const backup = path.join(this.config.dataDir, "backups", "config-" + Date.now() + "-proxy.toml");
@@ -155,13 +179,16 @@ class ProxyConfig {
       for (const [file, after] of values) { safePath(file); files.push({ file, before: read(file)?.toString() ?? null, after }); }
       if ((files.at(-1).before ?? "") !== attachment.old) throw Error("Codex 配置同时被修改，请重新确认");
     }
+    this.commit({ ...this.clients, [id]: plan }, files);
+  }
+  commit(clients, files) {
     try {
       this.persist(this.clients, { files });
       for (const f of files) {
         if ((read(f.file)?.toString() ?? null) !== f.before) throw Error("接入配置在写入前被修改，已停止");
         atomic(f.file, f.after);
       }
-      this.persist({ ...this.clients, [id]: plan });
+      this.persist(clients);
     } catch (error) {
       try {
         this.recover();
@@ -174,8 +201,9 @@ class ProxyConfig {
     if (this.error) throw Error(this.error);
     if (this.pending) throw Error("路由配置事务待恢复，请先重新同步");
     const clients = { ...this.clients };
+    const files = ids.includes("claude") ? claudeNative.plan(this.manager, null, this.clients.claude?.nativeClaude).files : [];
     for (const id of ids) delete clients[id];
-    this.persist(clients);
+    this.commit(clients, files);
   }
   repairPlan(id) {
     if (!this.supports(id) || !this.clients[id]) throw Error("没有可信的已应用路由配置可供修复");
@@ -202,7 +230,13 @@ class ProxyConfig {
       const before = read(this.config.catalog)?.toString() ?? null, after = JSON.stringify(this.clients.codex.catalog, null, 2);
       if (before !== after) files.push({ file: this.config.catalog, before, after });
     }
-    return { files, routeOnly: !files.length };
+    let nativeClaude;
+    if (id === "claude") {
+      const native = claudeNative.plan(this.manager, this.clients.claude, this.clients.claude.nativeClaude, { repair: true });
+      nativeClaude = native.record;
+      files.push(...native.files);
+    }
+    return { files, routeOnly: !files.length, nativeClaude };
   }
   repair(id) {
     const plan = this.repairPlan(id);
@@ -223,7 +257,7 @@ class ProxyConfig {
         if ((read(f.file)?.toString() ?? null) !== f.before) throw Error("修复期间配置已变化，已停止");
         atomic(f.file, f.after);
       }
-      this.persist(this.clients);
+      this.persist(plan.nativeClaude ? { ...this.clients, claude: { ...this.clients.claude, nativeClaude: plan.nativeClaude } } : this.clients);
     } catch (error) {
       try { this.recover(); }
       catch { throw Error("修复未完成，已保留加密备份与事务恢复记录"); }

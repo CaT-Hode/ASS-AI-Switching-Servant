@@ -8,6 +8,10 @@ export function ClientInjection({ client, state, act, busy, onManage }) {
   const injection = client.injection || { models: [], excludedProviders: [] };
   const groups = Map.groupBy(injection.models, (m) => m.providerId);
   const connection = state.connections.clients[client.id];
+  const accountlessHint = !connection?.accountless ? "注入模型后可开启"
+    : !connection.applied ? connection.syncError ? "无账号配置异常 · 请修复接入" : "无账号配置待同步"
+    : client.id === "claude" ? "终端 claude 同样免登录 · ASS 需保持运行"
+    : "仅使用注入模型 · 已运行的 Codex 需重启";
   const excluded = new Set(injection.excludedProviders || []);
   const enabled = [...groups].filter(([id, models]) => !excluded.has(id) && models.some((m) => !m.issue)).length;
   return <section className="client-injection" aria-label={client.name + " 模型接入"}>
@@ -17,7 +21,7 @@ export function ClientInjection({ client, state, act, busy, onManage }) {
         onClick={() => onManage({ scope: client.id, enabled: true, sync: true })}><RefreshCw size={16} /></button>}
     </header>
     {["codex", "claude"].includes(client.id) && <div className="accountless-control">
-      <div><strong>无账号启动</strong><small>{connection?.accountless ? "仅显示注入模型 · 不使用官方 OAuth" : "注入模型后可开启"}</small></div>
+      <div><strong>无账号启动</strong><small>{accountlessHint}</small></div>
       {connection?.accountless && <button className="button" disabled={!!busy || !connection.accountlessAvailable || !(client.launcher?.ready || (client.id === "codex" && client.desktop))}
         title={client.id === "codex" && client.desktop ? "打开桌面端；已运行的窗口需重启加载配置" : "以独立配置启动，不读取官方 OAuth"}
         onClick={() => act("accountless-launch", () => api.call(client.id === "codex" && client.desktop ? "client-open-desktop" : "client-accountless-launch", client.id))}>
