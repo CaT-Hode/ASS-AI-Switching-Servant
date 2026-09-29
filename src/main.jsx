@@ -479,7 +479,7 @@ function App() {
           <div>
             <h1>{title}</h1>
           </div>
-          <div className="actions">
+          {view === "providers" && <div className="actions">
             <Button
               icon={Upload}
               busy={busy === "import"}
@@ -487,7 +487,7 @@ function App() {
             >
               导入配置
             </Button>
-          </div>
+          </div>}
         </header>
         {state.startupError && (
           <div className="error-box">{state.startupError}</div>
@@ -529,6 +529,7 @@ function App() {
       </main>
       {connectionRequest && (
         <ConnectionDialog
+          state={state}
           request={connectionRequest}
           onClose={() => setConnectionRequest(null)}
           onComplete={(message, error = false) => {

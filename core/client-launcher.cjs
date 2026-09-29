@@ -45,6 +45,13 @@ function json(file) {
     return {};
   }
 }
+function hasElectronArchive(directory) {
+  const archive = path.join(directory, "resources", "app.asar");
+  const info = stat(archive);
+  // Electron exposes ASAR as a virtual directory. Product package names are
+  // private implementation details (Claude's is not necessarily "claude").
+  return !!(info?.isFile() || (info?.isDirectory() && stat(path.join(archive, "package.json"))?.isFile()));
+}
 function findExecutable(name, env = process.env) {
   const dirs = (env.Path || env.PATH || "")
     .split(path.delimiter)
@@ -107,7 +114,7 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
   if (harness === "claude") {
     const desktop = info.isDirectory() ? path.join(location, "claude.exe") : location;
     if (/^claude\.exe$/i.test(path.basename(desktop)) && stat(desktop)?.isFile() &&
-        (stat(path.join(path.dirname(desktop), "resources/app.asar"))?.isFile() ||
+        (hasElectronArchive(path.dirname(desktop)) ||
           /claude/i.test(json(path.join(path.dirname(desktop), "resources/app.asar/package.json")).name || "") ||
           /claude/i.test(json(path.join(path.dirname(desktop), "resources/app/package.json")).name || "")))
       return { ...fail("Claude 桌面版 · 通过 Gateway 接入；终端启动请使用 Claude Code CLI"), installed: true,
@@ -137,7 +144,7 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
     const desktop = info.isDirectory() ? ["ZCode.exe", "ZCode Preview.exe"].map((name) => path.join(location, name))
       .find((file) => stat(file)?.isFile()) : location;
     if (desktop && /^zcode(?: preview)?\.exe$/i.test(path.basename(desktop)) &&
-        (stat(path.join(path.dirname(desktop), "resources/app.asar"))?.isFile() ||
+        (hasElectronArchive(path.dirname(desktop)) ||
           json(path.join(path.dirname(desktop), "resources/app.asar/package.json")).name === "@zcode/desktop" ||
           json(path.join(path.dirname(desktop), "resources/app/package.json")).name === "@zcode/desktop"))
       return { ...fail("已安装 ZCode Desktop · 使用原生账户与配置"), installed: true, kind: "desktop", desktopExecutable: desktop };
@@ -149,7 +156,7 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
     if (
       path.basename(desktop).toLowerCase() === "opencode.exe" &&
       stat(desktop)?.isFile() &&
-      (stat(path.join(path.dirname(desktop), "resources", "app.asar"))?.isFile() ||
+      (hasElectronArchive(path.dirname(desktop)) ||
         // Electron presents ASAR as a directory; plain Node presents a file.
         json(path.join(path.dirname(desktop), "resources", "app.asar", "package.json")).name === "@opencode-ai/desktop" ||
         json(path.join(path.dirname(desktop), "resources", "app", "package.json")).name === "@opencode-ai/desktop")

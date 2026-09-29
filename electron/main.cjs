@@ -356,6 +356,14 @@ async function refreshAccountInfo(id, options) {
 function snapshot() {
   return withReadScope(buildSnapshot);
 }
+async function refreshClientState() {
+  // Manual refresh is one complete state transition, not a partial repaint.
+  await processes.refresh();
+  await harnesses.refreshOAuth({ rediscover: true });
+  oauthHistory.scan({ immediate: true });
+  await syncNativeSuppliers();
+  return snapshot();
+}
 function buildSnapshot() {
   store.reload();
   const publicState = store.public(),
@@ -526,6 +534,7 @@ function register(name, handler) {
       return result;
     } finally {
       if ((name === "snapshot" || name === "client-refresh") && result?.sequence) publisher.publish(result);
+      else if (result?.snapshot?.sequence) publisher.publish(result.snapshot);
       else push();
     }
   });
@@ -1144,13 +1153,7 @@ else {
       register("account-add", (id, label, oauthProvider) =>
         harnesses.add(id, label, oauthProvider),
       );
-      register("client-refresh", async () => {
-        await processes.refresh();
-        await harnesses.refreshOAuth();
-        oauthHistory.scan({ immediate: true });
-        await syncNativeSuppliers();
-        return snapshot();
-      });
+      register("client-refresh", refreshClientState);
       register("native-login-preview", async (id) => {
         if (connections.busy) throw Error("正在修改客户端接入，请稍后登录");
         return nativeLogin.preview(id);
@@ -1238,11 +1241,14 @@ else {
       });
       register("client-detect", async (id) => {
         const candidates = harnesses.detect(id);
-        if (candidates.length === 1) {
-          harnesses.setExecutable(id, candidates[0].location);
-          await harnesses.refreshOAuth();
+        let launcher = harnesses.launcher(id);
+        if (!launcher.ready && !launcher.installed) {
+          const ready = candidates.filter(c => c.ready);
+          launcher = ready.length === 1 ? ready[0] : candidates.length === 1 ? candidates[0] : launcher;
         }
-        return { candidates };
+        const selected = launcher.ready || launcher.installed ? launcher.location : "";
+        if (selected) harnesses.setExecutable(id, selected);
+        return { candidates, selected, snapshot: await refreshClientState() };
       });
       register("client-open-desktop", async (id) => {
         if (id === "claude" && proxyConfig.clients.claude?.accountless &&
@@ -1265,7 +1271,7 @@ else {
       });
       register("client-location", async (id, location) => {
         harnesses.setExecutable(id, location);
-        await harnesses.refreshOAuth();
+        return { snapshot: await refreshClientState() };
       });
       register("client-executable", async (id, directory = false) => {
         const r = await dialog.showOpenDialog(window, {
@@ -1284,7 +1290,7 @@ else {
         });
         if (!r.canceled) {
           harnesses.setExecutable(id, r.filePaths[0]);
-          await harnesses.refreshOAuth();
+          return { snapshot: await refreshClientState() };
         }
       });
       register("client-workspace", async () => {

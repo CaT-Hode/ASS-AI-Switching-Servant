@@ -92,6 +92,37 @@ test("auto-discovery prefers CLI when Desktop is also present and respects expli
   await manager.refreshOAuth();
   assert.equal(manager.launcher("opencode").kind, "desktop");
 });
+test("Claude virtual desktop archive is not a second CLI; saved selection survives full rediscovery", async (t) => {
+  const root = temp(t), bin = path.join(root, "bin"), local = path.join(root, "local");
+  const cli = path.join(bin, "claude.cmd"), desktop = path.join(local, "Programs/Claude/claude.exe");
+  fs.mkdirSync(bin, { recursive: true }); fs.writeFileSync(cli, "synthetic CLI");
+  fs.mkdirSync(path.join(path.dirname(desktop), "resources/app.asar"), { recursive: true });
+  fs.writeFileSync(desktop, "synthetic desktop");
+  fs.writeFileSync(path.join(path.dirname(desktop), "resources/app.asar/package.json"), '{"name":"desktop-shell"}');
+  const options = { home: root, env: {}, launchEnv: { PATH: bin, USERPROFILE: root, LOCALAPPDATA: local } };
+  const manager = new HarnessManager(root, () => ({ providers: [] }), [], path.join(root, "codex"), options);
+  await manager.refreshOAuth({ rediscover: true });
+  assert.equal(manager.launcher("claude").executable, cli);
+  assert.equal(manager.desktop("claude"), desktop);
+  manager.setExecutable("claude", cli);
+  const loaded = new HarnessManager(root, () => ({ providers: [] }), [], path.join(root, "codex"), options);
+  await loaded.refreshOAuth({ rediscover: true });
+  assert.equal(loaded.launcher("claude").executable, cli);
+  assert.equal(loaded.desktop("claude"), desktop);
+  fs.unlinkSync(desktop);
+  await loaded.refreshOAuth({ rediscover: true });
+  assert.equal(loaded.desktop("claude"), null);
+  assert.equal(loaded.launcher("claude").executable, cli);
+});
+
+test("real multiple installation choices report location ambiguity, not running clients", (t) => {
+  const root = temp(t), manager = new HarnessManager(root, () => ({ providers: [] }), [], path.join(root, "codex"), { home: root, env: {}, launchEnv: { PATH: "", USERPROFILE: root } });
+  manager.discovery.claude = [{ ready: true, location: "one" }, { ready: true, location: "two" }];
+  assert.equal(manager.launcher("claude").ambiguous, true);
+  assert.match(manager.launcher("claude").message, /安装位置/);
+  assert.doesNotMatch(manager.launcher("claude").message, /点击自动识别后/);
+});
+
 test("DeepSeek and Go are API accounts; Claude filters incompatible models", () => {
   assert.equal(apiAccounts("dsh", providers)[0].badge, "DeepSeek API");
   assert.equal(apiAccounts("opencode", providers)[0].badge, "OpenCode Go API");

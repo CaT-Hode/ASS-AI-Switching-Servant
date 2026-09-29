@@ -189,6 +189,18 @@ test("OpenCode ASAR virtual-directory metadata is recognized in Electron as well
   assert.equal(resolveLauncher("opencode", path.join(root,"desktop/OpenCode.exe"),env).kind,"desktop");
 });
 
+test("Electron virtual ASAR keeps opaque Claude product names out of CLI discovery", (t) => {
+  const { root, write, env } = fixture(t);
+  write("runtime/claude.cmd");
+  const relative = "programs/WindowsApps/Claude_2.9939.2.0_x64__pzs8sxrjxfjjc/app";
+  write(relative + "/claude.exe");
+  write(relative + "/resources/app.asar/package.json", JSON.stringify({ name: "desktop-shell", productName: "Claude" }));
+  const candidates = discoverLaunchers("claude", { ...env, ProgramFiles: path.join(root, "programs") });
+  assert.equal(candidates.length, 2);
+  assert.equal(candidates.filter(c => c.ready).length, 1);
+  assert.equal(candidates.find(c => c.kind === "desktop").desktopExecutable, path.join(root, relative, "claude.exe"));
+});
+
 test("Antigravity Hub, IDE and CLI are distinct install candidates outside PATH", (t) => {
   const { root, write, env } = fixture(t);
   const hub = "local/Programs/Antigravity", ide = "local/Programs/Antigravity IDE";

@@ -399,9 +399,9 @@ class HarnessManager {
     delete this.state.modelSelections;
     if (providerMigration && fs.existsSync(this.file)) this.save();
   }
-  async refreshOAuth() {
+  async refreshOAuth({ rediscover = false } = {}) {
     for (const { id } of ACTIVE_SPECS) {
-      if (!this.state.executables[id] || id === "opencode") this.detect(id);
+      if (rediscover || !this.state.executables[id] || id === "opencode") this.detect(id);
     }
     const pi = this.launcher("pi");
     const [piProviders] = await Promise.all([piOAuthProviders(pi.ready ? pi.entryPoint : "")]);
@@ -465,7 +465,8 @@ class HarnessManager {
     if (!selected && (ready.length || candidates.length) > 1) {
       return {
         ...resolveLauncher(harness, ""),
-        message: "检测到多套客户端，点击自动识别后选择要使用的一套",
+        ambiguous: true,
+        message: "发现多个安装位置，请选择启动入口（不代表客户端正在运行）",
       };
     }
     return resolveLauncher(

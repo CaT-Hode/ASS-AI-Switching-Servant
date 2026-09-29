@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Power, Loader2, Wrench, SlidersHorizontal, RotateCw } from "./icons.jsx";
 import { Modal } from "./editors.jsx";
+import { ClientLocationRecovery } from "./client-location.jsx";
 import "./connections.css";
 const api = window.ass;
 export function ConnectionPill({ client, state, onManage, busy }) {
@@ -123,13 +124,18 @@ function ExitDialog({ onClose }) {
     </footer>
   </Modal>;
 }
-function ConnectionChangeDialog({ request, onClose, onComplete }) {
+function ConnectionChangeDialog({ request, state, onClose, onComplete }) {
   const [plan, setPlan] = useState(null),
     [repair, setRepair] = useState(null),
     [repairReason, setRepairReason] = useState(""),
     [error, setError] = useState(""),
     [restart, setRestart] = useState(false),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [locating, setLocating] = useState(false),
+    [checking, setChecking] = useState(true),
+    [revision, setRevision] = useState(0);
+  const client = state?.harnesses.clients.find(c => c.id === request.scope);
+  const issue = state?.connections.clients[request.scope]?.syncError ?? request.issue;
   useEffect(() => {
     let active = true;
     setPlan(null);
@@ -137,6 +143,7 @@ function ConnectionChangeDialog({ request, onClose, onComplete }) {
     setRepairReason("");
     setError("");
     setRestart(false);
+    setChecking(true);
     async function preview() {
       let failed = false;
       try {
@@ -146,7 +153,7 @@ function ConnectionChangeDialog({ request, onClose, onComplete }) {
         failed = true;
         if (active) setError(cleanError(e));
       }
-      if (active && request.accountless === undefined && (failed || request.issue) && request.scope !== "all") {
+      if (active && request.accountless === undefined && (failed || issue) && request.scope !== "all" && !client?.launcher?.ambiguous) {
         try {
           const value = await api.call("connection-repair-preview", request.scope);
           if (active) setRepair(value);
@@ -154,14 +161,17 @@ function ConnectionChangeDialog({ request, onClose, onComplete }) {
           if (active) setRepairReason(cleanError(e));
         }
       }
+      if (active) setChecking(false);
     }
     preview();
     return () => {
       active = false;
     };
-  }, [request.scope, request.enabled, request.issue, request.accountless]);
-  const target = plan?.names.join("、") || repair?.names.join("、") || request.name || "客户端";
-  const hasIssue = request.accountless === undefined && request.scope !== "all" && (!!request.issue || !!error);
+  }, [request.scope, request.enabled, issue, request.accountless, client?.launcher?.location, client?.launcher?.ambiguous, revision]);
+  const target = plan?.names.join("、") || repair?.names.join("、") || request.name || client?.name || "客户端";
+  const hasIssue = request.accountless === undefined && request.scope !== "all" && (!!issue || !!error);
+  const showLocation = request.scope !== "all" && (!!error || !!issue || client?.launcher?.ambiguous);
+  const locked = busy || locating || checking;
   const restartPlan = hasIssue ? repair?.restart : plan?.restart;
   const title = request.accountless !== undefined ? `${request.accountless ? "开启" : "关闭"} ${target} 无账号启动？` : hasIssue ? `${target} 接入异常` : request.scope === "all"
       ? "停止全部接入？"
@@ -191,7 +201,7 @@ function ConnectionChangeDialog({ request, onClose, onComplete }) {
     }
   }
   async function commit() {
-    if (!plan || busy) return;
+    if (!plan || locked) return;
     setBusy(true);
     setError("");
     try {
@@ -213,7 +223,7 @@ function ConnectionChangeDialog({ request, onClose, onComplete }) {
     }
   }
   async function repairConnection() {
-    if (!repair || busy) return;
+    if (!repair || locked) return;
     setBusy(true);
     try {
       const result = await api.call("connection-repair", { ticket: repair.ticket, acknowledged: true, restart });
@@ -231,17 +241,19 @@ function ConnectionChangeDialog({ request, onClose, onComplete }) {
       title={title}
       className="connection-confirm"
       closeButton={false}
-      dismissible={!busy}
+      dismissible={!busy && !locating}
       onClose={onClose}
     >
       <p
         className="connection-confirm-message"
         role={error ? "alert" : "status"}
       >
-        {error || request.issue || warning}
+        {checking ? "正在更新接入状态…" : error || issue || warning}
       </p>
-      {hasIssue && <p className="connection-repair-note">
-        {repair ? repair.migration ? "将备份并迁移到 DSH 当前 profile，不重启客户端。" : `将备份并恢复上次接入配置${repair.files ? `（${repair.files} 个文件）` : ""}。${restart ? "" : "不会关闭客户端；请先结束任务。"}` : repairReason || "正在检查可修复内容…"}
+      {showLocation && <ClientLocationRecovery key={request.scope} clientId={request.scope}
+        disabled={busy || checking} onBusy={setLocating} onUpdated={() => setRevision(v => v + 1)} />}
+      {hasIssue && !client?.launcher?.ambiguous && <p className="connection-repair-note">
+        {repair ? repair.migration ? "将备份并迁移到 DSH 当前 profile，不重启客户端。" : `将备份并恢复上次接入配置${repair.files ? `（${repair.files} 个文件）` : ""}。${restart ? "" : "不启动或关闭客户端；如有任务，请先结束。"}` : repairReason || "正在检查可修复内容…"}
       </p>}
       {restartPlan?.applicable && <div className="connection-restart" data-force={restart || undefined}>
         <div className="connection-restart-choices" role="radiogroup" aria-label="配置生效方式">
@@ -263,20 +275,20 @@ function ConnectionChangeDialog({ request, onClose, onComplete }) {
         <button
           className="button"
           data-autofocus
-          disabled={busy}
+          disabled={busy || locating}
           onClick={onClose}
         >
           取消
         </button>
         {(plan || !hasIssue) && <button
           className="button primary"
-          disabled={!plan || busy || (restart && !plan.restart?.available)}
+          disabled={!plan || locked || (restart && !plan.restart?.available)}
           onClick={commit}
         >
           {busy && <Loader2 size={14} className="spin" />}
           {hasIssue ? request.enabled ? "同步" : "断开接入" : "确定"}
         </button>}
-        {hasIssue && <button className="button primary connection-repair" disabled={!repair || busy} onClick={repairConnection}>
+        {hasIssue && !client?.launcher?.ambiguous && <button className="button primary connection-repair" disabled={!repair || locked} onClick={repairConnection}>
           {busy ? <Loader2 size={14} className="spin" /> : <Wrench size={15} />}
           {busy ? "修复中…" : "一键修复"}
         </button>}

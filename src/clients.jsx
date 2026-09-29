@@ -386,10 +386,10 @@ export function Clients({
   const detect = () =>
     act("client-detect", async () => {
       const result = await api.call("client-detect", client.id);
-      if (result.candidates.length > 1) setCandidates(result.candidates);
+      if (!result.selected && result.candidates.length > 1) setCandidates(result.candidates);
       else
         setNotice(
-          result.candidates.length
+          result.selected
             ? "已识别并选择客户端入口。"
             : "未找到客户端，请选择安装或源码目录。",
         );
@@ -462,6 +462,8 @@ export function Clients({
                 {client.name}
               </h2>
               <div className="actions">
+                <button className="icon-button" aria-label="自动识别客户端" title="自动识别客户端"
+                  disabled={!!busy} onClick={detect}><Search size={16} /></button>
                 {client.desktop && (
                   <button
                     className="icon-button"
