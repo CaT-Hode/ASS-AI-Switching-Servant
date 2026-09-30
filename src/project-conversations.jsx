@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Folder, Loader2, MessagesSquare, Play, RefreshCw, ShieldCheck, ChevronRight, RotateCcw, Pin, Monitor, Trash2, X } from './icons.jsx';
 import { useConversationColumns } from './conversation-columns.jsx';
 import { detectedClients } from './usage-view.mjs';
+import { ConversationMarkdown } from './conversation-markdown.mjs';
 const api = window.ass, labels = { codex: 'Codex', claude: 'Claude Code', dsh: 'DSH', opencode: 'OpenCode', pi: 'pi' };
 const brands = { codex: 'openai', claude: 'anthropic', dsh: 'deepseek', opencode: 'opencode', pi: 'pi' };
 const originLabels = { ...labels, claude: 'CC' };
@@ -12,7 +13,7 @@ const Transcript = memo(function Transcript({ value }) {
   return <div className="conversation-messages" aria-label="对话内容">{value?.messages.map((m, i) => <article className={'conversation-message ' + m.role} key={value.before + ':' + i}>
     <header><span>{m.role === 'user' ? '你' : '助手'}</span><time>{time(m.timestamp)}</time></header>
     {m.text.length > 3000 && /AGENTS|environment_context|INSTRUCTIONS/.test(m.text)
-      ? <details><summary>会话上下文</summary><pre>{m.text}</pre></details> : <pre>{m.text}</pre>}
+      ? <details><summary>会话上下文</summary><ConversationMarkdown text={m.text} /></details> : <ConversationMarkdown text={m.text} />}
   </article>)}{!value && <Loader2 className="spin" />}</div>;
 });
 export function ProjectConversations({ state, initialHarness, onClient, onNotify }) {

@@ -59,6 +59,7 @@ const allowed = [
   "conversations-resume",
   "conversations-open-desktop",
   "conversations-location",
+  "conversation-open-link",
   "native-login-preview",
   "native-login-apply",
   "account-info",

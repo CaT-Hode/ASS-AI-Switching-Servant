@@ -5,7 +5,8 @@ const out = path.join(process.env.LOCALAPPDATA, 'ASS-validation'); fs.mkdirSync(
 const data = fs.mkdtempSync(path.join(out, 'project-sync-')), home = path.join(data, 'test-home'), cwd = path.join(home, 'shared-project'), timestamp = new Date().toISOString(); fs.mkdirSync(cwd, { recursive: true });
 const dirs = { codex: path.join(home, '.codex'), claude: path.join(home, '.claude'), pi: path.join(home, '.pi/agent'), dsh: path.join(home, '.dsh'), opencode: path.join(home, '.local/share/opencode') };
 const write = (f, bytes) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, bytes); };
-const sourceId = '123e4567-e89b-42d3-a456-426614174000', messages = [{ role: 'user', text: '统一项目内的历史讨论', timestamp }, { role: 'assistant', text: '实现方向、已有结论和项目上下文会随客户端切换保留。', timestamp }];
+const markdown = '## Markdown 记录\n\n**强调**、*斜体*与 `inlineCode()`。\n\n> 会话以原始内容保留，页面按 Markdown 展示。\n\n- 列表项目\n- [x] 已完成\n\n| 协议 | 状态 |\n| --- | --- |\n| Responses | 可用 |\n| Messages | 可用 |\n\n```js\nconst example = "<script>";\n' + 'x'.repeat(200) + '\n```\n\n[文档](https://example.invalid/docs)\n\n![外部图片](https://example.invalid/never-auto-load.png)\n\n<script>throw Error("must stay text")</script>\n\n[危险链接](javascript:alert%281%29)';
+const sourceId = '123e4567-e89b-42d3-a456-426614174000', messages = [{ role: 'user', text: '统一项目内的历史讨论', timestamp }, { role: 'assistant', text: markdown, timestamp }];
 for (const h of ['codex', 'claude', 'pi', 'dsh']) {
   const encoded = codecs.encode(h, { id: sourceId, cwd, title: '共享项目讨论', messages, createdAt: timestamp });
   write(path.join(dirs[h], h === 'claude' ? 'projects' : 'sessions', 'project', h === 'dsh' ? sourceId + '/session.v3.jsonl.zstd' : sourceId + '.jsonl'), encoded.bytes);
@@ -93,6 +94,7 @@ async function launch(target) {
       const original = Number(await separator.getAttribute('aria-valuenow'));
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
       await page.mouse.move(box.x + box.width / 2 + delta, box.y + box.height / 2, { steps: 12 });
+      await page.waitForFunction(([label, expected]) => document.querySelector(`[aria-label="${label}"]`)?.getAttribute('aria-valuenow') === String(expected), [label, original + delta]);
       assert.equal(Number(await separator.getAttribute('aria-valuenow')), original + delta); await page.mouse.up();
     }
     await page.getByRole('separator', { name: '调整对话栏宽度' }).press('ArrowRight');
@@ -103,7 +105,7 @@ async function launch(target) {
     await page.screenshot({ path: path.join(out, 'conversation-columns-dark.png'), animations: 'disabled' });
     await page.getByRole('switch', { name: '项目同步', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="项目同步"]').getAttribute('aria-checked') === 'true');
-    await page.locator('.project-shared-threads button').filter({ hasText: 'Codex' }).click(); await page.getByText('实现方向、已有结论和项目上下文会随客户端切换保留。', { exact: true }).waitFor();
+    await page.locator('.project-shared-threads button').filter({ hasText: 'Codex' }).click(); await page.getByRole('heading', { name: 'Markdown 记录', exact: true }).waitFor();
     const cc = await launch('Claude Code'), pi = await launch('pi'), ccFile = cc.args[1], piFile = pi.args[1];
     assert.equal(cc.dir, dirs.claude); assert.equal(pi.dir, dirs.pi);
     const project = (await call('project-conversations-list')).items.find((p) => p.enabled);
@@ -177,10 +179,33 @@ async function launch(target) {
     await page.getByRole('dialog', { name: '已删除记录' }).getByRole('button', { name: '恢复', exact: true }).click();
     await page.getByRole('dialog', { name: '已删除记录' }).getByText('暂无已删除记录').waitFor(); assert.deepEqual(fs.readFileSync(native.file), original);
     await page.getByRole('button', { name: '关闭已删除记录' }).click();
+    await row.locator('.project-thread-main').click();
+    const rendered = page.locator('.conversation-markdown').filter({ has: page.getByRole('heading', { name: 'Markdown 记录', exact: true }) });
+    await rendered.getByRole('heading', { name: 'Markdown 记录', exact: true }).waitFor();
+    assert.equal(await rendered.locator('strong').first().textContent(), '强调');
+    assert.equal(await rendered.locator('blockquote').count(), 1); assert.equal(await rendered.locator('table').count(), 1);
+    assert.equal(await rendered.locator('input[type="checkbox"][disabled][checked]').count(), 1);
+    assert.ok((await rendered.locator('pre code').textContent()).includes('<script>'));
+    assert.equal(await rendered.locator('script, img, a[href^="javascript:"]').count(), 0);
+    assert.equal(await rendered.getByRole('button', { name: '查看图片 · 外部图片', exact: true }).count(), 1);
+    const bounded = await rendered.evaluate((el) => { const pre = el.querySelector('pre'), pane = el.closest('.conversation-transcript'); return { codeScrolls: pre.scrollWidth > pre.clientWidth, paneBounded: pane.scrollWidth <= pane.clientWidth + 1 }; });
+    assert.equal(bounded.codeScrolls, true); assert.equal(bounded.paneBounded, true);
+    await assert.rejects(call('conversation-open-link', 'javascript:alert(1)'), /不支持/);
+    await page.screenshot({ path: path.join(out, 'conversation-markdown-dark.png'), animations: 'disabled' });
+    await page.getByRole('button', { name: '客户端与账户', exact: true }).click();
+    const clientHeader = page.locator('.client-heading'), shortcut = clientHeader.getByRole('button', { name: '查看保留的对话', exact: true });
+    await shortcut.waitFor();
+    assert.equal(await page.locator('.client-accounts-heading').getByRole('button', { name: '查看保留的对话', exact: true }).count(), 0);
+    const shortcutBox = await shortcut.boundingBox(), pillBox = await clientHeader.locator('.connection-switch').boundingBox();
+    assert.ok(shortcutBox.x + shortcutBox.width <= pillBox.x && Math.abs(shortcutBox.y + shortcutBox.height / 2 - pillBox.y - pillBox.height / 2) <= 2);
+    await page.screenshot({ path: path.join(out, 'client-conversation-shortcut.png'), animations: 'disabled' });
+    await shortcut.click(); await page.locator('.conversation-tabs[aria-label="会话客户端"]').waitFor();
+    await page.locator('.conversation-tabs').getByRole('button', { name: 'Codex', exact: true }).waitFor();
+    assert.equal(await page.locator('.conversation-tabs').getByRole('button', { name: 'Codex', exact: true }).getAttribute('aria-pressed'), 'true');
     await call('ui-preferences', { theme: 'light' });
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
     await page.screenshot({ path: path.join(out, 'conversation-columns-light.png'), animations: 'disabled' });
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, data, browser: 'Browser plugin not available; Electron Playwright', viewport: '1520x980, 1280x900, 1100x900 desktop', checks: ['five native sources', 'opt-in project sync', 'current credential targets', 'hardlink handoff', 'CC + pi divergent branches', 'cancel resume', 'drag + keyboard resize with restart persistence', '22px borderless delete control + 14px centered SVG', 'trash hover/press animation on wrapped titles', 'bottom-right failed deletion toast without inline error', 'native delete cancel/confirm + encrypted recovery', 'persistent project settings and history', 'light/dark rendered UI', 'no clipping or horizontal overflow', 'no renderer/console errors or framework overlay'], nativeInference: false }));
+    console.log(JSON.stringify({ ok: true, data, browser: 'Browser plugin not available; Electron Playwright', viewport: '1520x980, 1280x900, 1100x900 desktop', checks: ['five native sources', 'opt-in project sync', 'current credential targets', 'hardlink handoff', 'CC + pi divergent branches', 'cancel resume', 'drag + keyboard resize with restart persistence', '22px borderless delete control + 14px centered SVG', 'trash hover/press animation on wrapped titles', 'bottom-right failed deletion toast without inline error', 'native delete cancel/confirm + encrypted recovery', 'CommonMark/GFM structure + inert HTML/links/images', 'long fenced code scrolls within the pane', 'client conversation shortcut directly left of connection switch', 'persistent project settings and history', 'light/dark rendered UI', 'no clipping or horizontal overflow', 'no renderer/console errors or framework overlay'], nativeInference: false }));
   } finally { await close(); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });

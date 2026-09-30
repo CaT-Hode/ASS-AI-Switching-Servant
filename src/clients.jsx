@@ -479,14 +479,14 @@ export function Clients({
                 >
                   <RefreshCw size={14} />
                 </button>
+                {["codex", "claude"].includes(client.id) && <button className="icon-button" aria-label="查看保留的对话" title="对话管理"
+                  onClick={() => onConversations?.(client.id)}><MessagesSquare size={18} /></button>}
                 {!client.injectionUnsupported && <ConnectionPill {...{ client, state, busy, onManage }} />}
               </div>
             </header>
             <ConnectionStatus {...{ client, state, busy, onManage }} />
             <ClientInjection key={"injection:" + client.id} {...{ client, state, act, busy, onManage }} />
             <header className="client-accounts-heading"><h3>官方账户 <span className="count">{client.accounts.length}</span></h3>
-              {["codex", "claude"].includes(client.id) && <button className="icon-button" aria-label="查看保留的对话" title="对话管理"
-                onClick={() => onConversations?.(client.id)}><MessagesSquare size={18} /></button>}
               {!client.nativeLoginOnly && <button className="button" ref={addButton} onClick={() => setAdding(true)}><Plus size={14} />添加账户</button>}
               {["kimi", "zcode"].includes(client.id) && <button className="icon-button" disabled={!!busy}
                 aria-label={"登录 " + client.name + " 账户"} title="登录账户"

@@ -1,7 +1,7 @@
 {
   "name": "agent-switching-servant",
   "productName": "ASS",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "private": true,
   "license": "MIT",
   "repository": {
@@ -25,6 +25,8 @@
     "lucide-react": "^0.468.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "yaml": "2.9.1"
   },
   "devDependencies": {

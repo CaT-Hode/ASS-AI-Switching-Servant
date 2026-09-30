@@ -25,8 +25,13 @@ foreach ($p in @(Get-CimInstance Win32_Process)) {
 `;
 async function assertDeletionIdle(rows, run = runPowerShell) {
   const harnesses = [...new Set(rows.map((r) => r.harness))];
-  const result = await run(SCRIPT, { harnesses, ownerPid: process.pid });
-  if (!Array.isArray(result?.running)) throw Error('未能确认客户端已关闭，未删除');
+  const response = await run(SCRIPT, { harnesses, ownerPid: process.pid });
+  // The shared PowerShell adapter always returns a list, even when the script
+  // emits one object. Unwrap exactly one result; never treat malformed output
+  // or a failed inspection as proof that the client is closed.
+  const result = Array.isArray(response) && response.length === 1 ? response[0] : response;
+  if (!Array.isArray(result?.running) || result.running.some((h) => !harnesses.includes(h)))
+    throw Error('未能确认客户端已关闭，未删除');
   if (result.running.length) {
     const names = { codex: 'Codex', claude: 'Claude / CC', dsh: 'DSH', opencode: 'OpenCode', pi: 'pi' };
     throw Error('请先关闭 ' + result.running.map((h) => names[h] || h).join('、') + '，再删除或恢复本地记录。');

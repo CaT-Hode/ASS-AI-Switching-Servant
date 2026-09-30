@@ -1229,6 +1229,12 @@ else {
           ticket, confirmed, mode, selectTarget: (id) => harnesses.selectOAuthTarget(id), assertIdle: (id) => nativeLogin.assertIdle(id),
           extraActive: () => probeControllers.size + diagnosticControllers.size })));
       register("conversations-list", (input) => conversations.list(input));
+      register("conversation-open-link", async (value) => {
+        const { conversationUrl } = await import('../core/conversation-url.mjs');
+        const url = conversationUrl(value);
+        if (!url || url.startsWith('#')) throw Error('不支持打开此链接');
+        return shell.openExternal(url);
+      });
       register("project-conversations-list", () => projectConversations.list());
       register("project-conversations-delete", (input) => projectConversations.remove(input));
       register("project-conversations-trash", () => projectConversations.trashList());

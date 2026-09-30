@@ -177,6 +177,36 @@ test('delete process guard is read-only, rejects busy or unverifiable clients', 
   await assert.rejects(assertDeletionIdle([{ harness: 'codex' }], async () => ({ running: ['codex'] })), /先关闭 Codex/);
   await assert.rejects(assertDeletionIdle([{ harness: 'codex' }], async () => ({})), /未能确认/);
 });
+test('delete guard unwraps the shared adapter singleton, but keeps busy and malformed replies blocked', async () => {
+  const { assertDeletionIdle } = require('../core/conversation-delete-guard.cjs');
+  const rows = [{ harness: 'claude' }, { harness: 'claude' }, { harness: 'pi' }];
+  await assertDeletionIdle(rows, async (_, input) => {
+    assert.deepEqual(input.harnesses, ['claude', 'pi']); return [{ running: [] }];
+  });
+  await assert.rejects(assertDeletionIdle(rows, async () => [{ running: ['claude'] }]), /先关闭 Claude/);
+  for (const value of [[], [{ running: [] }, { running: [] }], null, [{}], [{ running: null }],
+    [{ running: 'claude' }], [{ running: [null] }], [{ running: ['codex'] }]])
+    await assert.rejects(assertDeletionIdle(rows, async () => value), /未能确认/);
+  await assert.rejects(assertDeletionIdle(rows, async () => { throw Error('inspection failed'); }), /inspection failed/);
+});
+test('closed-client deletion and encrypted recovery work through the actual PowerShell adapter contract', { skip: process.platform !== 'win32' }, async (t) => {
+  const f = fixture(t), { assertDeletionIdle } = require('../core/conversation-delete-guard.cjs');
+  const { runPowerShell } = require('../core/client-processes.cjs'); let calls = 0;
+  const guard = (rows) => assertDeletionIdle(rows, async (script, input) => {
+    assert.ok(script.includes('Get-CimInstance Win32_Process'));
+    assert.deepEqual(input.harnesses, ['codex']); calls++;
+    // Synthetic closed inventory, but the real native subprocess/JSON wrapper.
+    // Never inspect, close or delete a user's client or transcript in this test.
+    return runPowerShell('[pscustomobject]@{ running=@() } | ConvertTo-Json -Compress', {});
+  });
+  const library = new ProjectConversations({ ...f.options, assertDeletionIdle: guard });
+  const original = fs.readFileSync(f.file), p = (await library.list()).items[0];
+  const removed = await library.remove({ projectId: p.id, confirmed: true });
+  assert.equal(fs.existsSync(f.file), false); assert.equal(calls, 2);
+  assert.equal(library.trashList().items[0].id, removed.id);
+  await library.restoreTrash(removed.id); assert.equal(calls, 3);
+  assert.deepEqual(fs.readFileSync(f.file), original);
+});
 for (const h of codecs.HARNESSES) test(`${h} native projection preserves ordered shared context`, () => {
   const out = codecs.encode(h, { id: h === 'opencode' ? 'ses_test' : ID, cwd: process.cwd(), title: 'Shared', messages, createdAt: timestamp });
   const rows = h === 'dsh' ? require('node:zlib').zstdDecompressSync(out.bytes).toString() : out.bytes.toString();
