@@ -6,6 +6,7 @@ const { HarnessManager } = require("../core/harnesses.cjs");
 const { ConfigManager } = require("../core/config.cjs");
 const { ProxyConfig } = require("../core/proxy-config.cjs");
 const { ClaudeDesktopGateway } = require("../core/claude-desktop-gateway.cjs");
+const { claudeModels } = require("../core/claude-models.cjs");
 const crypt = { isEncryptionAvailable: () => true, encryptString: s => Buffer.from(s), decryptString: b => b.toString() };
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ass-claude-integrated-"));
@@ -26,8 +27,12 @@ test("one accountless sync applies terminal and desktop; off restores both and p
   f.proxy.sync("claude"); assert.equal(f.desktop.owner(), null);
   f.proxy.sync("claude", true);
   const token = f.proxy.clients.claude.localToken;
-  assert.equal(f.desktop.status(token, 25839).current, true);
+  assert.equal(f.desktop.status(token, 25839, f.proxy.clients.claude.providers).current, true);
   assert.equal(f.proxy.status("claude", true).applied, true);
+  const profile = JSON.parse(fs.readFileSync(f.desktop.profileFile(f.desktop.owner().id)));
+  assert.deepEqual(profile.inferenceModels.map(m => m.name), [
+    ...claudeModels(f.proxy.clients.claude.providers).map(m => m.discoveryId),
+  ]);
   const settings = JSON.parse(fs.readFileSync(f.settings));
   assert.deepEqual(settings.availableModels, ["relay::kimi-messages", "relay::gpt-fixture"]);
   assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, token);
@@ -45,7 +50,7 @@ test("an older terminal-only setup reports pending until a single sync adds desk
   assert.equal(upgraded.status("claude", true).pending, true);
   upgraded.sync("claude");
   assert.equal(upgraded.status("claude", true).applied, true);
-  assert.equal(f.desktop.status(upgraded.clients.claude.localToken, 25839).current, true);
+  assert.equal(f.desktop.status(upgraded.clients.claude.localToken, 25839, upgraded.clients.claude.providers).current, true);
 });
 test("foreign desktop settings block the entire operation before any terminal writes", t => {
   const f = fixture(t);
@@ -70,7 +75,7 @@ test("crash during desktop removal is recovered from the encrypted journal", t =
   for (const c of changes) c.after === null ? fs.unlinkSync(c.file) : fs.writeFileSync(c.file, c.after);
   const recovered = new ProxyConfig(f.data, crypt, f.manager, f.store, f.config, f.desktop);
   assert.equal(recovered.error, ""); recovered.recover();
-  assert.equal(f.desktop.status(token, 25839).current, true);
+  assert.equal(f.desktop.status(token, 25839, f.proxy.clients.claude.providers).current, true);
   assert.equal(recovered.status("claude", true).applied, true);
   recovered.restore(["claude"]); assert.equal(f.desktop.owner(), null);
 });

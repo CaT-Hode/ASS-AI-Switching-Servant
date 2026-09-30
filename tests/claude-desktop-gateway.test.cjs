@@ -6,8 +6,13 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { ClaudeDesktopGateway, desired, readPolicy } = require("../core/claude-desktop-gateway.cjs");
+const { claudeModels } = require("../core/claude-models.cjs");
 const { atomic } = require("../core/native-fields.cjs");
 const token = "a".repeat(64), otherId = "00000000-0000-4000-8000-000000000001";
+const providers = [{ id: "relay", name: "Test Relay", enabled: true, apiKey: "synthetic-key", models: [
+  { model: "claude-sonnet-test", displayName: "Sonnet test", enabled: true, wireApi: "anthropic" },
+  { model: "gpt-test", displayName: "GPT test", enabled: true, wireApi: "openai-responses" },
+] }];
 const parse = file => JSON.parse(fs.readFileSync(file, "utf8"));
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ass-claude-desktop-"));
@@ -52,6 +57,36 @@ test("disable preserves saved configurations and later preferences while restori
   bridge.disable();
   assert.deepEqual(parse(bridge.settingsFile), { deploymentMode: "1p", preferences: { theme: "light" }, mcpServers: { sample: {} } });
   assert.deepEqual(parse(bridge.metaFile), { appliedId: "", entries: [{ id: otherId, name: "Other" }], custom: "new" });
+});
+test("desktop pins every routed model with a visible name and upgrades an owned discovery-only profile", t => {
+  const { bridge } = fixture(t);
+  bridge.enable(token, 25819);
+  assert.equal(bridge.status(token, 25819, providers).current, false);
+  bridge.enable(token, 25819, providers);
+  const owner = parse(bridge.file), profile = parse(bridge.profileFile(owner.id));
+  assert.deepEqual(profile.inferenceModels, [
+    { name: claudeModels(providers)[0].discoveryId, labelOverride: "Test Relay · Sonnet test" },
+    { name: claudeModels(providers)[1].discoveryId, labelOverride: "Test Relay · GPT test" },
+  ]);
+  assert.equal(profile.modelDiscoveryEnabled, false);
+  assert.equal(bridge.status(token, 25819, providers).current, true);
+  bridge.disable();
+  assert.equal(fs.existsSync(bridge.profileFile(owner.id)), false);
+});
+test("stale desktop picker remains unchanged until explicit synchronization", t => {
+  const { bridge } = fixture(t);
+  bridge.enable(token, 25819, providers);
+  const owner = parse(bridge.file), file = bridge.profileFile(owner.id), profile = parse(file);
+  profile.inferenceModels[1].name = "claude-ass/relay::gpt-test";
+  atomic(file, JSON.stringify(profile, null, 2) + "\n");
+  owner.hash = crypto.createHash("sha256").update(JSON.stringify(profile)).digest("hex");
+  atomic(bridge.file, JSON.stringify(owner, null, 2) + "\n");
+  const before = fs.readFileSync(file, "utf8");
+  assert.equal(bridge.status(token, 25819, providers).current, false);
+  assert.equal(fs.readFileSync(file, "utf8"), before);
+  bridge.enable(token, 25819, providers);
+  assert.deepEqual(parse(file).inferenceModels, desired(token, 25819, providers).inferenceModels);
+  assert.equal(bridge.status(token, 25819, providers).current, true);
 });
 test("another selected configuration is left active when removing the stored ASS entry", t => {
   const { bridge } = fixture(t);
@@ -111,6 +146,9 @@ test("0.1.32 owned registry settings remain removable without deleting unrelated
   reg(["add", policy, "/v", "disableAutoUpdates", "/t", "REG_SZ", "/d", "false", "/f"]);
   atomic(bridge.file, JSON.stringify({ version: 1, hash: crypto.createHash("sha256").update(JSON.stringify(values)).digest("hex") }));
   assert.equal(bridge.status(token, 25819).owned, true);
+  const before = readPolicy(policy);
+  assert.throws(() => bridge.enable(token, 25819), /先移除旧版/);
+  assert.deepEqual(readPolicy(policy), before);
   bridge.disable();
   assert.deepEqual(Object.keys(readPolicy(policy)), ["disableAutoUpdates"]);
 });

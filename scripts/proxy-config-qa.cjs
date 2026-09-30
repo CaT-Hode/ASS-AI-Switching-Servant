@@ -1,6 +1,7 @@
 // Actual Electron IPC/DPAPI/UI with local synthetic upstream only.
 const { _electron: electron } = require("playwright");
 const fs = require("node:fs"), path = require("node:path"), assert = require("node:assert/strict");
+const { codexModelId } = require("../core/models.cjs");
 const root = path.resolve(__dirname, ".."), out = path.join(process.env.LOCALAPPDATA, "ASS-validation");
 fs.mkdirSync(out, { recursive: true });
 const data = fs.mkdtempSync(path.join(out, "proxy-separation-")), codex = path.join(data, "codex");
@@ -27,7 +28,7 @@ async function start() {
     global.assTest.setFetch(async (url, init) => {
       if (!init?.body) return Response.json({});
       const body = JSON.parse(init.body);
-      global.assTest.sent.push({ url, model: body.model, auth: init.headers.authorization, key: init.headers["x-api-key"], account: init.headers["chatgpt-account-id"] });
+      global.assTest.sent.push({ url, model: body.model, input: body.input, auth: init.headers.authorization, key: init.headers["x-api-key"], account: init.headers["chatgpt-account-id"] });
       return body.stream === false ? Response.json({ type: "message", content: [] }) :
         new Response('event: response.completed\ndata: {"type":"response.completed"}\n\n', { headers: { "content-type": "text/event-stream" } });
     });
@@ -50,7 +51,7 @@ async function confirm(button) {
 }
 async function request(model, localToken = false, client = "codex") {
   const token = localToken ? await app.evaluate(() => global.assTest.router.clientToken) : "synthetic-subscription";
-  const response = await fetch("http://127.0.0.1:25838/clients/" + client + (client === "claude" ? "/models/v1/messages" : "/v1/responses"), {
+  const response = await fetch("http://127.0.0.1:25838/clients/" + (client === "codex" ? "ASS" : client) + (client === "claude" ? "/models/v1/messages" : "/v1/responses"), {
     method: "POST", headers: { authorization: "Bearer " + token, "chatgpt-account-id": "synthetic-account", "content-type": "application/json" },
     body: JSON.stringify({ model, input: "fixture", messages: [], stream: client !== "claude" }),
   });
@@ -68,9 +69,10 @@ async function request(model, localToken = false, client = "codex") {
     await confirm(page.getByRole("switch", { name: "Codex ASS 接入", exact: true }));
     assert.equal((await call("snapshot")).connections.clients.codex.applied, true);
     assert.equal(await request("official-fixture"), 200);
-    assert.equal(await request(id + "::alpha"), 200);
+    assert.equal(await request(codexModelId(id, "alpha")), 200);
     assert.equal(await request("official-fixture", true), 403);
-    const sent = await app.evaluate(() => global.assTest.sent);
+    // Saving models also triggers protocol probes; assert only our route requests.
+    const sent = await app.evaluate(() => global.assTest.sent.filter((r) => r.input === "fixture"));
     assert.equal(sent.length, 2);
     assert.equal(sent[0].auth, "Bearer synthetic-subscription");
     assert.equal(sent[1].auth, "Bearer synthetic-route-key");
@@ -85,12 +87,12 @@ async function request(model, localToken = false, client = "codex") {
     assert.deepEqual(fs.readFileSync(path.join(data, "catalog.json")), catalog);
     await confirm(page.getByRole("button", { name: "同步 Codex 接入配置", exact: true }));
     assert.equal((await call("snapshot")).connections.clients.codex.modelCount, 0);
-    assert.equal(await request(id + "::alpha"), 404);
-    assert.equal(await request(id + "::beta"), 404);
+    assert.equal(await request(codexModelId(id, "alpha")), 404);
+    assert.equal(await request(codexModelId(id, "beta")), 404);
     assert.ok(!fs.readFileSync(path.join(data, "proxy-applied.json"), "utf8").includes("synthetic-route-key"));
     await choose("Claude Code");
     await confirm(page.getByRole("switch", { name: "Claude Code ASS 接入", exact: true }));
-    assert.equal((await call("snapshot")).connections.clients.claude.modelCount, 1);
+    assert.equal((await call("snapshot")).connections.clients.claude.modelCount, 2);
     assert.equal(await request(id + "::beta", true, "claude"), 200);
     await confirm(page.getByRole("switch", { name: "Claude Code ASS 接入", exact: true }));
     await choose("Codex");

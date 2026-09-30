@@ -28,7 +28,6 @@ export function UpdateBanner({ updates, onView, act }) {
           {updates.status === "cached" || updates.status === "error"
             ? "上次检查发现的版本 · "
             : ""}
-          更新由你决定，不打断当前请求。
         </span>
       </div>
       <button className="text-button" onClick={onView}>
@@ -93,13 +92,8 @@ export function Updates({ state, act, busy }) {
           </div>
           <div className="update-status-copy" role="status">
             <h2>{title}</h2>
-            <p>
-              {u.status === "error"
-                ? u.message
-                : u.status === "cached"
-                  ? "这是上次检查的缓存结果，可以立即重新检查。"
-                  : "从 ASS 官方 GitHub Releases 获取版本信息。"}
-            </p>
+            {u.status === "error" && <p>{u.message}</p>}
+            {u.status === "cached" && <p>上次检查结果</p>}
           </div>
           <button
             className="button"
@@ -129,16 +123,13 @@ export function Updates({ state, act, busy }) {
         </div>
         <div className="update-preferences">
           <label className="update-toggle">
-            <span><strong>开机启动</strong><small>登录 Windows 后自动启动 ASS。</small></span>
+            <span><strong>开机启动</strong></span>
             <input type="checkbox" role="switch" aria-label="开机启动" checked={state.autoStart} disabled={!!busy}
               onChange={(e) => act("auto", () => api.call("autostart", e.target.checked))} />
           </label>
           <label className="update-toggle">
             <span>
               <strong>自动检查更新</strong>
-              <small>
-                启动后按需检查，此后每 6 小时检查一次；可以随时关闭。
-              </small>
             </span>
             <input
               type="checkbox"
@@ -158,9 +149,6 @@ export function Updates({ state, act, busy }) {
           <label className="update-toggle">
             <span>
               <strong>包含预览版本</strong>
-              <small>
-                接收新功能预览版；关闭后只检查正式版。当前 0.x 版本默认开启。
-              </small>
             </span>
             <input
               type="checkbox"

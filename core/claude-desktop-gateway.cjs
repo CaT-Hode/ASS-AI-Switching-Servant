@@ -3,16 +3,23 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { atomic, read, document, edit } = require("./native-fields.cjs");
+const { claudeModels } = require("./claude-models.cjs");
 
 const POLICY = "HKCU\\SOFTWARE\\Policies\\Claude";
 const MACHINE_POLICY = "HKLM\\SOFTWARE\\Policies\\Claude";
 const names = ["inferenceProvider", "inferenceCredentialKind", "inferenceGatewayBaseUrl", "inferenceGatewayApiKey"];
+const modelNames = [...names, "inferenceModels", "modelDiscoveryEnabled"];
 const uuid = /^[a-f0-9-]{36}$/;
 const hash = values => crypto.createHash("sha256").update(JSON.stringify(values)).digest("hex");
 const present = value => ({ exists: true, value });
 const field = (data, name) => Object.hasOwn(data, name) ? present(data[name]) : { exists: false };
 const json = text => document(text, "json").data;
-const localHash = data => Object.keys(data).length === names.length ? hash(Object.fromEntries(names.map(name => [name, data[name]]))) : "";
+const localHash = data => {
+  const keys = Object.keys(data);
+  const managed = keys.length === names.length && names.every(name => Object.hasOwn(data, name)) ? names
+    : keys.length === modelNames.length && modelNames.every(name => Object.hasOwn(data, name)) ? modelNames : null;
+  return managed ? hash(Object.fromEntries(managed.map(name => [name, data[name]]))) : "";
+};
 
 function reg(args) {
   return execFileSync("reg.exe", args, { encoding: "utf8", windowsHide: true, maxBuffer: 32768, stdio: ["ignore", "pipe", "pipe"] });
@@ -31,15 +38,22 @@ function readPolicy(key) {
   }
   return values;
 }
-function desired(token, port) {
+function desired(token, port, providers) {
   if (!/^[a-f0-9]{64}$/.test(token || "") || !Number.isInteger(port) || port < 1 || port > 65535)
     throw Error("Claude 桌面版接入凭据尚未就绪");
-  return {
+  const profile = {
     inferenceProvider: "gateway",
     inferenceCredentialKind: "static",
     inferenceGatewayBaseUrl: `http://127.0.0.1:${port}/clients/claude/models`,
     inferenceGatewayApiKey: token,
   };
+  if (providers) {
+    const models = claudeModels(providers);
+    if (!models.length) throw Error("Claude 桌面版没有可接入的模型");
+    profile.inferenceModels = models.map(({ discoveryId, label }) => ({ name: discoveryId, labelOverride: label }));
+    profile.modelDiscoveryEnabled = false;
+  }
+  return profile;
 }
 function restorePolicy(policy, previous) {
   for (const name of names) {
@@ -94,7 +108,7 @@ class ClaudeDesktopGateway {
       throw Error("Claude 桌面版配置索引无法识别，未覆盖");
     return { metaText, settingsText, meta, settings };
   }
-  status(token, port) {
+  status(token, port, providers) {
     const { user, machine } = this.policies(), owner = this.owner();
     const managed = Object.keys(user).length > 0 || Object.keys(machine).length > 0;
     if (owner?.version === 1) {
@@ -108,7 +122,7 @@ class ClaudeDesktopGateway {
     const selected = !!owner && meta.appliedId === owner.id && !meta.hybridPointer;
     return {
       configured: owned, owned,
-      current: !!(owned && selected && settings.deploymentMode === "3p" && !managed && token && owner.hash === hash(desired(token, port))),
+      current: !!(owned && selected && settings.deploymentMode === "3p" && !managed && token && owner.hash === hash(desired(token, port, providers))),
       conflict: managed || !!meta.hybridPointer || (!!meta.appliedId && !selected) || (!!owner && !owned),
     };
   }
@@ -138,14 +152,13 @@ class ClaudeDesktopGateway {
       throw Error(message + code + (restored ? "；原设置已恢复" : "；部分设置未恢复，请保留 ASS 数据目录"), { cause: error });
     } finally { this.invalidate(); }
   }
-  enable(token, port) {
-    if (this.owner()?.version === 1) return this.enableLegacy(desired(token, port));
-    const plan = this.prepareEnable(token, port);
+  enable(token, port, providers) {
+    const plan = this.prepareEnable(token, port, providers);
     this.commit(plan.changes, plan.owner, "Claude 桌面版本地配置写入失败");
     return { ok: true, message: "Claude 桌面版已配置。重新打开 Claude 后可通过 ASS 使用注入模型。" };
   }
-  prepareEnable(token, port) {
-    const expected = desired(token, port), owner = this.owner();
+  prepareEnable(token, port, providers) {
+    const expected = desired(token, port, providers), owner = this.owner();
     if (owner?.version === 1) throw Error("请先移除旧版 Claude 桌面策略，再启用一体化无账号接入");
     this.invalidate();
     const { user, machine } = this.policies();
@@ -220,8 +233,8 @@ class ClaudeDesktopGateway {
   }
   // Included in ProxyConfig's encrypted write-ahead transaction so CLI and
   // Desktop either commit together or are both restored after failure/crash.
-  plan(token, port) {
-    const result = token ? this.prepareEnable(token, port) : this.prepareDisable();
+  plan(token, port, providers) {
+    const result = token ? this.prepareEnable(token, port, providers) : this.prepareDisable();
     return [...result.changes, { file: this.file, before: read(this.file),
       after: result.owner ? JSON.stringify(result.owner, null, 2) + "\n" : null }]
       .filter(change => change.before !== change.after);
@@ -235,24 +248,7 @@ class ClaudeDesktopGateway {
     return [this.file, this.metaFile, this.settingsFile, ...(owner?.version === 2 ? [this.profileFile(owner.id)] : [])]
       .map(file => [file, read(file)]);
   }
-  // Existing 0.1.32 policies remain reversible. New setups never write Policies:
-  // even HKCU\Software\Policies can be read-only for the current Windows user.
-  enableLegacy(expected) {
-    const current = readPolicy(this.policy), owner = this.owner();
-    if (Object.keys(readPolicy(this.machinePolicy)).length ||
-        owner.hash !== hash(Object.fromEntries(names.map(name => [name, current[name]?.value]))))
-      throw Error("Claude 桌面版旧策略已变化，请先关闭旧接入");
-    try {
-      for (const [name, value] of Object.entries(expected)) reg(["add", this.policy, "/v", name, "/t", "REG_SZ", "/d", value, "/f"]);
-      const after = readPolicy(this.policy);
-      if (!names.every(name => after[name]?.type === "REG_SZ" && after[name].value === expected[name])) throw Error("readback mismatch");
-      atomic(this.file, JSON.stringify({ version: 1, hash: hash(expected) }));
-    } catch (error) {
-      try { restorePolicy(this.policy, current); } catch {}
-      throw Error("Claude 桌面版旧策略更新失败，请检查该策略的写入权限", { cause: error });
-    } finally { this.invalidate(); }
-    return { ok: true, message: "Claude 桌面版旧接入已更新，重新打开 Claude 后生效。" };
-  }
+  // Retired registry configurations are withdrawal-only; new setups use local files.
   disableLegacy(owner) {
     const current = readPolicy(this.policy);
     if (owner.hash !== hash(Object.fromEntries(names.map(name => [name, current[name]?.value]))))

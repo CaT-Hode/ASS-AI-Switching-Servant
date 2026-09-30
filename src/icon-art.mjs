@@ -15,6 +15,10 @@ const layer = (y, part) => p(`m3 ${y} 9 5 9-5`, part);
 const cube = (x, y, part) => g(part, [p(`m${x} ${y} 5 2.8v5.6l-5 2.8-5-2.8v-5.6Zm-5 2.8 5 2.8 5-2.8m-5 2.8v5.6`)]);
 
 export const iconArt = {
+  MessagesSquare: [p("M14 3H4a1 1 0 0 0-1 1v11l3-3h8a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1Z", "front"),
+    p("M18 8h2a1 1 0 0 1 1 1v12l-3-3h-7a1 1 0 0 1-1-1v-2", "back"),
+    ...[6, 9, 12].map((x, i) => c(x, 7.5, .55, "dot" + i, fill))],
+  Pin: [g("head", [p("M9 3h6m-5 0v5l-3 4v2h10v-2l-3-4V3")], { style: { transformOrigin: "12px 14px" } }), p("M12 14v7", "stem")],
   Activity: [p("M2 12h4l3-8 4 16 4-12 2 4h3", "trace"),
     p("M2 12h4l3-8 4 16 4-12 2 4h3", "trail", { pathLength: 1, strokeDasharray: ".25 .75", strokeDashoffset: 1, opacity: 0, strokeWidth: 2.5 }),
     g("signal", [c(0, 0, 2.8, null, { ...fill, opacity: .16 }), c(0, 0, 1.15, null, fill)], { opacity: 0 })],

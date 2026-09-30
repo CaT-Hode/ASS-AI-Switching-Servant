@@ -1,5 +1,7 @@
 import React from "react";
 import { RefreshCw, ExternalLink } from "./icons.jsx";
+import { accountPlan } from './account-plan.mjs';
+import { UsageMeter } from './usage-meter.jsx';
 const api = window.ass;
 const plans = {
   free: "Free",
@@ -18,6 +20,10 @@ function valueOf(field) {
     return new Date(field.value).toLocaleString("zh-CN", { hour12: false });
   return field.value + (field.unit ? " " + field.unit : "");
 }
+export function AccountPlan({ account }) {
+  const plan = accountPlan(account);
+  return plan ? <span className="account-plan" title="订阅档位">{plan}</span> : null;
+}
 function Facts({ fields }) {
   return (
     <dl className="account-profile-facts">
@@ -35,9 +41,9 @@ function Facts({ fields }) {
     </dl>
   );
 }
-export function AccountProfile({ account, client, state, act, busy }) {
-  const p = account.profile;
-  if (!p) return null;
+export function AccountProfile({ account, client, state, act, busy, hideIdentity = false }) {
+  const p = account.profile || { fields: [] };
+  if (!account.profile && !account.quota) return null;
   // Subscription usage is cached separately from local identity. Do not drop
   // the quota cache merely because the identity snapshot is local-only.
   const quota = account.quota || p;
@@ -45,7 +51,7 @@ export function AccountProfile({ account, client, state, act, busy }) {
   const get = (id) => p.fields.find((f) => f.id === id)?.value;
   const email = get("email"),
     name = get("name") || get("keyLabel"),
-    plan = get("plan");
+    plan = accountPlan(account);
   const priority = (f) =>
     f.id === "remaining" || f.id.startsWith("balance-")
       ? 0
@@ -57,19 +63,17 @@ export function AccountProfile({ account, client, state, act, busy }) {
   const facts = p.fields
     .filter(
       (f) =>
-        f.kind !== "quota" &&
+        f.kind === "amount" &&
         !["email", "name", "keyLabel", "plan", "scopes"].includes(f.id),
     )
     .sort((a, b) => priority(a) - priority(b));
-  const scopes = p.fields.filter((f) => f.id === "scopes");
-  const more = [...facts.slice(6), ...scopes];
   return (
     <section className="account-profile" aria-label="账户资料">
-      {(email || name || plan) && (
+      {!hideIdentity && (email || name || plan) && (
         <div className="account-identity">
           <div>
-            {email && <strong title={email}>{email}</strong>}
-            {name && <span title={name}>{name}</span>}
+            {!hideIdentity && email && <strong title={email}>{email}</strong>}
+            {!hideIdentity && name && !email && <strong title={name}>{name}</strong>}
           </div>
           {plan && (
             <span
@@ -81,7 +85,7 @@ export function AccountProfile({ account, client, state, act, busy }) {
           )}
         </div>
       )}
-      <Facts fields={facts.slice(0, 6)} />
+      {facts.length > 0 && <Facts fields={facts.slice(0, 6)} />}
       {quotas.length > 0 && (
         <div className="account-quotas">
           {quotas.map((f) => (
@@ -96,11 +100,7 @@ export function AccountProfile({ account, client, state, act, busy }) {
                   <strong>{f.label}</strong>
                   <span>剩余 {Number(f.remainingPercent.toFixed(1))}%</span>
                 </div>
-                <progress
-                  aria-label={f.label + " 已用比例"}
-                  value={Math.min(100, f.usedPercent)}
-                  max={100}
-                />
+                <UsageMeter label={f.label + ' 剩余额度'} value={f.remainingPercent} quota={f} />
                 <small>
                   已用 {Number(f.usedPercent.toFixed(1))}%
                   {f.status === "rate-limited" ? " · 已达上限" : ""}
@@ -119,65 +119,8 @@ export function AccountProfile({ account, client, state, act, busy }) {
             ))}
         </div>
       )}
-      {more.length > 0 && (
-        <details className="account-profile-more">
-          <summary>更多资料</summary>
-          <Facts fields={more} />
-        </details>
-      )}
       <div className="account-profile-source">
-        <details>
-          <summary>
-            资料来源
-            {p.stale || quota.stale ? " · 已过时" : ""}
-          </summary>
-          {p.updatedAt && (
-            <time dateTime={p.updatedAt}>
-              {p.remote || account.kind === "api"
-                ? "上次成功查询"
-                : "凭据文件更新"}
-              ：
-              {new Date(p.updatedAt).toLocaleString("zh-CN", { hour12: false })}
-            </time>
-          )}
-          {quota !== p && quota.updatedAt && (
-            <time dateTime={quota.updatedAt}>用量更新：{new Date(quota.updatedAt).toLocaleString("zh-CN", { hour12: false })}</time>
-          )}
-          {p.credentialUpdatedAt && (
-            <time dateTime={p.credentialUpdatedAt}>
-              凭据文件更新：
-              {new Date(p.credentialUpdatedAt).toLocaleString("zh-CN", {
-                hour12: false,
-              })}
-            </time>
-          )}
-          {p.metadataUpdatedAt && (
-            <time dateTime={p.metadataUpdatedAt}>
-              身份缓存更新：
-              {new Date(p.metadataUpdatedAt).toLocaleString("zh-CN", {
-                hour12: false,
-              })}
-            </time>
-          )}
-          {p.note && <p>{p.note}</p>}
-          <div className="account-profile-docs">
-            {p.docs.map(
-              (id) =>
-                state.accountDocs?.[id] && (
-                  <button
-                    key={id}
-                    className="text-button"
-                    onClick={() =>
-                      act("account-doc", () => api.call("account-info-doc", id))
-                    }
-                  >
-                    {state.accountDocs[id].label}
-                    <ExternalLink size={11} />
-                  </button>
-                ),
-            )}
-          </div>
-        </details>
+        {(p.stale || quota.stale) && <small>上次查询结果</small>}
         {p.consoleService && (
           <button
             className="text-button"

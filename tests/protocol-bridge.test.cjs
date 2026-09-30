@@ -63,8 +63,9 @@ for (const client of ["codex", "claude"]) for (const wireApi of ["openai-respons
         : sse([{ type: "response.completed", response: { status: "completed", output: [{ type: "message", id: "one", content: [{ type: "output_text", text: "OK" }] }] } }]);
     } });
     await router.start(0); t.after(() => router.stop());
-    const url = `http://127.0.0.1:${router.port}/clients/${client}` + (client === "codex" ? "/v1/responses" : "/models/v1/messages");
-    const r = await fetch(url, { method: "POST", headers: { authorization: "Bearer " + router.clientToken, "content-type": "application/json", "chatgpt-account-id": "synthetic-official-id" }, body: JSON.stringify({ model: "p::test", stream: true, input: "hello", messages: [{ role: "user", content: "hello" }], max_tokens: 32 }) });
+    const url = `http://127.0.0.1:${router.port}/clients/${client === "codex" ? "ASS" : client}` + (client === "codex" ? "/v1/responses" : "/models/v1/messages");
+    const model = client === "codex" ? require("../core/models.cjs").codexModelId("p", "test") : "p::test";
+    const r = await fetch(url, { method: "POST", headers: { authorization: "Bearer " + router.clientToken, "content-type": "application/json", "chatgpt-account-id": "synthetic-official-id" }, body: JSON.stringify({ model, stream: true, input: "hello", messages: [{ role: "user", content: "hello" }], max_tokens: 32 }) });
     assert.equal(r.status, 200); const text = await r.text();
     assert.match(text, /OK/); assert.match(text, client === "codex" ? /response.completed/ : /message_stop/);
     assert.equal(calls.length, 1); assert.doesNotMatch(text, /synthetic/);

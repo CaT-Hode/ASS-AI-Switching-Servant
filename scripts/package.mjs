@@ -2,11 +2,13 @@ import { packager } from "@electron/packager";
 import { fileURLToPath } from "node:url";
 import { setTimeout } from "node:timers/promises";
 import { readFile } from "node:fs/promises";
+import localRelease from "./local-release.cjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const { version } = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
+localRelease.prePackageGuard({ root });
 const outputs = await packager({
   dir: root,
   name: "ASS",
@@ -20,7 +22,7 @@ const outputs = await packager({
   out: fileURLToPath(new URL("../release/v" + version, import.meta.url)),
   overwrite: true,
   tmpdir: false,
-  ignore: /^\/(release|tests|qa|design|scripts)(\/|$)/,
+  ignore: /^\/(release|tests|qa|design|scripts|docs|conversation-library|project-conversations)(\/|$)/,
   // Windows scanners can briefly hold the just-extracted runtime open.
   // Give those handles time to close before Packager renames the directory.
   afterExtract: [

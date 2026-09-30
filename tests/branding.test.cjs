@@ -18,9 +18,14 @@ test("brand rename retains persisted data location, app identity and update comp
   assert.ok(main.includes('path.join(app.getPath("appData"), "AI Switch Servant")'));
   assert.ok(main.includes('app.setName("ASS")'));
   assert.ok(main.includes('app.setAppUserModelId("local.ass.desktop")'));
+  assert.match(main, /window\.setAppDetails\(\{\s*appId: "local\.ass\.desktop",/);
+  assert.ok(main.includes('appIconPath: app.isPackaged ? process.execPath : path.join(__dirname, "../assets/ass.ico")'));
+  assert.ok(main.includes('relaunchDisplayName: "ASS"'));
+  assert.ok(main.includes('relaunchCommand: app.isPackaged ? `"${process.execPath}"` : `"${process.execPath}" "${app.getAppPath()}"`'));
   assert.ok(updates.includes('CaT-Hode/ASS-AI-Switching-Servant'));
   assert.ok(updates.includes('AI-Switch-Servant-v${v.text}-win32-x64.zip'));
-  assert.ok(read("core/config.cjs").includes(".replaceAll('name = \"ASS', 'name = \"AI Switch Servant')"));
+  assert.ok(read("core/config.cjs").includes('name = "ASS"'));
+  assert.ok(!read("core/config.cjs").includes('name = "AI Switch Servant"'));
 });
 
 test("Pi uses the official compact monochrome mark, black in light and white in dark", async () => {

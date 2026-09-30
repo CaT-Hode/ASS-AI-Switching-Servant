@@ -35,18 +35,20 @@ function fixture(t) {
   const connections = new Connections({ dataDir: data, config, proxyConfig: proxy, injections: new InjectionFiles(data), router, processes });
   return { root, data, codex, original, store, manager, config, proxy, connections, router };
 }
-test("proxy drafts never change attached catalog or routing; provider sync preserves native default and restart", (t) => {
+test("proxy drafts never change attached catalog or routing; provider sync writes the selected ASS default and restart", (t) => {
   const f = fixture(t);
-  f.manager.setInjection("codex", { excludedProviders: [] });
+  f.manager.setInjection("codex", { excludedProviders: [], defaultModel: modelRef("relay", "two") });
   f.proxy.sync("codex");
   const before = fs.readFileSync(f.config.catalog, "utf8");
-  assert.equal(TOML.parse(fs.readFileSync(f.config.file, "utf8")).model, "gpt-original");
+  const selected = TOML.parse(fs.readFileSync(f.config.file, "utf8"));
+  assert.equal(selected.model, "ASS_682fbae20f3428bcec4c117c::two");
+  assert.equal(selected.model_reasoning_effort, "medium");
   assert.equal(f.proxy.status("codex", true).applied, true);
-  assert.equal(JSON.parse(before).models.some((m) => m.slug === "relay::two"), true);
+  assert.equal(JSON.parse(before).models.some((m) => m.slug === require("../core/models.cjs").codexModelId("relay", "two")), true);
   const p = f.store.state.providers[0];
   f.store.updateProvider({ ...p, apiKey: "new-synthetic-key", baseUrl: "https://new.example/v1" });
   assert.equal(fs.readFileSync(f.config.catalog, "utf8"), before);
-  const route = routeFor({ model: "relay::one" }, f.proxy.routingState("codex"));
+  const route = routeFor({ model: require("../core/models.cjs").codexModelId("relay", "one") }, f.proxy.routingState("codex"));
   assert.equal(route.provider.apiKey, "synthetic-relay-key");
   assert.match(route.url, /^https:\/\/relay.example/);
   assert.equal(f.proxy.status("codex", true).pending, true);
@@ -69,6 +71,96 @@ test("proxy drafts never change attached catalog or routing; provider sync prese
   assert.equal(restored.model_reasoning_effort, "high");
   assert.equal(fs.readFileSync(path.join(f.codex, "auth.json"), "utf8"), '{"tokens":{"access_token":"synthetic-oauth-keep"}}');
 });
+test("unsupported gpt-6-luna selection falls back to gpt-6-sol with xhigh", t => {
+  const f = fixture(t);
+  const provider = f.store.state.providers[0];
+  f.store.updateProvider({ ...provider, models: [...provider.models, { model: "gpt-6-sol", wireApi: "openai-responses" }] });
+  f.manager.setInjection("codex", { excludedProviders: [], defaultModel: modelRef("relay", "gpt-6-luna") });
+  f.proxy.sync("codex");
+  const current = TOML.parse(fs.readFileSync(f.config.file, "utf8"));
+  assert.equal(current.model, "ASS_682fbae20f3428bcec4c117c::gpt-6-sol");
+  assert.equal(current.model_reasoning_effort, "xhigh");
+});
+test("old and unknown applied catalog or default IDs are rejected without applying drafts", t => {
+  const f = fixture(t); f.proxy.sync("codex");
+  const original = structuredClone(f.proxy.clients);
+  const { codexModelId } = require("../core/models.cjs");
+  f.store.updateProvider({ ...f.store.state.providers[0], baseUrl: "https://pending.example/v1", apiKey: "synthetic-pending" });
+  for (const id of ["relay::one", "unknown::one", "ASS_000000000000000000000000::one"]) {
+    for (const field of ["catalog", "defaultModel"]) {
+      const clients = structuredClone(original);
+      if (field === "catalog") clients.codex.catalog.models.find(m => m.slug === codexModelId("relay", "one")).slug = id;
+      else clients.codex.defaultModel = { model: id, effort: "high" };
+      f.proxy.persist(clients); atomic(f.config.catalog, JSON.stringify(clients.codex.catalog, null, 2));
+      const files = [f.proxy.file, f.config.file, f.config.record, f.config.catalog, path.join(f.codex, "auth.json")];
+      const before = files.map(file => fs.readFileSync(file, "utf8"));
+      assert.throws(() => f.proxy.repair("codex"), /旧版或不明/);
+      assert.throws(() => f.proxy.sync("codex"), /旧版或不明/);
+      assert.match(f.proxy.status("codex", true).error, /旧版或不明/);
+      const reloaded = new ProxyConfig(f.data, crypt, f.manager, f.store, f.config);
+      assert.ok(reloaded.error);
+      assert.deepEqual(reloaded.routingState("codex").providers, []);
+      assert.deepEqual(files.map(file => fs.readFileSync(file, "utf8")), before);
+    }
+  }
+});
+
+test("current repair restores applied config and catalog without changing rollback record or OAuth", t => {
+  const f = fixture(t); f.proxy.sync("codex", true);
+  const clients = structuredClone(f.proxy.clients);
+  const record = fs.readFileSync(f.config.record, "utf8");
+  const auth = fs.readFileSync(path.join(f.codex, "auth.json"), "utf8");
+  const current = fs.readFileSync(f.config.file, "utf8");
+  atomic(f.config.file, current.replace('name = "ASS"', 'name = "damaged"').replace("keep = true", "keep = false"));
+  atomic(f.config.catalog, "{}");
+  f.store.updateProvider({ ...f.store.state.providers[0], baseUrl: "https://pending.example/v1", apiKey: "synthetic-pending" });
+  f.proxy.repair("codex");
+  assert.deepEqual(f.proxy.clients, clients);
+  assert.equal(fs.readFileSync(f.config.record, "utf8"), record);
+  assert.equal(fs.readFileSync(f.config.catalog, "utf8"), JSON.stringify(clients.codex.catalog, null, 2));
+  assert.equal(fs.readFileSync(path.join(f.codex, "auth.json"), "utf8"), auth);
+  assert.equal(TOML.parse(fs.readFileSync(f.config.file, "utf8")).features.keep, false);
+  assert.equal(f.proxy.status("codex", true).error, "");
+  assert.equal(f.proxy.status("codex", true).pending, true);
+  f.config.detach();
+  const restored = TOML.parse(fs.readFileSync(f.config.file, "utf8"));
+  assert.equal(restored.model, "gpt-original");
+  assert.equal(restored.model_reasoning_effort, "high");
+  assert.equal(restored.features.keep, false);
+});
+
+test("leaving accountless mode keeps the shared ASS model until the connection is disabled", t => {
+  const f = fixture(t); f.proxy.sync("codex", true);
+  const selected = TOML.parse(fs.readFileSync(f.config.file, "utf8")).model;
+  assert.match(selected, /^ASS_[a-f0-9]{24}::/);
+  f.proxy.sync("codex", false);
+  const config = TOML.parse(fs.readFileSync(f.config.file, "utf8"));
+  assert.equal(config.model, selected);
+  assert.equal(config.model_reasoning_effort, "medium");
+  assert.equal(config.model_providers.ASS.requires_openai_auth, true);
+  assert.equal(config.model_providers.ASS.experimental_bearer_token, undefined);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(f.config.record, "utf8")).replaced, "model"), true);
+  assert.equal(fs.readFileSync(path.join(f.codex, "auth.json"), "utf8"), '{"tokens":{"access_token":"synthetic-oauth-keep"}}');
+  f.config.detach();
+  assert.deepEqual(TOML.parse(fs.readFileSync(f.config.file, "utf8")), TOML.parse(f.original));
+});
+
+test("failed current repair rolls back config, catalog and ownership record", t => {
+  const f = fixture(t); f.proxy.sync("codex");
+  atomic(f.config.catalog, "{}");
+  atomic(f.config.file, fs.readFileSync(f.config.file, "utf8").replace('name = "ASS"', 'name = "damaged"'));
+  const files = [f.config.file, f.config.record, f.config.catalog, path.join(f.codex, "auth.json")];
+  const before = files.map(file => fs.readFileSync(file, "utf8"));
+  const clients = structuredClone(f.proxy.clients);
+  const persist = f.proxy.persist.bind(f.proxy);
+  let calls = 0;
+  f.proxy.persist = (...args) => { if (++calls === 2) throw Error("synthetic repair commit failure"); return persist(...args); };
+  assert.throws(() => f.proxy.repair("codex"), /repair commit failure/);
+  assert.deepEqual(files.map(file => fs.readFileSync(file, "utf8")), before);
+  assert.deepEqual(f.proxy.clients, clients);
+  assert.equal(f.proxy.pending, null);
+});
+
 test("preview tracks model settings, concurrent changes and active requests fail closed", async (t) => {
   const f = fixture(t);
   const enable = async () => f.connections.apply({ ticket: (await f.connections.preview("codex", true)).ticket, mode: "safe", acknowledged: true });
@@ -128,10 +220,17 @@ test("Codex isolated OAuth launches receive the applied catalog without changing
   const plan = f.manager.plan("codex", account);
   const config = TOML.parse(plan.files.find(([name]) => name === "config.toml")[1]);
   assert.equal(config.model_catalog_json, f.config.catalog);
+  assert.equal(config.openai_base_url, f.config.baseUrl);
+  assert.equal(config.openai_base_url, config.model_providers.ass_official.base_url);
+  assert.equal(config.model_providers.openai, undefined);
   assert.equal(config.model_providers.ass_official.requires_openai_auth, true);
   assert.equal(plan.files.some(([name]) => name === "auth.json"), false);
   f.manager.setInjection("codex", { excludedProviders: ["relay"] });
   assert.equal(f.manager.plan("codex", account).files[0][1], plan.files[0][1]);
+  f.manager.options.port = 32123;
+  const relocated = TOML.parse(f.manager.plan("codex", account).files.find(([name]) => name === "config.toml")[1]);
+  assert.equal(relocated.openai_base_url, "http://127.0.0.1:32123/clients/ASS/v1");
+  assert.equal(relocated.model_providers.ass_official.base_url, relocated.openai_base_url);
 });
 
 test("proxy write-ahead recovery survives restart and refuses intervening external edits", (t) => {

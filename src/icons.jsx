@@ -15,6 +15,7 @@ function icon(name) {
   return Component;
 }
 export const Activity = icon("Activity"), Monitor = icon("Monitor"), LayoutGrid = icon("LayoutGrid"), Boxes = icon("Boxes"),
+  MessagesSquare = icon("MessagesSquare"), Pin = icon("Pin"),
   Upload = icon("Upload"), Download = icon("Download"), RefreshCw = icon("RefreshCw"), RotateCw = icon("RotateCw"), RotateCcw = icon("RotateCcw"),
   Settings2 = icon("Settings2"), SlidersHorizontal = icon("SlidersHorizontal"), Trash2 = icon("Trash2"), Search = icon("Search"), ScanSearch = icon("ScanSearch"),
   Wallet = icon("Wallet"), KeyRound = icon("KeyRound"), LogIn = icon("LogIn"), LogOut = icon("LogOut"), ExternalLink = icon("ExternalLink"), ArrowRightLeft = icon("ArrowRightLeft"),

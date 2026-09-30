@@ -3,6 +3,7 @@
 const { _electron: electron } = require("playwright");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { codexModelId } = require("../core/models.cjs");
 const root = path.resolve(__dirname, ".."),
   data = path.join(process.env.LOCALAPPDATA, "ASS-validation", "live-profile");
 const codex = process.env.ASS_CODEX_EXE;
@@ -23,25 +24,25 @@ function run(
     "-m",
     model,
     "-c",
-    `model_provider="ass_router"`,
+    `model_provider="ASS"`,
     "-c",
     `model_reasoning_effort="${effort}"`,
     "-c",
     `model_catalog_json=${JSON.stringify(path.join(data, "catalog.json"))}`,
     "-c",
-    'model_providers.ass_router.name="ASS"',
+    'model_providers.ASS.name="ASS"',
     "-c",
-    'model_providers.ass_router.base_url="http://127.0.0.1:25819/v1"',
+    'model_providers.ASS.base_url="http://127.0.0.1:25819/clients/ASS/v1"',
     "-c",
-    'model_providers.ass_router.wire_api="responses"',
+    'model_providers.ASS.wire_api="responses"',
     "-c",
-    "model_providers.ass_router.requires_openai_auth=true",
+    "model_providers.ASS.requires_openai_auth=true",
     "-c",
-    "model_providers.ass_router.supports_websockets=false",
+    "model_providers.ASS.supports_websockets=false",
     "-c",
-    "model_providers.ass_router.request_max_retries=0",
+    "model_providers.ASS.request_max_retries=0",
     "-c",
-    "model_providers.ass_router.stream_max_retries=0",
+    "model_providers.ASS.stream_max_retries=0",
     prompt,
   ];
   return new Promise((resolve) => {
@@ -121,11 +122,11 @@ function run(
                 (/mimo/i.test(m.model) || m.wireApi === "anthropic"),
             )
             .slice(0, 1)
-            .map((m) => p.id + "::" + m.model),
+            .map((m) => [p.id, m.model]),
         )
         .slice(0, 2),
     );
-    for (const model of ["gpt-6-astra", ...models])
+    for (const model of ["gpt-6-astra", ...models.map(([id, model]) => codexModelId(id, model))])
       console.log(
         JSON.stringify(
           await run(

@@ -9,6 +9,7 @@ const defaults = {
   officialService: "openai",
   providerOrder: [],
   quotaAccounts: {},
+  conversations: { harness: "codex", pinned: false, scope: "projects", project: "" },
   usage: { client: "all", range: "month", tab: "activity", group: "client" },
 };
 class Preferences {
@@ -24,6 +25,13 @@ class Preferences {
   validate(input) {
     const next = { ...this.state };
     if (["system", "light", "dark"].includes(input.theme)) next.theme = input.theme;
+    if (input.conversations && typeof input.conversations === "object") {
+      next.conversations = { ...defaults.conversations, ...next.conversations };
+      if (["codex", "claude", "dsh", "opencode", "pi"].includes(input.conversations.harness)) next.conversations.harness = input.conversations.harness;
+      if (typeof input.conversations.pinned === "boolean") next.conversations.pinned = input.conversations.pinned;
+      if (["native", "projects"].includes(input.conversations.scope)) next.conversations.scope = input.conversations.scope;
+      if (typeof input.conversations.project === "string" && (/^[a-f0-9]{64}$/.test(input.conversations.project) || input.conversations.project === 'unassigned')) next.conversations.project = input.conversations.project;
+    }
     if (input.usage && typeof input.usage === "object") {
       next.usage = { ...defaults.usage, ...next.usage };
       for (const [key, values] of Object.entries({
@@ -49,6 +57,7 @@ class Preferences {
           "overview",
           "providers",
           "clients",
+          "conversations",
           "accounts",
           "diagnostics",
           "updates",

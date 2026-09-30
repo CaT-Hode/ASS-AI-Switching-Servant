@@ -1,0 +1,119 @@
+import React, { memo, useEffect, useMemo, useState } from 'react';
+import { Folder, Loader2, MessagesSquare, Play, RefreshCw, ShieldCheck, ChevronRight, RotateCcw, Pin, Monitor } from './icons.jsx';
+import { detectedClients } from './usage-view.mjs';
+const api = window.ass, labels = { codex: 'Codex', claude: 'Claude Code', dsh: 'DSH', opencode: 'OpenCode', pi: 'pi' };
+const brands = { codex: 'openai', claude: 'anthropic', dsh: 'deepseek', opencode: 'opencode', pi: 'pi' };
+const originLabels = { ...labels, claude: 'CC' };
+const time = (s) => s ? new Date(s).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+const errorText = (e) => e.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
+const Transcript = memo(function Transcript({ value }) {
+  return <div className="conversation-messages" aria-label="对话内容">{value?.messages.map((m, i) => <article className={'conversation-message ' + m.role} key={value.before + ':' + i}>
+    <header><span>{m.role === 'user' ? '你' : '助手'}</span><time>{time(m.timestamp)}</time></header>
+    {m.text.length > 3000 && /AGENTS|environment_context|INSTRUCTIONS/.test(m.text)
+      ? <details><summary>会话上下文</summary><pre>{m.text}</pre></details> : <pre>{m.text}</pre>}
+  </article>)}{!value && <Loader2 className="spin" />}</div>;
+});
+export function ProjectConversations({ state, initialHarness, onClient }) {
+  const [list, setList] = useState(null), [query, setQuery] = useState(''), [project, setProject] = useState(null);
+  const [threads, setThreads] = useState(null), [selected, setSelected] = useState(null), [preview, setPreview] = useState(null), [before, setBefore] = useState(0);
+  const [revision, setRevision] = useState(0), [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [offset, setOffset] = useState(0), [threadQuery, setThreadQuery] = useState(''), [pinned, setPinned] = useState(false);
+  const available = detectedClients(state).filter((c) => Object.hasOwn(labels, c.id));
+  const [view, setView] = useState(initialHarness || state.preferences.conversations?.harness || 'codex'), [target, setTarget] = useState(initialHarness || 'codex'), [confirm, setConfirm] = useState('');
+  const [nativeView, setNativeView] = useState(false);
+  useEffect(() => { if (available.length && !available.some((c) => c.id === view)) setView(available[0].id); }, [available.map((c) => c.id).join(','), view]);
+  useEffect(() => {
+    let current = true;
+    api.call('project-conversations-list').then((r) => {
+      if (!current) return; setList(r); setError(r.error || '');
+      setProject((old) => r.items.find((p) => p.id === old?.id) || r.items.find((p) => p.id === state.preferences.conversations?.project) || r.items[0] || null);
+    }).catch((e) => { if (current) setError(errorText(e)); });
+    return () => { current = false; };
+  }, [revision]);
+  const shared = project?.enabled && project.targets.includes(view) && !nativeView;
+  useEffect(() => {
+    let current = true; setThreads(null); setConfirm('');
+    const timer = setTimeout(() => { if (project && list) api.call(shared ? 'project-conversations-threads' : 'project-conversations-records', project.id,
+      { offset, query: threadQuery, harness: view, pinned }).then((r) => {
+      if (current) { setThreads(r); setSelected((old) => r.items.find((t) => t.id === old?.id) || r.items[0] || null); }
+    }).catch((e) => { if (current) setError(errorText(e)); }); }, threadQuery ? 200 : 0);
+    return () => { current = false; clearTimeout(timer); };
+  }, [project?.id, shared, view, list, offset, threadQuery, pinned]);
+  useEffect(() => {
+    let current = true; setPreview(null); setConfirm('');
+    if (selected) api.call(selected.kind === 'native' ? 'project-conversations-native-preview' : 'project-conversations-preview',
+      ...(selected.kind === 'native' ? [selected.id, before] : [project.id, selected.id, before])).then((r) => { if (current) setPreview(r); })
+      .catch((e) => { if (current) setError(errorText(e)); });
+    return () => { current = false; };
+  }, [selected?.id, selected?.kind, before, revision]);
+  useEffect(() => {
+    if (!confirm) return;
+    const opener = document.activeElement, focus = requestAnimationFrame(() => document.querySelector('.conversation-resume-confirm button')?.focus());
+    const close = (e) => { if (e.key === 'Escape' || (e.type === 'pointerdown' && !e.target.closest('.conversation-resume-control, .project-toggle-control'))) setConfirm(''); };
+    document.addEventListener('keydown', close); document.addEventListener('pointerdown', close);
+    return () => { cancelAnimationFrame(focus); document.removeEventListener('keydown', close); document.removeEventListener('pointerdown', close); if (opener?.isConnected) opener.focus(); };
+  }, [confirm]);
+  const items = useMemo(() => list?.items.filter((p) => (p.harnesses?.includes(view) || (p.enabled && p.targets.includes(view))) && (p.name + ' ' + p.cwd).toLowerCase().includes(query.toLowerCase())) || [], [list, query, view]);
+  useEffect(() => { if (list && !items.some((p) => p.id === project?.id)) setProject(items[0] || null); }, [list, view, project?.id]);
+  async function action(name, ...args) {
+    setBusy(name); setError(''); setNotice(''); setConfirm('');
+    try { const r = await api.call(name, ...args); setNotice(r?.message || (name === 'conversations-preserve' ? '已保留 ' + r.retained + ' 个对话' : ''));
+      if (!name.includes('resume') && name !== 'conversations-open-desktop') setRevision((n) => n + 1);
+    } catch (e) { setError(errorText(e)); } finally { setBusy(''); }
+  }
+  function choose(p) { setProject(p); setSelected(null); setOffset(0); setThreadQuery(''); setBefore(0); setNotice(''); setError('');
+    api.call('ui-preferences', { conversations: { project: p.id, scope: 'projects' } }).catch((e) => setError(errorText(e))); }
+  const targets = project?.targets || available.map((c) => c.id);
+  useEffect(() => { setTarget(view); }, [view]);
+  function toggleTarget(h) { const next = targets.includes(h) ? targets.filter((v) => v !== h) : [...targets, h];
+    if (!next.length) { setError('至少选择一个客户端'); return; }
+    action('project-conversations-configure', project.id, { enabled: project.enabled, targets: next }); }
+  const native = selected?.kind === 'native', resumeHarness = native ? selected.harness : target;
+  const client = state.harnesses.clients.find((c) => c.id === resumeHarness), account = client?.accounts.find((a) => a.oauthCurrent) || client?.accounts.find((a) => a.id === client.selected);
+  return <section className="project-conversation-page" aria-label="对话管理">
+    <div className="project-sync-toolbar"><div className="conversation-tabs" aria-label="会话客户端">{available.map((c) => <button key={c.id} aria-pressed={view === c.id} onClick={() => {
+      setView(c.id); setOffset(0); setBefore(0); if (!shared) setSelected(null); setThreadQuery(''); setNativeView(false);
+      api.call('ui-preferences', { conversations: { harness: c.id } }).catch((e) => setError(errorText(e)));
+    }}><img src={'./providers/' + brands[c.id] + '.svg'} alt="" />{labels[c.id]}</button>)}</div>
+      <span className="conversation-count">{list ? items.reduce((n, p) => n + (p.enabled ? p.count : p.counts?.[view] || 0), 0) + ' 个对话 · ' + (list.retained?.[view] || 0) + ' 个已保留' : '读取记录…'}</span>
+      <div className="actions">{['codex', 'claude'].includes(view) && <button className="button" disabled={!!busy} onClick={() => action('conversations-preserve', view)}><ShieldCheck size={15} />保留历史</button>}
+        <button className="icon-button" aria-label="刷新项目记录" disabled={!!busy} onClick={() => setRevision((n) => n + 1)}><RefreshCw size={17} /></button></div></div>
+    {error && <p className="error-box" role="alert">{error}</p>}{notice && <p className="client-notice" role="status">{notice}</p>}
+    <div className="conversation-layout project-sync-layout">
+      <section className="conversation-list" aria-label="项目记录列表"><div className="conversation-search"><Folder size={16} /><input type="search" aria-label="搜索项目" placeholder="搜索项目" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+        <div className="conversation-rows">{items.slice(0, 200).map((p) => <article className={'conversation-row' + (p.id === project?.id ? ' selected' : '')} key={p.id}>
+          <button className="conversation-row-main" aria-pressed={p.id === project?.id} onClick={() => choose(p)}><span className="conversation-row-title">{p.nonProject ? <MessagesSquare size={14} /> : <Folder size={14} />}{p.name}</span>
+            {p.cwd && <span className="conversation-row-project" title={p.cwd}>{p.cwd}</span>}<span className="conversation-row-meta">{p.enabled ? p.count : p.counts?.[view] || 0} 个对话{p.enabled && <span className="conversation-retained">同步中</span>}</span></button></article>)}
+          {list && !items.length && <div className="empty"><Folder size={30} /><p>暂无项目记录</p></div>}{!list && <div className="empty"><Loader2 className="spin" /></div>}</div>
+        <footer className="conversation-pagination">{items.length} 个分组</footer></section>
+      <section className="conversation-detail" aria-label="项目会话">{project ? <>
+        <header className="conversation-detail-heading"><div><h2>{project.name}</h2>{project.cwd && <p title={project.cwd}>{project.cwd}</p>}</div>
+          {!project.nonProject && <div className="actions"><button className="icon-button" aria-label="同步当前项目" disabled={!project.enabled || !!busy} onClick={() => action('project-conversations-sync', project.id)}><RefreshCw size={17} className={busy ? 'spin' : ''} /></button>
+            <div className="project-toggle-control">{confirm === 'disable' && <div className="conversation-resume-confirm" role="dialog" aria-label="关闭项目同步确认"><p>完成内容归回初始客户端，移除同步副本。请先结束续聊。</p><div className="actions"><button className="button" onClick={() => setConfirm('')}>取消</button><button className="button primary" onClick={() => action('project-conversations-configure', project.id, { enabled: false, targets })}>确定</button></div></div>}
+              <button className="project-sync-switch" role="switch" aria-label="项目同步" aria-checked={project.enabled} disabled={!!busy}
+                onClick={() => project.enabled ? setConfirm('disable') : action('project-conversations-configure', project.id, { enabled: true, targets })}><span className="project-switch-track"><i /></span>项目同步</button></div></div>}
+        </header>
+        {project.enabled && <div className="project-record-tabs"><button aria-pressed={!nativeView} onClick={() => { setNativeView(false); setOffset(0); }}>共享记录</button><button aria-pressed={nativeView} onClick={() => { setNativeView(true); setOffset(0); }}>原生记录</button><small>{time(project.lastSync)}</small></div>}
+        {project.enabled && <details className="project-target-options"><summary>同步客户端</summary><div className="project-sync-targets" aria-label="参与同步的客户端">{available.map(({ id: h }) => <button key={h} aria-label={'参与同步 ' + labels[h]} aria-pressed={targets.includes(h)} disabled={!!busy} onClick={() => toggleTarget(h)}>{labels[h]}</button>)}</div></details>}
+        <div className="project-shared-body"><nav className="project-shared-threads" aria-label="项目对话列表"><div className="project-thread-search"><input type="search" aria-label="搜索对话" placeholder="搜索对话" value={threadQuery} onChange={(e) => { setThreadQuery(e.target.value); setOffset(0); }} />
+          {!shared && <button className="icon-button" aria-label="只看置顶" aria-pressed={pinned} onClick={() => { setPinned(!pinned); setOffset(0); }}><Pin size={14} /></button>}</div>
+          {threads?.items.map((t) => <article key={t.id} className={'project-thread-row' + (t.id === selected?.id ? ' selected' : '')}><button className="project-thread-main" aria-pressed={t.id === selected?.id} onClick={() => { setSelected(t); setBefore(0); }}>
+            <strong>{t.title}</strong><small>{t.branchOf ? '分支 · ' : ''}{t.kind === 'native' ? labels[t.harness] : t.harnesses.map((h) => labels[h]).join(' / ')} · {time(t.updatedAt)}</small>
+            {(t.syncedFrom || (!t.kind && t.originHarness !== view)) && <span className="conversation-sync-origin">来自 {originLabels[t.syncedFrom || t.originHarness]} 的同步</span>}{t.retained && !t.nativePresent && <span className="conversation-retained">已保留副本</span>}</button>
+            {t.libraryId && <button className={'icon-button conversation-pin' + (t.pinned ? ' pinned' : '')} aria-label={t.pinned ? '取消置顶对话' : '置顶对话'} disabled={!!busy} onClick={() => action('conversations-pin', t.libraryId, !t.pinned)}><Pin size={14} /></button>}</article>)}
+          {!threads && <Loader2 className="spin" />}{threads && !threads.items.length && <p>暂无对话</p>}
+          <div className="project-thread-pages"><button className="icon-button" aria-label="上一页对话" disabled={!offset || !threads} onClick={() => setOffset((n) => Math.max(0, n - 40))}><ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /></button><small>{threads?.total || 0} 个对话</small><button className="icon-button" aria-label="下一页对话" disabled={!threads || offset + 40 >= threads.total} onClick={() => setOffset((n) => n + 40)}><ChevronRight size={14} /></button></div></nav>
+          <div className="project-shared-preview">{selected ? <>
+            <div className="conversation-transcript"><div className="conversation-message-pages"><button className="text-button" disabled={!preview?.hasEarlier} onClick={() => setBefore((n) => n + 40)}><RotateCcw size={13} />更早内容</button>
+              <span>{preview?.total || 0} 条消息</span>{before > 0 && <button className="text-button" onClick={() => setBefore((n) => Math.max(0, n - 40))}>较新内容<ChevronRight size={13} /></button>}</div><Transcript value={preview} /></div>
+            <footer className="project-resume">{native ? <button className="conversation-current-account" onClick={() => onClient?.(resumeHarness)}><span>当前账户<strong>{account?.profile?.fields?.find((f) => f.id === 'email')?.value || account?.label || labels[resumeHarness]}</strong></span></button>
+              : <span className="conversation-retained">共享项目记录</span>}
+              <div className="conversation-resume-control">{native && selected.libraryId && selected.harness === 'codex' && client?.desktop && <button className="icon-button" aria-label="在 Codex 桌面打开对话" disabled={!!busy} onClick={() => action('conversations-open-desktop', selected.libraryId)}><Monitor size={17} /></button>}
+                {confirm === 'resume' && <div className="conversation-resume-confirm" role="dialog" aria-label={native ? '继续对话确认' : '跨客户端续聊确认'}><p>在 {labels[resumeHarness]} 继续？请先结束原窗口中的同一对话。</p><div className="actions"><button className="button" onClick={() => setConfirm('')}>取消</button><button className="button primary" onClick={() => native ? action('project-conversations-native-resume', selected.id) : action('project-conversations-resume', project.id, selected.id, target)}>确定</button></div></div>}
+                <button className="button primary" disabled={!!busy || !preview} aria-haspopup="dialog" onClick={() => setConfirm('resume')}><Play size={15} />{busy ? '处理中…' : native ? selected.nativePresent ? '继续对话' : '从副本继续' : '在 ' + labels[target] + ' 继续'}</button></div></footer>
+            {resumeHarness === 'dsh' && <p className="conversation-resume-note">打开后在 DSH 会话列表选择此记录。{native ? selected.sessionId : ''}</p>}
+          </> : <div className="empty"><MessagesSquare size={30} /><p>选择一段对话</p></div>}</div></div>
+      </> : <div className="empty"><Folder size={30} /><p>选择项目</p></div>}</section>
+    </div>
+  </section>;
+}

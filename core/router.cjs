@@ -1,11 +1,12 @@
 const http = require("node:http");
-const { endpoint, normalizeEffort } = require("./models.cjs");
+const { endpoint, normalizeEffort, codexProviderId } = require("./models.cjs");
 const { convertRequest, translateStream } = require("./adapters.cjs");
 const { SseMonitor } = require("./sse-monitor.cjs");
 const { forwardHarness, authorized } = require("./harness-route.cjs");
 const { providerSessionHeaders, protocolEndpoint } = require("./provider-transport.cjs");
 const crypto = require("node:crypto");
 const { toolBridge } = require("./tool-bridge.cjs");
+const { readJSON } = require("./request-body.cjs");
 const forwarded = [
   "authorization",
   "chatgpt-account-id",
@@ -43,9 +44,10 @@ function routeFor(body, state, suffix = "") {
       body,
       official: true,
     };
-  const p = state.providers.find(
-    (p) => p.id === body.model.slice(0, split) && p.enabled,
-  );
+  const namespace = body.model.slice(0, split);
+  const candidates = state.providers.filter((p) => p.enabled && codexProviderId(p.id) === namespace);
+  if (candidates.length > 1) throw Object.assign(new Error("模型路由标识冲突，请检查供应商配置"), { status: 409 });
+  const p = candidates[0];
   const m = p?.models.find(
     (m) => m.model === body.model.slice(split + 2) && m.enabled,
   );
@@ -110,6 +112,18 @@ class Router {
     if (!this.server) this.port = port;
     if (this.server) return;
     const server = http.createServer((q, s) => this.handle(q, s));
+    // Retained built-in OpenAI sessions enable WS independently of our custom
+    // provider. Codex explicitly treats 426 as HTTP/SSE fallback (not 405).
+    // Never upgrade or forward auth during this transport negotiation.
+    server.on("upgrade", (req, socket) => {
+      const local = !req.headers.origin && req.headers["sec-fetch-site"] !== "cross-site" &&
+        [`127.0.0.1:${this.port}`, `localhost:${this.port}`].includes(req.headers.host);
+      const route = req.url === "/clients/ASS/v1/responses";
+      const status = !local ? "403 Forbidden" : !route ? "404 Not Found" :
+        !this.allowClient("codex") ? "503 Service Unavailable" : "426 Upgrade Required";
+      socket.on("error", () => {});
+      socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    });
     server.requestTimeout = 300000;
     server.headersTimeout = 60000;
     this.starting = new Promise((resolve, reject) => {
@@ -168,7 +182,9 @@ class Router {
       )
         throw Object.assign(new Error("仅允许本机应用请求"), { status: 403 });
       if (req.url !== "/health") {
-        const scoped = /^\/clients\/(ASS|codex|claude|opencode|pi|dsh)(\/.*)$/.exec(
+        if (/^\/(?:clients\/codex|v1)(?:\/|$)/.test(req.url))
+          throw Object.assign(Error("旧路由入口已移除，请重新同步 ASS 接入配置"), { status: 404 });
+        const scoped = /^\/clients\/(ASS|claude|opencode|pi|dsh)(\/.*)$/.exec(
           req.url,
         );
         let client =
@@ -215,20 +231,7 @@ class Router {
         );
       if (!/^Bearer\s+\S+$/i.test(req.headers.authorization || ""))
         throw Object.assign(new Error("需要 Codex 登录凭据"), { status: 401 });
-      let size = 0;
-      const chunks = [];
-      for await (const c of req) {
-        size += c.length;
-        if (size > 128 * 1024 * 1024)
-          throw Object.assign(new Error("请求超过 128 MiB"), { status: 413 });
-        chunks.push(c);
-      }
-      let body;
-      try {
-        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      } catch {
-        throw Object.assign(new Error("请求不是有效 JSON"), { status: 400 });
-      }
+      const body = await readJSON(req);
       const state = this.getState(this.requests.get(req)?.client);
       if (state.accountless) {
         if (!authorized(req.headers.authorization.replace(/^Bearer\s+/i, ""), state.localToken))

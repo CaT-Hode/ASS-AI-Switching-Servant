@@ -340,7 +340,12 @@ function modelSources(
     for (const a of accounts)
       for (const m of directory?.accounts?.[a.id]?.models ||
         nativeModels(client, a, home || "", env)) {
-        if (assigned.has(JSON.stringify([a.id, m.nativeProvider || "", m.model]))) continue;
+        const sameModelInSupplier = a.authType === "api" && a.supplierId &&
+          store.providers.some((p) => p.id === a.supplierId && p.models.some((item) => item.model === m.model));
+        // The model directory may call this account "deepseek" while the API
+        // resolver calls it "deepseek-official". A confirmed same-key supplier
+        // already owns that model; do not show a second native-account card.
+        if (sameModelInSupplier || assigned.has(JSON.stringify([a.id, m.nativeProvider || "", m.model]))) continue;
         const diagnosticProviderId = nativeTargetId(client, a, m);
         models.set(diagnosticProviderId + "::" + m.model, {
           ...m, diagnosticProviderId, nativeAccountLabel: a.label || "", nativeScope: nativeScope(a),

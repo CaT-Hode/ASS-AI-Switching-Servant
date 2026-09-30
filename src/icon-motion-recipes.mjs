@@ -20,6 +20,9 @@ const check = (ring) => ({ hover: [stroke("tick"), ...(ring ? [alpha(ring, .65)]
 // Hover has a sustained pose or an explicit story loop. Press is a different
 // action, and exit is handled from the live presentation by the player.
 export const iconMotion = {
+  MessagesSquare: { hover: [shift("back", "translate(1px,1px)"), ...[0, 1, 2].map((i) => pulse("dot" + i, .2, 1, 1500, i * 160))],
+    press: [kick("front", "translateY(-1.5px)"), kick("back", "translate(-1px,-1px)", "translate(1px,1px)")] },
+  Pin: { hover: [shift("head", "rotate(-12deg)")], press: [kick("head", "translateY(2px)", "rotate(-12deg)"), kick("stem", "scaleY(.8)")] },
   Activity: {
     hover: [alpha("trace", .38), { ...sequence("trail", [{ opacity: 0, strokeDashoffset: 1 }, { opacity: 1, strokeDashoffset: .7, offset: .2 }, { opacity: 1, strokeDashoffset: -.15, offset: .72 }, { opacity: 0, strokeDashoffset: -.3, offset: .84 }, { opacity: 0, strokeDashoffset: -.3 }], 1650, true), easing: "linear" },
       path("signal", [[2,12,0,0],[6,12,1,.16],[9,4,1,.28],[13,20,1,.44],[17,8,1,.6],[19,12,1,.7],[22,12,0,.8],[22,12,0,1]], 1650)],

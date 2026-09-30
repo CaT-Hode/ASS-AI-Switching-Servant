@@ -13,13 +13,18 @@ const providers = [{ id: "relay", name: "Relay", enabled: true, apiKey: "synthet
 test("native Messages and both converted protocols share the full picker and discovery catalog", () => {
   const rows = claudeModels(providers), settings = claudeModelSettings(providers, "relay::kimi/messages");
   assert.equal(rows.length, 4); assert.equal(settings.modelPicker.options.length, 4);
-  assert.ok(rows.every(m => /claude|anthropic/i.test(m.discoveryId)));
+  assert.ok(rows.every(m => /^claude-ass-[a-f0-9]{32}$/.test(m.discoveryId)));
+  assert.equal(new Set(rows.map(m => m.discoveryId)).size, rows.length);
   for (const m of rows) {
     assert.equal(resolveClaudeModel(providers, m.discoveryId), m.model);
     assert.equal(resolveClaudeModel(providers, m.model), m.model);
     assert.equal(resolveClaudeModel(providers, m.discoveryId + "[1m]"), m.model);
   }
   assert.equal(resolveClaudeModel(providers, "claude-ass/foreign::model"), "claude-ass/foreign::model");
+  assert.equal(resolveClaudeModel(providers, "claude-ass/relay::gpt-test"), "claude-ass/relay::gpt-test");
+  assert.equal(resolveClaudeModel(providers, "claude-ass/relay::gpt-test[1m]"), "claude-ass/relay::gpt-test[1m]");
+  assert.equal(resolveClaudeModel(providers, "relay::gpt-test[1m]"), "relay::gpt-test");
+  assert.equal(resolveClaudeModel(providers, "relay::claude-opus"), "relay::claude-opus");
   assert.equal(claudeModels([{ ...providers[0], enabled: false }]).length, 0);
 });
 test("discovery aliases really call the original model on its negotiated upstream protocol", async t => {

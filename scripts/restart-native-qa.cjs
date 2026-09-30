@@ -41,17 +41,17 @@ if (["--fixture-root", "--fixture-leaf"].includes(fixtureKind)) {
     };
     const tree = collect(root.pid), otherTree = collect(other.pid);
     owned.push(...tree, ...otherTree);
-    // Stale identity and an unlisted child must fail before any termination.
+    // Stale root identity must fail before any termination. A fresh child of
+    // the verified root is admitted even if it was not in the old preview.
     await assert.rejects(adapter.stop(tree.map((p, i) => i ? p : { ...p, created: "2000-01-01T00:00:00Z" })));
-    await assert.rejects(adapter.stop([tree[0]]));
     const untouched = await inspect();
     assert.ok(owned.every((p) => untouched.some((r) => r.pid === p.pid && r.created === p.created)));
-    assert.equal((await adapter.stop(tree)).stopped, true);
+    assert.equal((await adapter.stop([tree[0]])).stopped, true);
     const after = await inspect();
     assert.ok(!after.some((r) => tree.some((p) => p.pid === r.pid)));
     assert.ok(after.some((r) => r.pid === other.pid && r.created === otherTree[0].created));
     console.log(JSON.stringify({ passed: true, fixtureTreeStopped: tree.length, unrelatedFixturePreserved: true,
-      staleIdentityRejected: true, unlistedChildRejected: true, realClientsTouched: false, desktopLaunchTested: false }));
+      staleIdentityRejected: true, freshDescendantsStopped: true, realClientsTouched: false, desktopLaunchTested: false }));
   } finally {
     // Only this test's exact, still-matching identities are eligible for cleanup.
     const rows = await inspect();

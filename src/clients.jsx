@@ -16,7 +16,7 @@ import {
   Unlink,
   ExternalLink,
   ArrowRightLeft,
-  BrandMotion,
+  MessagesSquare,
 } from "./icons.jsx";
 import { Modal } from "./editors.jsx";
 import {
@@ -26,16 +26,17 @@ import {
   OfficialApiForm,
 } from "./account-dialogs.jsx";
 import { ActionMenu } from "./menus.jsx";
-import { AccountProfile } from "./account-profile.jsx";
+import { AccountProfile, AccountPlan } from "./account-profile.jsx";
 import { ConnectionStatus, ConnectionPill, ConnectionService } from "./connections.jsx";
 import { ClientInjection } from "./client-injection.jsx";
+import { ClientProcessChoice } from "./client-process-choice.jsx";
 import { detectedClients } from "./usage-view.mjs";
 const api = window.ass;
 const clientBrands = { codex: "openai", claude: "anthropic", opencode: "opencode", dsh: "deepseek", pi: "pi", kimi: "kimi", zcode: "zai" };
 function ClientEntry({ client: c, activeClient, onSelect }) {
   return <div className={"client-entry" + (c.id === activeClient ? " active" : "")}>
     <button className="client-select" aria-label={c.name} aria-pressed={c.id === activeClient} onClick={() => onSelect(c.id)}>
-      <span className="client-glyph motion-brand" aria-hidden="true">{clientBrands[c.id] ? <><img src={"./providers/" + clientBrands[c.id] + ".svg"} alt="" /><BrandMotion brand={clientBrands[c.id]} /></> : <Terminal size={23} />}</span>
+      <span className="client-glyph" aria-hidden="true">{clientBrands[c.id] ? <img src={"./providers/" + clientBrands[c.id] + ".svg"} alt="" /> : <Terminal size={23} data-motion-icon={undefined} />}</span>
       <strong>{c.name}</strong><i className={"client-detected-dot" + (c.detected ? " found" : "")} title={c.detected ? "已识别" : "未识别"} /><ChevronRight size={14} />
     </button>
   </div>;
@@ -49,7 +50,6 @@ export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
   return (
     <Modal
       title={"添加 " + client.name + " 授权账户"}
-      description="使用独立凭据目录，不覆盖本机账户。"
       onClose={onClose}
     >
       <form
@@ -87,7 +87,6 @@ export function AccountForm({ client, onClose, onSave, initialProvider = "" }) {
             </select>
           </label>
         )}
-        <p className="hint">创建后点击“登录授权”，在原生客户端完成登录。</p>
         {error && (
           <p role="alert" className="error-box">
             {error}
@@ -144,9 +143,9 @@ function AccountCard({
           )}
         </span>
         <div className="account-card-title">
-          <h3>{a.label}</h3>
-          <span>{a.source || "ASS 供应商"}</span>
+          <h3>{a.profile?.fields?.find((f) => f.id === "email")?.value || a.profile?.fields?.find((f) => ["name", "keyLabel"].includes(f.id))?.value || a.label}</h3>
         </div>
+        <AccountPlan account={a} />
         <span className="tag">{a.badge}</span>
         {provider && (
           <ActionMenu
@@ -197,7 +196,7 @@ function AccountCard({
           />
         )}
       </header>
-      <AccountProfile account={a} {...{ client, state, act, busy }} />
+      <AccountProfile account={a} hideIdentity {...{ client, state, act, busy }} />
       {(warning || !a.ready) && (
         <p
           className={
@@ -208,12 +207,7 @@ function AccountCard({
           {a.message}
         </p>
       )}
-      {a.expiresAt && (
-        <small className="account-expiry">
-          令牌到期：{new Date(a.expiresAt).toLocaleString()}
-        </small>
-      )}
-      {balance && (
+      {balance && !(a.profile?.fields || []).some((f) => f.kind === "amount") && (
         <p className="account-balance-summary">
           {balance.ok
             ? (balance.rows || [balance])
@@ -221,18 +215,6 @@ function AccountCard({
                 .join(" · ")
             : balance.message}
         </p>
-      )}
-      {a.updatedAt && a.oauthRecordId && (
-        <small className="account-expiry">更新于 {new Date(a.updatedAt).toLocaleString()}</small>
-      )}
-      {a.kind !== "api" && a.sourcePath && (
-        <details className="account-origin">
-          <summary>凭据位置</summary>
-          <code>{a.sourcePath}</code>
-        </details>
-      )}
-      {a.kind === "native" && ["opencode", "dsh"].includes(client.id) && (
-        <small className="account-expiry">供应商在原生客户端内选择</small>
       )}
       {(!client.nativeLoginOnly || a.oauthRecordId) && <footer>
         {a.oauthRecordId ? <button
@@ -310,6 +292,7 @@ export function Clients({
   initialClient = "codex",
   onSelectClient,
   openProvider,
+  onConversations,
 }) {
   const [selected, setSelected] = useState(initialClient),
     [adding, setAdding] = useState(false),
@@ -486,11 +469,13 @@ export function Clients({
                 <button
                   className="icon-button"
                   aria-label="刷新状态"
-                  title="刷新状态"
+                  title="刷新账户、额度和模型；已接入时同步配置"
                   disabled={!!busy}
-                  onClick={() =>
-                    act("client-refresh", () => api.call("client-refresh"))
-                  }
+                  onClick={() => act("client-refresh", async () => {
+                    await api.call("client-refresh", client.id);
+                    if (state.connections.clients[client.id]?.enabled)
+                      onManage({ scope: client.id, enabled: true, sync: true, name: client.name });
+                  })}
                 >
                   <RefreshCw size={14} />
                 </button>
@@ -500,6 +485,8 @@ export function Clients({
             <ConnectionStatus {...{ client, state, busy, onManage }} />
             <ClientInjection key={"injection:" + client.id} {...{ client, state, act, busy, onManage }} />
             <header className="client-accounts-heading"><h3>官方账户 <span className="count">{client.accounts.length}</span></h3>
+              {["codex", "claude"].includes(client.id) && <button className="icon-button" aria-label="查看保留的对话" title="对话管理"
+                onClick={() => onConversations?.(client.id)}><MessagesSquare size={18} /></button>}
               {!client.nativeLoginOnly && <button className="button" ref={addButton} onClick={() => setAdding(true)}><Plus size={14} />添加账户</button>}
               {["kimi", "zcode"].includes(client.id) && <button className="icon-button" disabled={!!busy}
                 aria-label={"登录 " + client.name + " 账户"} title="登录账户"
@@ -804,18 +791,19 @@ function NativeLoginDialog({ preview, onClose, onDone }) {
 }
 
 function OAuthSwitchDialog({ preview, onClose, onDone }) {
-  const [pending, setPending] = useState(false), [error, setError] = useState("");
+  const [pending, setPending] = useState(false), [error, setError] = useState(""), [mode, setMode] = useState("none");
   return <Modal title={"切换 " + preview.clientName + " 账户"} className="oauth-switch-dialog"
     onClose={onClose} dismissible={!pending}
     fallbackFocus={() => document.querySelector('.client-heading button[aria-label="刷新状态"]')}>
-    <p>切换到 <strong>{preview.label}</strong>？当前登录会先保存。请先结束客户端内的任务；ASS 不会重启客户端。</p>
+    <p>切换到 <strong>{preview.label}</strong>？当前登录与本地对话会保留。</p>
+    <ClientProcessChoice plan={preview.lifecycle} value={mode} onChange={setMode} disabled={pending} actionLabel="仅切换账户" />
     <details className="account-origin"><summary>目标凭据位置</summary><code>{preview.target}</code></details>
     {error && <p className="error-box" role="alert">{error}</p>}
     <footer>
       <button className="button" disabled={pending} onClick={onClose} data-autofocus>取消</button>
       <button className="button primary" disabled={pending} onClick={async () => {
         setPending(true); setError("");
-        try { const result = await api.call("oauth-switch-apply", preview.ticket, true); onDone(result.message); }
+        try { const result = await api.call("oauth-switch-apply", preview.ticket, true, mode); onDone(result.message); }
         catch (e) { setError(e.message); }
         finally { setPending(false); }
       }}>{pending ? "切换中…" : "确定"}</button>

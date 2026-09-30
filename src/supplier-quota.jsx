@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { RefreshCw } from "./icons.jsx";
 import { ElapsedTime } from "./diagnostic-time.jsx";
 import { exactTime } from "./relative-time.mjs";
+import { UsageMeter } from './usage-meter.jsx';
+import { AccountPlan } from './account-profile.jsx';
 const api = window.ass;
 export function SupplierQuota({ p, state }) {
   const [loading, setLoading] = useState(false),
@@ -74,6 +76,7 @@ export function SupplierQuota({ p, state }) {
   return (
     <div className="supplier-quota" aria-label={p.name + " 额度"}>
       <div className="supplier-quota-heading">
+        {account && <AccountPlan account={account} />}
         {accounts.length > 1 ? (
           <select
             aria-label={p.name + " 额度账户"}
@@ -147,11 +150,7 @@ export function SupplierQuota({ p, state }) {
                   % 剩余
                 </strong>
               </div>
-              <progress
-                aria-label={p.name + " " + q.label + " 剩余额度"}
-                value={q.remainingPercent}
-                max={100}
-              />
+              <UsageMeter label={p.name + ' ' + q.label + ' 剩余额度'} value={q.remainingPercent} quota={q} />
             </div>
           ))}
         </div>

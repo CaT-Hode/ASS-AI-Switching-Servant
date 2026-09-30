@@ -5,6 +5,10 @@ const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const PROTOCOLS = ["openai-responses", "openai-chat", "anthropic"];
 const normalizeEffort = (x) => (x === "middle" ? "medium" : x);
 const displayEffort = (x) => (x === "middle" ? "medium" : x);
+// Public Codex IDs use ASS branding. Keep storage IDs stable so account
+// bindings, key identity, test history and old conversations remain intact.
+const codexProviderId = (id) => "ASS_" + crypto.createHash("sha256").update(id).digest("hex").slice(0, 24);
+const codexModelId = (provider, model) => codexProviderId(provider) + "::" + model;
 function defaults(
   provider,
   model,
@@ -243,7 +247,7 @@ function makeCatalog(officialModels, providers, overrides = {}) {
         tail(m.model).startsWith("gpt") && m.wireApi === "openai-responses";
       const entry = {
         ...template,
-        slug: p.id + "::" + m.model,
+        slug: codexModelId(p.id, m.model),
         display_name: p.name + " / " + m.displayName,
         description: `${p.name} · ${m.wireApi}`,
         visibility: "list",
@@ -282,4 +286,6 @@ module.exports = {
   parseImport,
   endpoint,
   makeCatalog,
+  codexProviderId,
+  codexModelId,
 };

@@ -12,7 +12,7 @@ import {
   GripVertical,
   RefreshCw,
   AlertTriangle,
-  BrandMotion,
+  Upload,
 } from "./icons.jsx";
 import { Modal, ModelEditor, ProviderEditor } from "./editors.jsx";
 import { ActionMenu } from "./menus.jsx";
@@ -129,7 +129,7 @@ function SourceCard({
         onClick={onSelect}
       />
       <header>
-        <span className="supplier-symbol motion-brand">
+        <span className="supplier-symbol">
           {brand && failedBrand !== brand ? (
             <img
               src={"./providers/" + brand + ".svg"}
@@ -140,7 +140,6 @@ function SourceCard({
           ) : (
             p.name.slice(0, 1).toUpperCase()
           )}
-          <BrandMotion brand={brand} />
         </span>
         <div className="supplier-title">
           <h2
@@ -590,6 +589,9 @@ export function Providers({
             {all.reduce((n, p) => n + p.models.length, 0)} 个模型 · {all.length}{" "}
             个来源
           </span>
+          <button className="button" disabled={!!busy} onClick={() => act("import", () => api.call("import"))}>
+            <Upload size={15} />导入配置
+          </button>
           <button className="button export-config-button" onClick={() => setExportOpen(true)}>
             <Download size={15} />导出配置
           </button>

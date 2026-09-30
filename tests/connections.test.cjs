@@ -82,6 +82,25 @@ function fakeRestarter() {
     async launch(_plan, beforeLaunch) { this.calls.push("launch"); beforeLaunch?.(); return { ok: true }; },
     async restart() { this.calls.push("restart"); return { ok: true }; } };
 }
+for (const id of ['codex', 'claude']) test(`${id} injection force-close stops before writes and never relaunches`, async (t) => {
+  const r = fakeRestarter(), f = connectionFixture(t, { restarter: r });
+  r.preview = async () => ({ available: true, applicable: true, closeAvailable: true });
+  r.close = async () => { r.calls.push('close'); assert.equal(f.connections.enabled[id], false); };
+  f.router.active[id] = 1; const p = await f.connections.preview(id, true);
+  const result = await f.connections.apply({ ticket: p.ticket, mode: 'safe', acknowledged: true, close: true });
+  assert.equal(result.closed, true); assert.equal(f.connections.enabled[id], true);
+  assert.deepEqual(r.calls, ['close']); assert.deepEqual(f.router.canceled, [id]);
+  assert.match(result.message, /未重新启动/);
+});
+test('close/restart cannot both be selected, and failed close never writes injection', async (t) => {
+  const r = fakeRestarter(), f = connectionFixture(t, { restarter: r });
+  r.preview = async () => ({ available: true, applicable: true, closeAvailable: true });
+  const p = await f.connections.preview('codex', true);
+  await assert.rejects(f.connections.apply({ ticket: p.ticket, mode: 'safe', acknowledged: true, close: true, restart: true }), /关闭目标/);
+  r.close = async () => { throw Error('close failed'); };
+  await assert.rejects(f.connections.apply({ ticket: p.ticket, mode: 'safe', acknowledged: true, close: true }), /close failed/);
+  assert.equal(f.config.attachCalls, 0); assert.equal(f.connections.enabled.codex, false); assert.equal(r.calls.includes('launch'), false);
+});
 
 test("direct exit preserves configuration and sessions even with active requests or broken inspection", t => {
   const f = connectionFixture(t, { router: { active: { codex: 1 } }, processes: { error: "inspection unavailable" } });
@@ -388,15 +407,23 @@ test("restore rechecks each target immediately before mutation and retains confl
   ]);
 });
 
-test("known legacy injection is adopted with baseline and immutable recovery backup", (t) => {
+test("unmanaged historical injection is untouched and explicit writes restore its exact original", (t) => {
   const root = temp(t), dir = accountDir(root), file = path.join(dir, "models.json");
-  const legacy = JSON.stringify({ providers: { ass: { baseUrl: "http://127.0.0.1:25819/harness/deep/v1", apiKey: "$ASS_LOCAL_TOKEN" } } });
-  fs.writeFileSync(file, legacy);
-  const injections = new InjectionFiles(root); injections.adoptLegacy();
-  assert.equal(injections.entries.length, 1); assert.equal(injections.entries[0].before, null);
-  const backups = fs.readdirSync(path.join(root, "backups")); assert.equal(backups.length, 1);
-  assert.equal(fs.readFileSync(path.join(root, "backups", backups[0]), "utf8"), legacy);
-  injections.restore(["pi"]); assert.equal(fs.existsSync(file), false);
+  const original = JSON.stringify({ providers: { ass: { baseUrl: "http://127.0.0.1:25819/harness/deep/v1", apiKey: "$ASS_LOCAL_TOKEN" } } });
+  fs.writeFileSync(file, original);
+  const injections = new InjectionFiles(root);
+  assert.equal(injections.entries.length, 0);
+  assert.equal(injections.restore(["pi"]), 0);
+  assert.equal(fs.readFileSync(file, "utf8"), original);
+  assert.equal(fs.existsSync(injections.file), false);
+  assert.equal(fs.existsSync(path.join(root, "backups")), false);
+  injections.write("pi", { dir, files: [["models.json", '{"managed":true}']] });
+  assert.equal(injections.entries[0].before, original);
+  assert.equal(JSON.parse(fs.readFileSync(injections.file, "utf8"))[0].before, original);
+  const restarted = new InjectionFiles(root);
+  assert.equal(restarted.restore(["pi"]), 1);
+  assert.equal(fs.readFileSync(file, "utf8"), original);
+  assert.equal(fs.existsSync(path.join(root, "backups")), false);
 });
 
 const providers = parseImport({ providers: [{ id: "deep", name: "Deep", baseUrl: "https://example.test", apiKey: "upstream-key", models: [{ model: "chat", wireApi: "openai-chat" }] }] });
@@ -456,13 +483,13 @@ test("cancelClient drains Codex uploads and upstreams without touching other cli
   }) });
   await router.start(0); t.after(() => router.stop());
   const headers = { authorization: "Bearer synthetic-local-test", "content-type": "application/json", "x-ass-probe-token": router.clientToken };
-  const send = (client) => request(router.port, client === "diagnostics" ? "/diagnostics/v1/responses" : `/clients/${client}/v1/responses`, {
+  const send = (client) => request(router.port, client === "diagnostics" ? "/diagnostics/v1/responses" : `/clients/${client === "codex" ? "ASS" : client}/v1/responses`, {
     method: "POST", headers, body: JSON.stringify({ model: client, stream: false }),
   }).catch((e) => e);
   const codex = send("codex"), claude = send("claude"), diagnostics = send("diagnostics");
   let upload;
   const uploadDone = new Promise((resolve) => {
-    upload = http.request({ hostname: "127.0.0.1", port: router.port, path: "/clients/codex/v1/responses", method: "POST", headers });
+    upload = http.request({ hostname: "127.0.0.1", port: router.port, path: "/clients/ASS/v1/responses", method: "POST", headers });
     upload.on("error", resolve); upload.write('{"model":"unfinished');
   });
   t.after(() => upload.destroy());

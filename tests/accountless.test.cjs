@@ -8,6 +8,7 @@ const { HarnessManager } = require("../core/harnesses.cjs");
 const { ProxyConfig } = require("../core/proxy-config.cjs");
 const { Connections } = require("../core/connections.cjs");
 const { InjectionFiles } = require("../core/injection-files.cjs");
+const { modelRef } = require("../core/client-policy.cjs");
 const { Router } = require("../core/router.cjs");
 const crypt = { isEncryptionAvailable: () => true, encryptString: s => Buffer.from(s), decryptString: b => b.toString() };
 function fixture(t) {
@@ -50,24 +51,32 @@ test("a fresh Codex home can inject and enter accountless mode without creating 
   assert.equal(f.proxy.status("codex", true).applied, true);
   assert.ok(!fs.existsSync(path.join(f.codex, "auth.json")));
 });
-test("desktop mode preserves OAuth bytes, restores native default, and survives restart with its local credential", async t => {
+test("desktop mode preserves OAuth bytes and shares the selected default with accountless mode", async t => {
   const f = fixture(t), auth = fs.readFileSync(path.join(f.codex, "auth.json"));
-  await f.apply("codex"); await f.apply("codex", true);
+  f.manager.setInjection("codex", { excludedProviders: [], defaultModel: modelRef("relay", "test-chat") });
+  await f.apply("codex");
+  const desktop = TOML.parse(fs.readFileSync(f.config.file, "utf8"));
+  assert.equal(desktop.model, "ASS_" + require("../core/models.cjs").codexModelId("relay", "test-chat").slice(4));
+  assert.equal(desktop.model_reasoning_effort, "medium");
+  await f.apply("codex", true);
+  assert.equal(TOML.parse(fs.readFileSync(f.config.file, "utf8")).model, desktop.model);
   const parsed = TOML.parse(fs.readFileSync(f.config.file, "utf8")), token = f.proxy.clients.codex.localToken;
-  assert.equal(parsed.model_providers.ass_router.requires_openai_auth, false);
-  assert.equal(parsed.model_providers.ass_router.experimental_bearer_token, token);
-  assert.match(parsed.model, /^relay::/);
-  assert.ok(JSON.parse(fs.readFileSync(f.config.catalog)).models.every(m => m.slug.startsWith("relay::")));
+  assert.equal(parsed.model_providers.ASS.requires_openai_auth, false);
+  assert.equal(parsed.model_providers.ASS.experimental_bearer_token, token);
+  assert.equal(parsed.model_provider, "ASS");
+  assert.match(parsed.model, /^ASS_[a-f0-9]+::/);
+  assert.ok(JSON.parse(fs.readFileSync(f.config.catalog)).models.every(m => m.slug.startsWith("ASS_")));
   assert.deepEqual(fs.readFileSync(path.join(f.codex, "auth.json")), auth);
   const reloaded = new ProxyConfig(f.data, crypt, f.manager, f.store, f.config);
   assert.equal(reloaded.clients.codex.localToken, token); assert.equal(reloaded.status("codex", true).applied, true);
   assert.equal(f.connections.snapshot().clients.codex.accountless, true);
   assert.ok(!JSON.stringify(f.connections.snapshot()).includes(token));
   await f.apply("codex", false);
-  const restored = TOML.parse(fs.readFileSync(f.config.file, "utf8"));
-  assert.equal(restored.model, "gpt-original"); assert.equal(restored.model_reasoning_effort, "high");
-  assert.equal(restored.model_providers.ass_router.requires_openai_auth, true);
-  assert.equal(restored.model_providers.ass_router.experimental_bearer_token, undefined);
+  const normal = TOML.parse(fs.readFileSync(f.config.file, "utf8"));
+  assert.equal(normal.model, desktop.model);
+  assert.equal(normal.model_reasoning_effort, "medium");
+  assert.equal(normal.model_providers.ASS.requires_openai_auth, true);
+  assert.equal(normal.model_providers.ASS.experimental_bearer_token, undefined);
   assert.deepEqual(fs.readFileSync(path.join(f.codex, "auth.json")), auth);
 });
 test("Claude has a credential-isolated home, only injected model choices, no account selection and no permission bypass", async t => {
@@ -211,7 +220,7 @@ test("in-flight requests block a mode change and configuration changes invalidat
 test("accountless router rejects OAuth, non-injected and subscription models before network access; discovery needs its own credential", async t => {
   const f = fixture(t); await f.apply("codex"); await f.apply("codex", true); await f.apply("claude"); await f.apply("claude", true);
   const base = `http://127.0.0.1:${f.router.port}`;
-  const send = (client, token, model) => fetch(base + `/clients/${client}/v1/responses`, { method: "POST", headers: { authorization: "Bearer " + token }, body: JSON.stringify({ model, input: "OK" }) });
+  const send = (client, token, model) => fetch(base + `/clients/${client === "codex" ? "ASS" : client}/v1/responses`, { method: "POST", headers: { authorization: "Bearer " + token }, body: JSON.stringify({ model, input: "OK" }) });
   assert.equal((await send("codex", "synthetic-oauth", "relay::test-chat")).status, 401);
   assert.equal((await send("codex", f.proxy.clients.codex.localToken, "gpt-official")).status, 403);
   assert.equal((await send("codex", f.proxy.clients.codex.localToken, "foreign::model")).status, 404);
@@ -219,6 +228,6 @@ test("accountless router rejects OAuth, non-injected and subscription models bef
   const discovery = token => fetch(base + "/clients/claude/models/v1/models", { headers: { authorization: "Bearer " + token } });
   assert.equal((await discovery(f.proxy.clients.codex.localToken)).status, 401);
   const models = await (await discovery(f.proxy.clients.claude.localToken)).json();
-  assert.deepEqual(models.data.map(m => m.id), ["relay::test-claude", "claude-ass/relay::test-chat"]);
+  assert.deepEqual(models.data.map(m => m.id), require("../core/claude-models.cjs").claudeModels(f.proxy.clients.claude.providers).map(m => m.discoveryId));
   assert.equal(models.has_more, false); assert.equal(f.calls.length, 0);
 });

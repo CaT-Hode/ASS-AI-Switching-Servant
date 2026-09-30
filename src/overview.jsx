@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { UsageMeter } from './usage-meter.jsx';
 import {
   Activity,
   ArrowDownLeft,
@@ -341,11 +342,7 @@ function AccountCard({ row, refresh, busy }) {
                   {Number(q.remainingPercent.toFixed(1))}% <small>剩余</small>
                 </strong>
               </div>
-              <progress
-                aria-label={q.label + " 剩余额度"}
-                value={q.remainingPercent}
-                max="100"
-              />
+              <UsageMeter label={q.label + ' 剩余额度'} value={q.remainingPercent} quota={q} />
             </div>
           ))}
         </div>

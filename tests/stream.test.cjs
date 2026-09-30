@@ -40,7 +40,7 @@ test("official Responses missing Content-Type is sniffed safely, HTML is rejecte
   router.port = router.server.address().port;
   t.after(() => router.stop());
   const request = () =>
-    fetch("http://127.0.0.1:" + router.port + "/v1/responses", {
+    fetch("http://127.0.0.1:" + router.port + "/clients/ASS/v1/responses", {
       method: "POST",
       headers: {
         authorization: "Bearer synthetic",

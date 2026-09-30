@@ -210,7 +210,7 @@
 .exit-options dd span { display: block; }
 .exit-error { margin-top: 12px; font-size: 12px; }
 .connection-restart { margin-top: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
-.connection-restart-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border-radius: 9px; background: var(--surface); }
+.connection-restart-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 3px; border-radius: 9px; background: var(--surface); }
 .connection-restart label { position: relative; min-width: 0; font-size: 13px; cursor: pointer; }
 .connection-restart input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; }
 .connection-restart label span { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; border-radius: 7px; color: var(--muted); transition: color 120ms ease-out, background 120ms ease-out; }

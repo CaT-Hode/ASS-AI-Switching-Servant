@@ -145,7 +145,7 @@ test("five harness config generators never embed upstream keys", () => {
     if (id === "codex")
       assert.equal(
         TOML.parse(plan.files.find(([f]) => f === "config.toml")[1])
-          .model_providers.ass_api.env_key,
+          .model_providers.ASS.env_key,
         "ASS_LOCAL_TOKEN",
       );
     if (id === "dsh")

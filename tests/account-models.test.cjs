@@ -159,7 +159,7 @@ test("five inline model fields persist; rename preserves provider exclusion and 
   assert.deepEqual(reload().state.injections.pi.excludedProviders, ["work"]);
   const entry = JSON.parse(
     fs.readFileSync(path.join(dir, "catalog-draft.json")),
-  ).models.find((m) => m.slug === "work::renamed");
+  ).models.find((m) => m.slug === require("../core/models.cjs").codexModelId("work", "renamed"));
   assert.equal(entry.display_name, "Work / Changed");
   assert.equal(entry.context_window, 96000);
 });

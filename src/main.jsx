@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Network,
   LayoutGrid,
   Boxes,
   Activity,
-  Upload,
   ChevronRight,
   Settings2,
   X,
@@ -17,6 +16,7 @@ import {
   Loader2,
   Play,
   Square,
+  MessagesSquare,
 } from "./icons.jsx";
 import "./style.css";
 import "./controls.css";
@@ -37,6 +37,7 @@ import { DiagnosticDetails } from "./diagnostic-details.jsx";
 import "./theme.css";
 import "./motion.css";
 const api = window.ass;
+const Conversations = lazy(() => import("./conversations.jsx").then((m) => ({ default: m.Conversations })));
 const date = (value) =>
   new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
 function Button({
@@ -90,7 +91,6 @@ function RequestTable({ rows }) {
         <div className="empty">
           <Activity size={26} />
           <p>等待第一个请求</p>
-          <small>连接检测或 Codex 请求会显示在这里，不记录对话内容。</small>
         </div>
       ) : (
         rows.slice(0, 8).map((r, i) => (
@@ -127,8 +127,7 @@ function Diagnostics({ state, providers, act, busy }) {
             模型连接测试 <span className="count">{available}</span>
           </h2>
           <p className="muted">
-            每个已启用模型发送一条小请求，检查完整响应；可能计费。最多同时测试 2
-            个。
+            测试可能产生 API 费用。
           </p>
         </div>
         {batch?.running ? (
@@ -287,6 +286,7 @@ function App() {
     [toast, setToast] = useState(null);
   const [connectionRequest, setConnectionRequest] = useState(null);
   const [providerDetail, setProviderDetail] = useState(null);
+  const [conversationTarget, setConversationTarget] = useState(null);
   function remember(input) {
     api
       .call("ui-preferences", input)
@@ -396,6 +396,7 @@ function App() {
     overview: "路由总览",
     providers: "供应商与模型",
     clients: "客户端与账户",
+    conversations: "对话管理",
     diagnostics: "连接诊断",
     updates: "关于 ASS",
   }[view];
@@ -434,6 +435,7 @@ function App() {
             ["overview", LayoutGrid, "路由总览"],
             ["providers", Boxes, "供应商与模型"],
             ["clients", Monitor, "客户端与账户"],
+            ["conversations", MessagesSquare, "对话管理"],
             ["diagnostics", Activity, "连接诊断"],
             ["updates", Download, "关于 ASS"],
           ].map(([id, Icon, label]) => (
@@ -475,20 +477,7 @@ function App() {
         </div>
       </aside>
       <main>
-        <header className="page-header">
-          <div>
-            <h1>{title}</h1>
-          </div>
-          {view === "providers" && <div className="actions">
-            <Button
-              icon={Upload}
-              busy={busy === "import"}
-              onClick={() => act("import", () => api.call("import"))}
-            >
-              导入配置
-            </Button>
-          </div>}
-        </header>
+        <h1 className="page-heading-accessible">{title}</h1>
         {state.startupError && (
           <div className="error-box">{state.startupError}</div>
         )}
@@ -520,7 +509,13 @@ function App() {
             initialClient={clientTarget}
             onSelectClient={setClientTarget}
             openProvider={openProvider}
+            onConversations={(id) => { setConversationTarget(id); setView("conversations"); }}
           />
+        ) : view === "conversations" ? (
+          <Suspense fallback={<div className="empty"><Loader2 className="spin" /><p>读取对话管理…</p></div>}>
+            <Conversations state={state} initialHarness={conversationTarget}
+              onClient={(id) => { setClientTarget(id); setView("clients"); }} />
+          </Suspense>
         ) : view === "updates" ? (
           <Updates {...{ state, act, busy }} />
         ) : (

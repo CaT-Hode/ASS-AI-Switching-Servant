@@ -24,6 +24,14 @@ ASS 是独立实现，不是原产品的官方版本。界面不沿用旧产品�
 
 这些链接用于说明兼容性依据，不代表原作者对 ASS 的认可。第三方订阅使用范围和计费遵循相应供应商条款。
 
+## Codex 历史入口与重启兼容（2026-09-29）
+
+- 用户指定的 AiMaMi 公开树 `add37271e29ba81ee17f15f444a24925af50bb87`，`src-tauri/src/platform/process.rs`：参考停止客户端、等待退出、应用配置、恢复安装入口的顺序。没有照搬按进程名结束所有实例的做法；当前本机 Codex 的 AppX 清单入口为 `app/ChatGPT.exe`，ASS 动态读取清单并验证进程身份。
+- OpenAI Codex `rust-v0.158.0-alpha.2` 的 `codex-rs/model-provider-info/src/lib.rs`、`core/src/config/mod.rs`：`openai_base_url` 参与构建内置 OpenAI provider；普通内置 provider 不能通过同名配置覆盖。ASS 使用该配置管理官方入口，不重写聊天记录。按用户要求，当前只保留 `ASS` provider 与当前路由入口；旧别名、旧接入记录的自动迁移代码已移除。
+- 同版本 `codex-rs/core/src/client.rs`：WebSocket 握手返回 HTTP 426 会进入 HTTP 回退。ASS 没有实现 WebSocket 代理，不用 405 冒充回退成功。
+- 官方配置文档本轮获取返回 403；以上行为依据公开源码与隔离测试，不把无法打开的文档当成已验证证据。运行时验收范围由实际测试结果单独说明。
+- 0.2.5 的本机 `codex-cli 0.158.0-alpha.2.1` 隔离运行完成四条调用（含当时存在的旧别名）。0.2.6 的测试脚本仅保留内置 `openai` → 第三方 / 官方模型、`ASS` → 第三方三条当前入口；旧别名和旧地址改为拒绝断言。测试使用虚构凭据、本地 ASS 与内存上游，不验证真实上游服务，也不关闭运行中的桌面实例。
+
 ## v0.1.1 官方账户与 API 入口
 
 - [OpenRouter PKCE](https://openrouter.ai/docs/guides/overview/auth/oauth)：S256、localhost 回调、`/api/v1/auth/keys` 换取 API Key。实现不是订阅 OAuth 通用移植器。
@@ -48,6 +56,19 @@ ASS 是独立实现，不是原产品的官方版本。界面不沿用旧产品�
 - [OpenCode providers](https://opencode.ai/docs/providers/)：原生 `auth.json`，供应商分别保存凭据。
 - [Pi AuthStorage 源码](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/auth-storage.ts)：`oauth` 与 `api_key` 记录，读取时不执行动态密钥命令。
 - 本机 `D:\deepseek-harness\packages\credentials\credentials-local\README.md` 与 `packages\llm\llm-pi-ai\src\auth.ts`：版本化 `.credentials.yaml`、`refs`、`records` 和 `llm-pi-ai/<provider>` grant 结构。只实现已确认格式，不把任意插件 grant 误判为 OAuth。
+
+## 本地对话与 OAuth 保留
+
+- [Claude Code Manage sessions](https://code.claude.com/docs/en/sessions)：CLI JSONL 目录、`CLAUDE_CONFIG_DIR`、绝对 transcript 路径续聊，以及 CLI / Desktop / Web 历史分离的边界。按本机 2.1.283 可用行为适配。
+- [OpenAI Codex TUI / resume 实现](https://github.com/openai/codex/blob/rust-v0.158.0-alpha.2/codex-rs/tui/src/lib.rs) 与本机 CLI 帮助：UUID 续聊与本地会话选择。官方 Codex 文档本次仍无法打开，未把搜索摘要当作实现依据。
+- [AiMaMi 中文 README](https://github.com/borawong/AiMaMi/blob/main/README-cn.md) 的本地会话管理与历史续聊定位用于需求对照；其公开源码不含完整会话管理，未宣称照搬缺失的实现。保留、加密、恢复与 CC 支持由 ASS 自行实现。
+
+## 项目级跨客户端对话同步
+
+- [pi 会话格式与 SessionManager](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/sessions.md)：v3 JSONL 父链、活动分支、压缩摘要和原生会话写回。本轮以安装的 pi SessionManager 验证可读上下文及写回收集，不把树的其他分支拼进活动上下文。
+- [OpenCode CLI](https://opencode.ai/docs/cli/)：官方 `import` / `export` 与 `--session`。本轮用隔离原生 CLI 完成导入 / 导出，并只读其 SQLite 消息；生成 ID 按原生字典顺序有序，不绕过原生导入写数据库。
+- [DeepSeek Harness 持久化](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/persistence.md) 与本机 `D:\deepseek-harness\packages\session\session-format-catalog`：日志世代、Zstandard、目录编码、turn / step / message 结构。生成 v3 经本机严格校验器接受；未知版本拒绝强制转换。
+- Codex 与 CC 的续聊依据上节；本轮另做 Codex → CC → Codex 的真实 CLI 回环，以合成 OAuth 与本地模拟上游确认共享历史和当前账户使用。跨格式映射、共同前缀去重和分支保留为 ASS 独立实现，不声称是厂商支持的跨客户端协议。
 
 ## 视觉
 

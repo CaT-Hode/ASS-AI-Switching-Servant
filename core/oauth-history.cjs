@@ -285,6 +285,13 @@ class OAuthHistory {
       } catch {}
     }
     client.accounts.push(...records.filter((e) => !current.has(e.id)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((e) => this.publicEntry(e)));
+    const seen = new Map();
+    for (const a of client.accounts) if (a.oauthRecordId) {
+      const old = seen.get(a.oauthRecordId);
+      if (!old || a.oauthCurrent && !old.oauthCurrent || !old.oauthCurrent && a.id === client.selected) seen.set(a.oauthRecordId, a);
+    }
+    for (const a of client.accounts) if (a.oauthRecordId && a.id === client.selected) client.selected = seen.get(a.oauthRecordId).id;
+    client.accounts = client.accounts.filter((a) => !a.oauthRecordId || seen.get(a.oauthRecordId) === a);
     client.oauthHistoryError = this.error || this.errors[client.id] || "";
   }
   preview(harness, id) {

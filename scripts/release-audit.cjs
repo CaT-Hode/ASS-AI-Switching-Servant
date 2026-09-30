@@ -27,6 +27,8 @@ if (process.env.ASS_AUDIT_EXPORT)
   collect(JSON.parse(fs.readFileSync(process.env.ASS_AUDIT_EXPORT, "utf8")));
 function check(name, buffer, packaged = false) {
   const normalized = name.replaceAll("\\", "/");
+  if (/(?:^|\/)(?:conversation-library|project-conversations)(?:\/|$)|\.ass-session$/i.test(normalized))
+    throw Error("Private conversation snapshot found: " + normalized);
   if (forbidden.test(normalized) || /(?:^|\/)(?:protocols\.enc\.json|claude-desktop-gateway\.json|claude_desktop_config\.json)$/i.test(normalized) || /(?:^|\/)configLibrary\//i.test(normalized))
     throw Error("Private filename found: " + normalized);
   if (/^\/?backups\//.test(normalized)) throw Error("Private backup found: " + normalized);

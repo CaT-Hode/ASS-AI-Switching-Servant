@@ -28,16 +28,17 @@ test("stalled success/error bodies are cancelled and never marked unsupported", 
     assert.equal(result.status, "unknown"); assert.equal(cancelled, true); assert.equal(result.unsupported, undefined);
   }
 });
-test("clients/ASS is a Codex alias with identical credential, switch and applied-snapshot boundaries", async t => {
+test("clients/ASS is the only Codex entry; removed clients/codex never accesses applied data", async t => {
   let enabled = true; const clients = [], calls = [];
   const router = new Router({ getState: id => { clients.push(id); return { providers: [{ ...p, models: [m] }] }; }, allowClient: id => id === "codex" && enabled,
     fetchUpstream: async (url, init) => { calls.push({ url, init }); return new Response('data: {"type":"response.completed"}\n\n', { headers: { "content-type": "text/event-stream" } }); } });
   await router.start(0); t.after(() => router.stop());
-  const send = route => fetch(`http://127.0.0.1:${router.port}/clients/${route}/v1/responses`, { method: "POST", headers: { authorization: "Bearer " + router.clientToken }, body: JSON.stringify({ model: "fixture::fixture", stream: true }) });
-  for (const route of ["ASS", "codex"]) { const r = await send(route); assert.equal(r.status, 200); await r.text(); }
-  assert.deepEqual(clients, ["codex", "codex"]); assert.equal(calls.length, 2);
+  const send = route => fetch(`http://127.0.0.1:${router.port}/clients/${route}/v1/responses`, { method: "POST", headers: { authorization: "Bearer " + router.clientToken }, body: JSON.stringify({ model: require("../core/models.cjs").codexModelId("fixture", "fixture"), stream: true }) });
+  const r = await send("ASS"); assert.equal(r.status, 200); await r.text();
+  const retired = await send("codex"); assert.equal(retired.status, 404); await retired.text();
+  assert.deepEqual(clients, ["codex"]); assert.equal(calls.length, 1);
   enabled = false;
-  assert.equal((await send("ASS")).status, 503); assert.equal(calls.length, 2);
+  assert.equal((await send("ASS")).status, 503); assert.equal(calls.length, 1);
   assert.match(prepareConfig("", "catalog.json").text, /clients\/ASS\/v1/);
   const plan = routeConfig("codex", p, m, "C:/fixture", "local", { models: [] }, 12345);
   assert.match(plan.files.find(([name]) => name === "config.toml")[1], /12345\/clients\/ASS\/v1/);

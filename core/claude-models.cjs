@@ -1,13 +1,16 @@
-// CC gateway discovery accepts only IDs containing "claude" or "anthropic".
-// These are local aliases, not upstream model renames or capability claims.
-const PREFIX = "claude-ass/";
+const crypto = require("node:crypto");
+// Claude Desktop checks the entire gateway route, including provider and model
+// segments, for non-Anthropic vendor names. Keep the picker ID opaque; the
+// visible label and the upstream model remain the actual provider/model.
+const PREFIX = "claude-ass-";
 const qualified = (provider, model) => provider.id + "::" + model.model;
+const alias = model => PREFIX + crypto.createHash("sha256").update(model).digest("hex").slice(0, 32);
 function claudeModels(providers) {
   return providers.filter(p => p.enabled && p.apiKey).flatMap(p => p.models
     .filter(m => m.enabled && ["anthropic", "openai-responses", "openai-chat"].includes(m.wireApi))
     .map(m => {
       const model = qualified(p, m);
-      return { model, discoveryId: /claude|anthropic/i.test(model) ? model : PREFIX + model,
+      return { model, discoveryId: alias(model),
         label: p.name + " · " + (m.displayName || m.model), description: m.model };
     }));
 }

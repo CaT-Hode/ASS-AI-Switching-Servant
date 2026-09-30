@@ -123,10 +123,13 @@ async function exitBy(dialog, name) {
     assert.equal(JSON.parse(fs.readFileSync(path.join(data, "claude-desktop/claude_desktop_config.json"), "utf8")).deploymentMode, "3p");
     const discovered = await fetch(gatewayUrl + "/v1/models", { headers: { authorization: "Bearer " + gatewayKey } });
     assert.equal(discovered.status, 200);
-    assert.deepEqual((await discovered.json()).data.map(model => model.id), ["claude-ass/fixture::dual", "claude-ass/fixture::chat-only"]);
+    const discoveredIds = (await discovered.json()).data.map(model => model.id);
+    assert.deepEqual(discoveredIds, desktopProfile.inferenceModels.map(model => model.name));
+    assert.equal(discoveredIds.length, 2);
+    assert.ok(discoveredIds.every(id => /^claude-ass-[a-f0-9]{32}$/.test(id)));
     const response = await fetch(gatewayUrl + "/v1/messages", { method: "POST",
       headers: { authorization: "Bearer " + gatewayKey, "content-type": "application/json" },
-      body: JSON.stringify({ model: "claude-ass/fixture::dual", messages: [{ role: "user", content: "Say OK" }], max_tokens: 16, stream: true }) });
+      body: JSON.stringify({ model: discoveredIds[0], messages: [{ role: "user", content: "Say OK" }], max_tokens: 16, stream: true }) });
     assert.equal(response.status, 200);
     assert.match(await response.text(), /OK/);
     await page.locator(".client-provider summary").click();

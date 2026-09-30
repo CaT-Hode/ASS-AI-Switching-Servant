@@ -14,6 +14,16 @@ const additional = require("../core/additional-harnesses.cjs");
 const { modelSources } = require("../core/model-inventory.cjs");
 const crypt = { isEncryptionAvailable: () => true, encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() };
 const KEY = "synthetic-key-a", OTHER = "synthetic-key-b", BASE = "https://api.deepseek.com";
+test('DSH native account and identical saved API display once before/after model injection; other keys remain', (t) => {
+  const f = fixture(t); configured(f, 'dsh');
+  const inspect = () => f.manager.snapshot({ accountsOnly: true }).clients.find((c) => c.id === 'dsh').accounts;
+  const before = inspect(); assert.equal(before.filter((a) => a.providerId === 'same' || a.providerId === 'alias').length, 0);
+  assert.equal(before.filter((a) => a.kind === 'native').length, 1); assert.ok(before.some((a) => a.providerId === 'other'));
+  f.manager.state.selected.dsh = 'api:same';
+  const snap = f.manager.snapshot({ accountsOnly: true }).clients.find((c) => c.id === 'dsh');
+  assert.equal(snap.selected, before.find((a) => a.kind === 'native').id);
+  f.native.sync('dsh'); assert.equal(inspect().length, before.length);
+});
 const put = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, typeof data === "string" ? data : JSON.stringify(data)); return file; };
 function fixture(t, env = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ass-api-discovery-"));
@@ -223,4 +233,24 @@ test("partial aggregation hides only promoted models, not unsupported models bel
       { model: "good", nativeProvider: "relay" }, { model: "native-only", nativeProvider: "relay" },
     ] } } } }, nativeApiModels: [{ clientId: "pi", accountId: "account", nativeProvider: "relay", model: "good", supplierId: "supplier" }] });
   assert.deepEqual(sources.find((s) => s.id === "native-pi").models.map((m) => m.model), ["native-only"]);
+});
+test("native DSH catalog aliases do not create a second card for the same key and model", () => {
+  const supplier = { id: "deepseek-key", models: [{ model: "deepseek-flash" }, { model: "deepseek-v4-pro" }] };
+  const client = { id: "dsh", name: "DeepSeek Harness", accounts: [{
+    id: "native-dsh", kind: "native", authType: "api", supplierId: supplier.id,
+  }] };
+  const directories = { "native-dsh": { accounts: { "native-dsh": { models: [
+    { model: "deepseek-flash", nativeProvider: "deepseek" },
+    { model: "deepseek-v4-pro", nativeProvider: "deepseek" },
+  ] } } } };
+  const nativeApiModels = [{ clientId: "dsh", accountId: "native-dsh", nativeProvider: "deepseek-official",
+    model: "deepseek-flash", supplierId: supplier.id }];
+  const sources = modelSources({ officialModels: [], providers: [supplier] }, { clients: [client] },
+    { directories, nativeApiModels });
+  assert.equal(sources.some(s => s.id === "native-dsh"), false);
+  assert.equal(sources.find(s => s.id === supplier.id).models.length, 2);
+  directories["native-dsh"].accounts["native-dsh"].models.push({ model: "native-only", nativeProvider: "deepseek" });
+  const unpromoted = modelSources({ officialModels: [], providers: [supplier] }, { clients: [client] },
+    { directories, nativeApiModels }).find(s => s.id === "native-dsh");
+  assert.deepEqual(unpromoted.models.map(m => m.model), ["native-only"]);
 });

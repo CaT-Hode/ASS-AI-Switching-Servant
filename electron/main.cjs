@@ -18,7 +18,7 @@ const os = require("node:os");
 const { Router } = require("../core/router.cjs");
 const { Store } = require("../core/store.cjs");
 const { ConfigManager, atomic } = require("../core/config.cjs");
-const { normalizeModel } = require("../core/models.cjs");
+const { normalizeModel, codexModelId } = require("../core/models.cjs");
 const { exportConfig } = require("../core/config-export.cjs");
 const { BALANCE_PRESETS, queryBalance } = require("../core/balance.cjs");
 const { PROVIDER_PRESETS } = require("../core/presets.cjs");
@@ -50,6 +50,9 @@ const {
 } = require("../core/official-services.cjs");
 const { NativeKeyStore } = require("../core/native-key-store.cjs");
 const { OAuthHistory } = require("../core/oauth-history.cjs");
+const { ConversationLibrary } = require("../core/conversations.cjs");
+const { ProjectConversations } = require("../core/project-conversations.cjs");
+const { switchClientAccount } = require("../core/client-account-switch.cjs");
 const { NativeLogin } = require("../core/native-login.cjs");
 const { OpenRouterAuth } = require("../core/openrouter-auth.cjs");
 const { UpdateChecker } = require("../core/updates.cjs");
@@ -99,6 +102,8 @@ let window,
   claudeDesktop,
   nativeKeys,
   oauthHistory,
+  conversations,
+  projectConversations,
   nativeLogin,
   accountInfo,
   diagnosticHistory,
@@ -356,12 +361,21 @@ async function refreshAccountInfo(id, options) {
 function snapshot() {
   return withReadScope(buildSnapshot);
 }
-async function refreshClientState() {
+async function refreshClientState(clientId) {
   // Manual refresh is one complete state transition, not a partial repaint.
   await processes.refresh();
   await harnesses.refreshOAuth({ rediscover: true });
   oauthHistory.scan({ immediate: true });
   await syncNativeSuppliers();
+  if (typeof clientId === "string") {
+    const client = informationClient(clientId);
+    if (!client) throw Error("未知客户端");
+    const providers = new Map(client.accounts.map((account) => {
+      const provider = informationProvider(client, account); return [provider?.id, provider];
+    }).filter(([id]) => id));
+    await Promise.allSettled([...providers.values()].filter((p) => accountInfo.public(p).canRefresh)
+      .map((p) => refreshAccountInfo(p.id)));
+  }
   return snapshot();
 }
 function buildSnapshot() {
@@ -563,7 +577,7 @@ async function diagnose(providerId, modelName, signal) {
   ]);
   diagnosticControllers.set(key, controller);
   let result;
-  const model = official ? name : providerId + "::" + name;
+  const model = official ? name : codexModelId(providerId, name);
   const body = {
     model,
     instructions: "Reply concisely.",
@@ -826,6 +840,16 @@ function showWindow() {
       sandbox: true,
     },
   });
+  if (process.platform === "win32") {
+    // Keep taskbar identity explicit when a versioned installation is replaced.
+    window.setAppDetails({
+      appId: "local.ass.desktop",
+      appIconPath: app.isPackaged ? process.execPath : path.join(__dirname, "../assets/ass.ico"),
+      appIconIndex: 0,
+      relaunchCommand: app.isPackaged ? `"${process.execPath}"` : `"${process.execPath}" "${app.getAppPath()}"`,
+      relaunchDisplayName: "ASS",
+    });
+  }
   window.loadFile(path.join(__dirname, "../dist/index.html"));
   window.on("show", push);
   window.on("restore", push);
@@ -918,12 +942,6 @@ else {
       });
       config = new ConfigManager(codexDir, dataDir, servicePort);
       const injections = new InjectionFiles(dataDir);
-      try {
-        injections.adoptLegacy();
-      } catch {
-        injections.error =
-          "旧注入记录识别失败，请检查独立账户目录；没有删除旧配置";
-      }
       processes = new ClientProcesses({ dataDir });
       harnesses = new HarnessManager(
         dataDir,
@@ -973,6 +991,7 @@ else {
       });
       restarter = new ClientRestart({
         desktop: (id) => harnesses.desktop(id),
+        processes,
         // Never discover or terminate real desktop processes from an isolated QA.
         ...(testMode ? { adapter: { inventory: async () => ({ apps: [], rows: [] }) } } : {}),
       });
@@ -999,6 +1018,40 @@ else {
         external: { "antigravity-keyring": require("../core/antigravity-status.cjs").keyringAdapter },
         onChange: push,
       });
+      conversations = new ConversationLibrary({ dataDir, crypto: safeStorage,
+        sources: () => harnesses.conversationSources() });
+      projectConversations = new ProjectConversations({ dataDir, crypto: safeStorage,
+        sources: () => harnesses.conversationSources(), history: async () => {
+          await conversations.refresh(true);
+          return conversations.entries.filter((r) => r.nativePresent || r.snapshot).map((r) => conversations.publicRow(r));
+        }, assertIdle: async (id) => {
+          await processes.refresh();
+          if (processes.sessions.some((r) => r.account === 'project:' + id && r.status !== 'gone'))
+            throw Error('请先关闭此项目由 ASS 启动的续聊窗口，再关闭同步');
+        }, releaseImports: async (plan) => {
+          const codecs = require('../core/project-codecs.cjs');
+          for (const item of [...plan.returns, ...plan.imports]) {
+            const launcher = harnesses.launcher('opencode'); if (!launcher.ready) throw Error('请配置 OpenCode CLI 后再关闭此项目同步');
+            const current = harnesses.projectConversationPlan('opencode', item.cwd);
+            if (codecs.pathKey(current.dir) !== codecs.pathKey(item.dir)) throw Error('OpenCode 数据目录已变化，未删除旧目录的记录');
+            if (item.signature && codecs.hash(JSON.stringify(codecs.openCodeBundle(path.join(item.dir, 'opencode.db'), item.sessionId))) !== item.signature)
+              throw Error('OpenCode 会话已改变，请重新关闭同步');
+            await new Promise((resolve, reject) => require('node:child_process').execFile(launcher.executable,
+              [...launcher.args, ...(item.signature ? ['session', 'delete', item.sessionId] : ['import', item.file])],
+              { cwd: item.cwd, env: current.env, windowsHide: true, timeout: 30000, maxBuffer: 1024 ** 2 },
+              (error) => error ? reject(Error('OpenCode 归回或清理失败，原会话与 ASS 备份保留；请重试')) : resolve()));
+            if (item.signature) {
+              let removed = false;
+              try { codecs.openCodeBundle(path.join(item.dir, 'opencode.db'), item.sessionId); }
+              catch (error) { if (/会话不存在/.test(error.message)) removed = true; else throw error; }
+              if (!removed) throw Error('OpenCode 未移除同步副本，未关闭同步；请重试');
+            } else {
+              const returned = codecs.openCodeBundle(path.join(item.dir, 'opencode.db'), item.sessionId);
+              if (codecs.pathKey(returned.info.directory) !== codecs.pathKey(item.cwd)) throw Error('OpenCode 归回位置不一致，未关闭同步');
+            }
+          }
+        } });
+      projectConversations.start();
       nativeLogin = new NativeLogin({ harnesses, history: oauthHistory, processes });
       try {
         if (connections.routerEnabled()) await router.start(servicePort);
@@ -1163,16 +1216,85 @@ else {
       register("oauth-switch-preview", async (id, account) => {
         if (connections.busy) throw Error("正在修改客户端接入，请稍后切换账户");
         await nativeLogin.assertIdle(id);
-        return oauthHistory.preview(id, account);
+        const local = ["codex", "claude"].includes(id) ? await conversations.list({ harness: id }) : null;
+        const preview = oauthHistory.preview(id, account);
+        await processes.refresh();
+        const lifecycle = ["codex", "claude"].includes(id) ? await restarter.preview([id]) : null;
+        oauthHistory.tickets.get(preview.ticket).lifecycle = lifecycle;
+        return { ...preview, lifecycle: restarter.public(lifecycle), conversations: local ? { count: local.count, retained: local.retained } : null };
       });
-      register("oauth-switch-apply", (ticket, confirmed) => connections.launch(async () => {
-        // No process termination and no implicit connection changes. The small
-        // confirmation warns about existing sessions; tokens stay in main only.
-        if (router.active || probeControllers.size || diagnosticControllers.size)
-          throw Error("ASS 仍有请求执行中，请等待结束后再切换账户");
-        await nativeLogin.assertIdle(oauthHistory.tickets.get(ticket)?.harness);
-        return oauthHistory.apply(ticket, confirmed);
+      register("oauth-switch-apply", (ticket, confirmed, mode = "none") => connections.launch(() =>
+        switchClientAccount({ history: oauthHistory, library: conversations, restarter, router, blocked: connections.blocked,
+          ticket, confirmed, mode, selectTarget: (id) => harnesses.selectOAuthTarget(id), assertIdle: (id) => nativeLogin.assertIdle(id),
+          extraActive: () => probeControllers.size + diagnosticControllers.size })));
+      register("conversations-list", (input) => conversations.list(input));
+      register("project-conversations-list", () => projectConversations.list());
+      register("project-conversations-configure", (id, options) => projectConversations.configure(id, options));
+      register("project-conversations-sync", (id) => projectConversations.sync(id));
+      register("project-conversations-threads", (id, input) => projectConversations.threads(id, input));
+      register("project-conversations-records", (id, input) => projectConversations.records(id, input));
+      register("project-conversations-native-preview", (id, before) => {
+        const row = projectConversations.record(id);
+        return row.libraryId ? conversations.preview(row.libraryId, before) : projectConversations.nativePreview(id, before);
+      });
+      register("project-conversations-native-resume", (id) => connections.launch(async () => {
+        const row = projectConversations.record(id), launcher = harnesses.launcher(row.harness);
+        if (!launcher.ready) throw Error(launcher.message);
+        const plan = row.libraryId ? harnesses.conversationPlan(row.harness, row)
+          : harnesses.projectConversationPlan(row.harness, row.cwd, row.sessionId, row.file);
+        if (row.libraryId) { const staged = await conversations.stage(row.libraryId, plan.dir); if (row.harness === 'claude') plan.args = ['--resume', staged.file]; }
+        if (connections.enabled[row.harness] && connections.needsRouter(row.harness) && !router.server) await router.start(servicePort);
+        const result = await harnesses.launchPlan(row.harness, plan, 'conversation:' + row.sessionId, 'resume', launcher);
+        return { ...result, message: result.message || (row.harness === 'dsh' ? plan.hint : '已打开原客户端会话，使用当前账户。') };
       }));
+      register("project-conversations-preview", (id, thread, before) => projectConversations.preview(id, thread, before));
+      register("project-conversations-resume", (id, thread, harness) => connections.launch(async () => {
+        const launcher = harnesses.launcher(harness); if (!launcher.ready) throw Error(launcher.message);
+        const project = projectConversations.project(id), initial = harnesses.projectConversationPlan(harness, project.cwd);
+        const prepared = await projectConversations.prepare(id, thread, harness, initial.dir);
+        if (harness === "opencode") {
+          // Use the official importer: never splice rows into a live native DB.
+          await new Promise((resolve, reject) => require("node:child_process").execFile(launcher.executable,
+            [...launcher.args, "import", prepared.file], { cwd: project.cwd, env: initial.env, windowsHide: true, timeout: 30000, maxBuffer: 1024 ** 2 },
+            (error, stdout) => error || !stdout.includes("Imported session:") ? reject(Error("OpenCode 原生导入失败，共享记录已保留；请确认 CLI 版本支持 import")) : resolve()));
+        }
+        const plan = harnesses.projectConversationPlan(harness, project.cwd, prepared.sessionId, prepared.nativeFile);
+        if (connections.enabled[harness] && connections.needsRouter(harness) && !router.server) await router.start(servicePort);
+        const result = await harnesses.launchPlan(harness, plan, "project:" + id, "resume", launcher);
+        return { ...result, mode: prepared.mode, message: harness === "dsh" ? plan.hint : "已在当前客户端继续共享对话；已完成的新内容将自动同步。" };
+      }));
+      register("conversations-preview", (id, before) => conversations.preview(id, before));
+      register("conversations-pin", (id, value) => conversations.pin(id, value));
+      register("conversations-preserve", (id) => connections.launch(() => conversations.preserve(id)));
+      register("conversations-resume", (id) => connections.launch(async () => {
+        const row = conversations.lookup(id), launcher = harnesses.launcher(row.harness);
+        if (!launcher.ready) throw Error(launcher.message);
+        // Validate the CURRENT login before restoring any transcript. The file's
+        // former home and account are never used as a credential source.
+        const plan = harnesses.conversationPlan(row.harness, row);
+        const staged = await conversations.stage(id, plan.dir);
+        if (row.harness === "claude") plan.args = ["--resume", staged.file];
+        if (connections.enabled[row.harness] && connections.needsRouter(row.harness) && !router.server)
+          await router.start(servicePort);
+        return harnesses.launchPlan(row.harness, plan, "conversation:" + row.sessionId, "resume", launcher);
+      }));
+      register("conversations-open-desktop", (id) => connections.launch(async () => {
+        const row = conversations.lookup(id);
+        if (row.harness !== "codex" || !harnesses.desktop("codex")) throw Error("此操作仅支持已安装的 Codex 桌面版");
+        const plan = harnesses.conversationPlan("codex", row);
+        if (path.resolve(plan.dir).toLowerCase() !== path.resolve(harnesses.codexDir).toLowerCase())
+          throw Error("此凭据目录不是 Codex 桌面默认目录，请用 CLI 继续，或在客户端设置中恢复默认目录");
+        await conversations.stage(id, plan.dir);
+        if (connections.enabled.codex && !router.server) await router.start(servicePort);
+        await shell.openExternal("codex://threads/" + row.sessionId);
+        return { ok: true, message: "已向 Codex 桌面打开本地对话；刚切换 OAuth 时请先自行重启桌面，使新登录生效。" };
+      }));
+      register("conversations-location", (id) => {
+        const row = conversations.lookup(id);
+        require("../core/native-fields.cjs").safePath(row.file);
+        if (!fs.existsSync(row.file)) throw Error("原记录不存在，可从已保留副本继续对话");
+        shell.showItemInFolder(row.file); return { ok: true };
+      });
       register("pi-import-oauth", async (sourceId, label) => {
         const source = harnesses.oauthSources().find((s) => s.id === sourceId);
         if (!source) throw new Error("授权来源已变化，请刷新");
@@ -1317,6 +1439,8 @@ else {
           if (r.response !== 1) return { ok: true, message: "已取消" };
         }
         return connections.launch(async () => {
+          if (["codex", "claude"].includes(id) && ["login", "logout"].includes(action))
+            await conversations.preserve(id);
           if (
             connections.enabled[id] &&
             connections.needsRouter(id) &&
@@ -1542,6 +1666,8 @@ else {
           nativeConfig,
           nativeKeys,
           oauthHistory,
+          conversations,
+          projectConversations,
           nativeLogin,
           accountInfo,
           preferences,
@@ -1591,6 +1717,7 @@ else {
     publisher.clear();
     updates?.stop();
     oauthHistory?.stop();
+    projectConversations?.stop();
     modelDirectory.invalidate();
     diagnosticBatch.cancel();
     for (const controller of diagnosticControllers.values()) controller.abort();

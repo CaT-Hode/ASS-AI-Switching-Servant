@@ -3,6 +3,16 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os"), crypto = require("node:crypto");
 const { OAuthHistory } = require("../core/oauth-history.cjs");
 const { discoverNative } = require("../core/credential-status.cjs");
+test('identical OAuth in native and independent homes displays once, preferring current native account', (t) => {
+  const f = setup(t); f.save(grant('alice'));
+  const second = path.join(path.dirname(f.dir), 'second-codex'); write(path.join(second, 'auth.json'), grant('alice'));
+  f.sources.push({ harness: 'codex', dir: second, native: false }); f.scan();
+  const current = { ...discoverNative('codex', { home: path.dirname(f.dir), codexDir: f.dir }).flatMap((s) => s.accounts)[0] };
+  const independent = { ...current, id: 'independent-alice', sourcePath: path.join(second, 'auth.json'), nativeDir: second };
+  const client = { id: 'codex', accounts: [independent, current], selected: independent.id }; f.history.decorate(client);
+  assert.equal(client.accounts.length, 1); assert.equal(client.accounts[0].id, current.id); assert.equal(client.accounts[0].oauthCurrent, true);
+  assert.equal(client.selected, current.id); assert.equal(f.history.entries.length, 1);
+});
 const jwt = (data) => "header." + Buffer.from(JSON.stringify(data)).toString("base64url") + ".signature";
 const grant = (user = "alice", suffix = "1", workspace = "work") => ({
   auth_mode: "chatgpt", last_refresh: "2026-09-23T00:00:00Z", extra: { keep: true },

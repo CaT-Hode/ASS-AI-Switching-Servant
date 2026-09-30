@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { Power, Loader2, Wrench, SlidersHorizontal, RotateCw } from "./icons.jsx";
+import { Power, Loader2, Wrench } from "./icons.jsx";
 import { Modal } from "./editors.jsx";
 import { ClientLocationRecovery } from "./client-location.jsx";
+import { ClientProcessChoice } from "./client-process-choice.jsx";
 import "./connections.css";
 const api = window.ass;
 export function ConnectionPill({ client, state, onManage, busy }) {
@@ -35,15 +36,7 @@ export function ConnectionStatus({ client, state, busy, onManage }) {
     (s) => s.harness === client.id && s.status !== "gone",
   );
   if (!connection || client.injectionUnsupported) return null;
-  const modelCount = Number.isInteger(connection.modelCount) && connection.modelCount > 0
-    ? ` · ${connection.modelCount} 个模型`
-    : "";
-  const note = connection.syncError ? `未同步：${connection.syncError}` : connection.pending ? "供应商接入有变更，点击同步后生效。" :
-    connection.enabled ? (connection.mode === "native"
-      ? connection.runtimeStatus === "client-refresh-required"
-        ? `已写入原生配置${modelCount} · 已打开页面需刷新`
-        : `已写入原生配置${modelCount} · 客户端重新加载后生效`
-      : client.id === "codex" ? "已接入 · 任务结束后重启客户端" : "已接入 · 新窗口生效") : "";
+  const note = connection.syncError ? connection.syncError : connection.pending ? "模型变更待同步" : "";
   if (!note && !sessions.length && !connection.active) return null;
   return (
     <section
@@ -129,7 +122,7 @@ function ConnectionChangeDialog({ request, state, onClose, onComplete }) {
     [repair, setRepair] = useState(null),
     [repairReason, setRepairReason] = useState(""),
     [error, setError] = useState(""),
-    [restart, setRestart] = useState(false),
+    [processMode, setProcessMode] = useState("none"),
     [busy, setBusy] = useState(false),
     [locating, setLocating] = useState(false),
     [checking, setChecking] = useState(true),
@@ -142,7 +135,7 @@ function ConnectionChangeDialog({ request, state, onClose, onComplete }) {
     setRepair(null);
     setRepairReason("");
     setError("");
-    setRestart(false);
+    setProcessMode("none");
     setChecking(true);
     async function preview() {
       let failed = false;
@@ -173,6 +166,7 @@ function ConnectionChangeDialog({ request, state, onClose, onComplete }) {
   const showLocation = request.scope !== "all" && (!!error || !!issue || client?.launcher?.ambiguous);
   const locked = busy || locating || checking;
   const restartPlan = hasIssue ? repair?.restart : plan?.restart;
+  const restart = processMode === "restart", close = processMode === "close";
   const title = request.accountless !== undefined ? `${request.accountless ? "开启" : "关闭"} ${target} 无账号启动？` : hasIssue ? `${target} 接入异常` : request.scope === "all"
       ? "停止全部接入？"
       : request.enabled
@@ -197,7 +191,7 @@ function ConnectionChangeDialog({ request, state, onClose, onComplete }) {
       const windows = plan.sessions.length
         ? `并关闭 ${plan.sessions.length} 个由 ASS 启动的窗口`
         : "";
-      warning = `将恢复接口配置${windows}${plan.stopService ? "，停止路由服务" : ""}。${restart ? "请先结束任务。" : "请先结束任务，并退出自行启动的客户端。"}`;
+      warning = `将恢复接口配置${windows}${plan.stopService ? "，停止路由服务" : ""}。${restart || close ? "请先结束任务。" : "请先结束任务，并退出自行启动的客户端。"}`;
     }
   }
   async function commit() {
@@ -210,6 +204,7 @@ function ConnectionChangeDialog({ request, state, onClose, onComplete }) {
         mode: plan.enabled ? "safe" : "terminate",
         acknowledged: true,
         restart,
+        close,
       });
       onComplete(result.message, result.restart?.ok === false);
       onClose();
@@ -226,7 +221,7 @@ function ConnectionChangeDialog({ request, state, onClose, onComplete }) {
     if (!repair || locked) return;
     setBusy(true);
     try {
-      const result = await api.call("connection-repair", { ticket: repair.ticket, acknowledged: true, restart });
+      const result = await api.call("connection-repair", { ticket: repair.ticket, acknowledged: true, restart, close });
       onComplete(result.message, result.restart?.ok === false);
       onClose();
     } catch (e) {
@@ -253,24 +248,9 @@ function ConnectionChangeDialog({ request, state, onClose, onComplete }) {
       {showLocation && <ClientLocationRecovery key={request.scope} clientId={request.scope}
         disabled={busy || checking} onBusy={setLocating} onUpdated={() => setRevision(v => v + 1)} />}
       {hasIssue && !client?.launcher?.ambiguous && <p className="connection-repair-note">
-        {repair ? repair.migration ? "将备份并迁移到 DSH 当前 profile，不重启客户端。" : `将备份并恢复上次接入配置${repair.files ? `（${repair.files} 个文件）` : ""}。${restart ? "" : "不启动或关闭客户端；如有任务，请先结束。"}` : repairReason || "正在检查可修复内容…"}
+        {repair ? repair.migration ? "将备份并迁移到 DSH 当前 profile，不重启客户端。" : `将备份并恢复上次接入配置${repair.files ? `（${repair.files} 个文件）` : ""}。${restart || close ? "" : "不关闭客户端，请先结束任务。"}` : repairReason || "正在检查可修复内容…"}
       </p>}
-      {restartPlan?.applicable && <div className="connection-restart" data-force={restart || undefined}>
-        <div className="connection-restart-choices" role="radiogroup" aria-label="配置生效方式">
-          <label>
-            <input type="radio" name="connection-restart" checked={!restart} disabled={busy}
-              onChange={() => setRestart(false)} />
-            <span><SlidersHorizontal size={16} />仅应用配置</span>
-          </label>
-          <label>
-            <input type="radio" name="connection-restart" checked={restart} disabled={busy || !restartPlan.available}
-              onChange={() => setRestart(true)} />
-            <span><RotateCw size={16} />强制重启</span>
-          </label>
-        </div>
-        <small>{restart ? `将强制关闭${restartPlan.names?.join("、") || target}及正在运行的任务，再重新打开。`
-          : restartPlan.available ? "不关闭客户端；任务结束后手动重启生效。" : restartPlan.reason}</small>
-      </div>}
+      <ClientProcessChoice plan={restartPlan} value={processMode} onChange={setProcessMode} disabled={busy} />
       <footer>
         <button
           className="button"
@@ -282,7 +262,7 @@ function ConnectionChangeDialog({ request, state, onClose, onComplete }) {
         </button>
         {(plan || !hasIssue) && <button
           className="button primary"
-          disabled={!plan || locked || (restart && !plan.restart?.available)}
+          disabled={!plan || locked || (restart && !plan.restart?.available) || (close && !plan.restart?.closeAvailable)}
           onClick={commit}
         >
           {busy && <Loader2 size={14} className="spin" />}
@@ -304,7 +284,6 @@ export function ConnectionService({ state, onManage, busy }) {
     <div className="connection-service">
       <div>
         <strong>服务与接入管理</strong>
-        <p>停止全部接入并恢复接口配置，账户和会话保留。</p>
       </div>
       <button
         className="button"

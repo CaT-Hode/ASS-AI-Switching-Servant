@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { atomic } = require("./config.cjs");
 const { hash } = require("./injection-files.cjs");
-const { makeCatalog } = require("./models.cjs");
+const { makeCatalog, codexModelId } = require("./models.cjs");
 const { modelRef } = require("./client-policy.cjs");
 const { safePath } = require("./native-fields.cjs");
 const { randomUUID } = require("node:crypto");
@@ -11,6 +11,14 @@ const claudeNative = require("./claude-native.cjs");
 const routeOnly = (plan) => { if (!plan) return null; const { nativeClaude, ...route } = plan; return route; };
 const IDS = ["codex", "claude"];
 const read = (file) => fs.existsSync(file) ? fs.readFileSync(file) : null;
+function validateCodexPlan(plan) {
+  if (!plan) return;
+  const names = new Set(plan.providers.flatMap(p => p.models.map(m => codexModelId(p.id, m.model))));
+  if (!Array.isArray(plan.catalog?.models) || plan.catalog.models.some(m =>
+      typeof m.slug !== "string" || (m.slug.includes("::") && !names.has(m.slug))) ||
+      (plan.defaultModel && !names.has(plan.defaultModel.model)))
+    throw Error("Codex 已应用模型记录包含旧版或不明标识，未覆盖");
+}
 
 // A draft edit never changes the running route. Persist applied routing secrets
 // with the same OS encryption as provider settings, not in a second plaintext DB.
@@ -34,6 +42,7 @@ class ProxyConfig {
             Object.entries(clients).some(([id, plan]) => !IDS.includes(id) || !Array.isArray(plan.providers) ||
               (plan.accountless !== undefined && typeof plan.accountless !== "boolean") ||
               (plan.accountless && (!/^[a-f0-9]{64}$/.test(plan.localToken || "") || !plan.providers.some((p) => p.models?.length))))) throw Error();
+        validateCodexPlan(clients.codex);
         this.clients = clients;
         claudeNative.validate(clients.claude?.nativeClaude);
         if (payload.pending) {
@@ -65,16 +74,33 @@ class ProxyConfig {
     if (accountless && !providers.length) throw Error("无账号启动需要至少一个已接入的模型");
     const catalog = id === "codex" ? makeCatalog(this.store.officialModels, providers, this.store.state.officialOverrides) : null;
     if (accountless && catalog) catalog.models = catalog.models.filter((m) => m.slug.includes("::"));
-    const first = providers[0]?.models[0];
+    const available = providers.flatMap((p) => p.models.filter((m) => m.enabled !== false).map((m) => ({ provider: p, model: m })));
+    let requested = null;
+    if (injection.defaultModel) {
+      try {
+        const [providerId, model] = JSON.parse(injection.defaultModel);
+        requested = available.find((row) => row.provider.id === providerId && row.model.model === model);
+      } catch {}
+    }
+    const fallback = id === "codex" ? available.find((row) => row.model.model === "gpt-6-sol") : null;
+    const selected = requested || fallback || available[0];
+    if (id === "codex" && !selected && providers.length) throw Error("没有已纳入的 Codex 模型");
+    const effort = selected?.model.model === "gpt-6-sol" ? "xhigh" : selected?.model.defaultEffort;
+    const defaultModel = id === "codex" && selected
+      ? { model: codexModelId(selected.provider.id, selected.model.model), effort }
+      : accountless && selected
+        ? { model: selected.provider.id + "::" + selected.model.model, effort }
+        : null;
     return {
       providers,
-      defaultModel: accountless ? { model: providers[0].id + "::" + first.model, effort: first.defaultEffort } : null,
+      defaultModel,
       ...(accountless ? { accountless: true, localToken: this.clients[id]?.localToken || (this.modeTokens[id] ||= require("node:crypto").randomBytes(32).toString("hex")) } : {}),
       ...(catalog ? { catalog } : {}),
     };
   }
   checkFiles(id) {
     if (this.error) throw Error(this.error);
+    if (id === "codex") validateCodexPlan(this.clients.codex);
     if (this.persistedHash !== hash(read(this.file) || "")) throw Error("已应用路由记录被外部修改，请重启并检查");
     if (this.pending) { this.recoveryCheck(); throw Error("路由配置事务待恢复，请点击重新同步"); }
     if (id === "codex" && this.clients.codex &&
@@ -93,7 +119,7 @@ class ProxyConfig {
         const native = claudeNative.plan(this.manager, desired, this.clients.claude?.nativeClaude);
         nativePending = !this.clients.claude?.nativeClaude || native.files.length > 0;
         if (this.desktop) {
-          const desktop = this.desktop.status(desired.localToken, this.manager.options?.port || 25819);
+          const desktop = this.desktop.status(desired.localToken, this.manager.options?.port || 25819, desired.providers);
           if (desktop.conflict) throw Error("Claude 桌面版配置存在冲突，请检查第三方推理设置");
           nativePending ||= !desktop.current;
         }
@@ -132,7 +158,7 @@ class ProxyConfig {
       if (id === "codex") this.config.prepareAttach(plan.defaultModel, plan.localToken);
       if (id === "claude") {
         claudeNative.plan(this.manager, plan, this.clients.claude?.nativeClaude);
-        this.desktop?.plan(plan.accountless ? plan.localToken : null, this.manager.options?.port || 25819);
+        this.desktop?.plan(plan.accountless ? plan.localToken : null, this.manager.options?.port || 25819, plan.providers);
       }
     }
   }
@@ -176,7 +202,7 @@ class ProxyConfig {
       const native = claudeNative.plan(this.manager, plan, this.clients.claude?.nativeClaude);
       if (native.record) plan.nativeClaude = native.record;
       files.push(...native.files);
-      files.push(...(this.desktop?.plan(plan.accountless ? plan.localToken : null, this.manager.options?.port || 25819) || []));
+      files.push(...(this.desktop?.plan(plan.accountless ? plan.localToken : null, this.manager.options?.port || 25819, plan.providers) || []));
     }
     if (id === "codex") {
       const attachment = this.config.prepareAttach(plan.defaultModel, plan.localToken);
@@ -237,6 +263,7 @@ class ProxyConfig {
       files.push({ file: this.file, before: saved.toString(), after: null });
     }
     if (id === "codex") {
+      validateCodexPlan(this.clients.codex);
       for (const file of [this.config.file, this.config.record, this.config.catalog]) safePath(file);
       const attachment = this.config.prepareRepair();
       if (attachment.before !== attachment.after) files.push(attachment);
@@ -248,7 +275,7 @@ class ProxyConfig {
       const native = claudeNative.plan(this.manager, this.clients.claude, this.clients.claude.nativeClaude, { repair: true });
       nativeClaude = native.record;
       files.push(...native.files);
-      files.push(...(this.desktop?.plan(this.clients.claude.accountless ? this.clients.claude.localToken : null, this.manager.options?.port || 25819) || []));
+      files.push(...(this.desktop?.plan(this.clients.claude.accountless ? this.clients.claude.localToken : null, this.manager.options?.port || 25819, this.clients.claude.providers) || []));
     }
     return { files, routeOnly: !files.length, nativeClaude };
   }

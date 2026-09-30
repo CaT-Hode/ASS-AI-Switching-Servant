@@ -9,6 +9,7 @@ const {
   normalizeModel,
   makeCatalog,
   endpoint,
+  codexModelId,
 } = require("../core/models.cjs");
 const {
   prepareConfig,
@@ -52,7 +53,8 @@ test("catalog writes chosen effort list and context exactly", () => {
   p.models[0].defaultEffort = "ultra";
   const c = makeCatalog([{ slug: "gpt-6-astra", context_window: 272000 }], [p]);
   const m = c.models[1];
-  assert.equal(m.slug, "aimami_relay_test::gpt-6-astra");
+  assert.equal(m.slug, codexModelId("aimami_relay_test", "gpt-6-astra"));
+  assert.match(m.slug, /^ASS_[a-f0-9]+::/);
   assert.deepEqual(
     m.supported_reasoning_levels.map((x) => x.effort),
     ["high", "max", "ultra"],
@@ -93,7 +95,7 @@ test("unknown namespaces never fall back to official; per-model protocol is hono
   const state = { providers: parseImport(source) };
   assert.throws(() => routeFor({ model: "removed::gpt" }, state));
   state.providers[0].models[0].wireApi = "anthropic";
-  const r = routeFor({ model: "aimami_relay_test::gpt-6-astra" }, state);
+  const r = routeFor({ model: codexModelId("aimami_relay_test", "gpt-6-astra") }, state);
   assert.equal(r.protocol, "anthropic");
   assert.equal(r.body.model, "gpt-6-astra");
   assert.equal(r.official, false);
@@ -125,9 +127,17 @@ test("attach refuses another active router and competing provider definitions", 
   assert.throws(() =>
     prepareConfig('[model_providers.openai]\nname="mine"', "x"),
   );
+  for (const provider of ["ASS", "ass_router", "aimai1"]) {
+    assert.throws(() => prepareConfig(`model_provider = "${provider}"\n`, "x"), /其他工具/);
+    assert.throws(() => prepareConfig(`[model_providers.${provider}]\nname="mine"`, "x"), /其他工具/);
+  }
+  assert.throws(() => prepareConfig('# >>> ass managed start\nmodel_provider="ASS"\n# <<< ass managed end', "x"), /验证接入记录/);
+  assert.throws(() => prepareConfig("", "x", undefined, { model: "unknown::gpt", effort: "high" }), /当前 ASS 模型标识/);
   const generated = prepareConfig("", "catalog.json").text;
-  assert.match(generated, /model_providers\.ass_router/);
-  assert.doesNotMatch(generated, /aimai1|历史任务兼容/);
+  assert.match(generated, /model_providers\.ASS/);
+  assert.doesNotMatch(generated, /aimai1|ass_router/);
+  assert.match(generated, /model_provider = "ASS"/);
+  assert.match(generated, /openai_base_url = "http:\/\/127.0.0.1:25819\/clients\/ASS\/v1"/);
 });
 test("Anthropic conversion handles tool calls and tool results, excludes reasoning", () => {
   const request = convertRequest(
@@ -245,8 +255,8 @@ test("router preserves streaming, separates credentials and cancels unsafe brows
   router.port = router.server.address().port;
   t.after(() => router.stop());
   const base = "http://127.0.0.1:" + router.port;
-  for (const model of ["gpt-6-astra", "aimami_relay_test::gpt-6-astra"]) {
-    const r = await fetch(base + "/v1/responses", {
+  for (const model of ["gpt-6-astra", codexModelId("aimami_relay_test", "gpt-6-astra")]) {
+    const r = await fetch(base + "/clients/ASS/v1/responses", {
       method: "POST",
       headers: {
         authorization: "Bearer synthetic-official-token",
@@ -265,7 +275,7 @@ test("router preserves streaming, separates credentials and cancels unsafe brows
   assert.equal(calls[1].headers.authorization, "Bearer test-key-not-real");
   assert.equal(calls[1].headers["chatgpt-account-id"], undefined);
   assert.equal(calls[1].body.model, "gpt-6-astra");
-  const apiWindow = await fetch(base + "/v1/responses", {
+  const apiWindow = await fetch(base + "/clients/ASS/v1/responses", {
     method: "POST",
     headers: { authorization: "Bearer " + router.clientToken, "content-type": "application/json" },
     body: JSON.stringify({ model: "gpt-6-astra", stream: true, input: "hi" }),

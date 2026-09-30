@@ -4,9 +4,8 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawn, execFile } = require("node:child_process");
 const { atomic } = require("./config.cjs");
-const { legacyBaseline } = require("./injection-files.cjs");
 const { DIRECT, locations, providerId } = require("./native-config.cjs");
-const { makeCatalog } = require("./models.cjs");
+const { makeCatalog, codexModelId } = require("./models.cjs");
 const { apiProfile } = require("./account-info.cjs");
 const additional = require("./additional-harnesses.cjs");
 const additionalOAuth = require("./additional-oauth.cjs");
@@ -97,8 +96,8 @@ const json = (file) => {
     for (const key of ["accountBindings", "accountExclusions", "apiBindings", "apiExclusions", "nativeProfileTargets"])
       if (Object.values(value[key] || {}).some((v) => !strings(v))) throw Error();
     for (const config of Object.values(value.injections || {}))
-      if (!object(config) || (value.schemaVersion === 3 ? !strings(config.excludedProviders) :
-          !strings(config.excluded) || (config.defaultModel !== null && typeof config.defaultModel !== "string"))) throw Error();
+      if (!object(config) || !strings(config.excludedProviders || config.excluded || []) ||
+          (config.defaultModel !== undefined && config.defaultModel !== null && typeof config.defaultModel !== "string")) throw Error();
     if (value.profiles !== undefined && (!Array.isArray(value.profiles) || value.profiles.some((p) => !p || !/^[a-f0-9]{24}$/.test(p.id) || !SPECS.some((s) => s.id === p.harness)))) throw Error();
     return value;
   } catch {
@@ -310,11 +309,11 @@ function routeConfig(harness, p, m, dir, token, catalog, port = 25819) {
     args.push("--profile", "web");
   }
   if (harness === "codex") {
-    const name = p.id + "::" + m.model;
+    const name = codexModelId(p.id, m.model);
     files.push(["catalog.json", JSON.stringify(catalog)]);
     files.push([
       "config.toml",
-      `model = ${JSON.stringify(name)}\nmodel_provider = "ass_api"\nmodel_reasoning_effort = ${JSON.stringify(m.defaultEffort)}\nmodel_catalog_json = ${JSON.stringify(path.join(dir, "catalog.json"))}\n[model_providers.ass_api]\nname = "ASS API"\nbase_url = ${JSON.stringify(clientBase + "/v1")}\nwire_api = "responses"\nenv_key = "ASS_LOCAL_TOKEN"\nsupports_websockets = false\n`,
+      `model = ${JSON.stringify(name)}\nmodel_provider = "ASS"\nmodel_reasoning_effort = ${JSON.stringify(m.defaultEffort)}\nmodel_catalog_json = ${JSON.stringify(path.join(dir, "catalog.json"))}\n[model_providers.ASS]\nname = "ASS API"\nbase_url = ${JSON.stringify(clientBase + "/v1")}\nwire_api = "responses"\nenv_key = "ASS_LOCAL_TOKEN"\nsupports_websockets = false\n`,
     ]);
   }
   return { env, files, args };
@@ -429,6 +428,82 @@ class HarnessManager {
     if (id === "antigravity") return false;
     return this.spec(id).oauth && (id === "pi" ? this.piProviders.some((p) => p.id === provider)
       : ACCOUNT_SERVICES[id].includes(provider));
+  }
+  conversationSources() {
+    const sources = this.oauthHistorySources().filter((s) => ["codex", "claude"].includes(s.harness))
+      .map((s) => ({ harness: s.harness, dir: s.dir, label: s.native ? "本机共享历史" :
+        this.state.profiles.find((p) => this.root(p.harness, p.id) === s.dir)?.label || "ASS 独立窗口" }));
+    // API/model windows and older OAuth profiles can outlive their account card.
+    // Enumerate only ASS-owned runtime directories, not arbitrary home folders.
+    for (const harness of ["dsh", "opencode", "pi"])
+      for (const dir of nativeLocations(harness, this.nativeHome, this.nativeEnv, this.state.credentialHomes[harness]))
+        sources.push({ harness, dir, label: "本机共享历史" });
+    for (const harness of ["codex", "claude", "dsh", "opencode", "pi"]) {
+      const dir = path.join(this.dataDir, "clients", harness);
+      try {
+        safePath(dir);
+        for (const item of fs.readdirSync(dir, { withFileTypes: true }))
+          if (item.isDirectory() && !item.isSymbolicLink() && /^[a-f0-9]{24}$/.test(item.name))
+            sources.push({ harness, dir: this.root(harness, item.name), label: "ASS 独立窗口" });
+      } catch (e) { if (e.code !== "ENOENT") throw e; }
+    }
+    for (const source of sources) if (source.harness === 'pi' && this.nativeEnv.PI_CODING_AGENT_SESSION_DIR)
+      source.sessionDirs = [path.resolve(this.nativeEnv.PI_CODING_AGENT_SESSION_DIR.replace(/^~(?=[/\\]|$)/, this.nativeHome))];
+    const seen = new Set();
+    return sources.filter((s) => { const k = s.harness + "\0" + path.resolve(s.dir).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+  }
+  projectConversationPlan(harness, cwd, sessionId = "123e4567-e89b-42d3-a456-426614174000", file = "") {
+    if (["codex", "claude"].includes(harness)) return this.conversationPlan(harness, { harness, cwd, sessionId }, file);
+    if (!["dsh", "opencode", "pi"].includes(harness) || !path.isAbsolute(cwd)) throw Error("项目或客户端无效");
+    safePath(cwd); if (!fs.statSync(cwd).isDirectory()) throw Error("项目目录不存在");
+    const dir = nativeLocations(harness, this.nativeHome, this.nativeEnv, this.state.credentialHomes[harness])[0];
+    const env = isolatedEnv(harness, dir, this.nativeEnv);
+    if (harness === "opencode") {
+      env.XDG_DATA_HOME = path.dirname(dir);
+      for (const k of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"])
+        if (this.nativeEnv[k]) env[k] = this.nativeEnv[k]; else delete env[k];
+    }
+    const piArgs = ['--session', file];
+    if (harness === 'pi') {
+      // Native pi restores a historical model unless the current defaults are explicit.
+      try { const settings = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8'));
+        if (typeof settings.defaultProvider === 'string' && typeof settings.defaultModel === 'string') piArgs.push('--provider', settings.defaultProvider, '--model', settings.defaultModel);
+      } catch (e) { if (e.code !== 'ENOENT') throw Error('pi 当前模型配置无法读取，未启动'); }
+      piArgs.push('--session-dir', path.dirname(file || path.join(dir, 'sessions', 'placeholder')));
+    }
+    return { harness, dir, workspace: cwd, env, files: [], expectInteractive: true,
+      args: harness === 'pi' ? piArgs : harness === 'opencode' ? ['--session', sessionId] : ['--profile', 'web'],
+      hint: harness === "dsh" ? `共享对话 ${sessionId} 已写入本机记录；请在 DSH 会话列表选择它。` : "继续 ASS 项目对话，使用当前客户端的登录与接入配置。" };
+  }
+  selectOAuthTarget(harness) {
+    if (!["codex", "claude"].includes(harness)) return;
+    const target = this.oauthHistoryTarget(harness), client = this.snapshot({ accountsOnly: true }).clients.find((c) => c.id === harness);
+    const account = client.accounts.find((a) => a.kind === "native" && a.authType === "oauth" &&
+      path.resolve(a.nativeDir).toLowerCase() === path.resolve(target.dir).toLowerCase());
+    if (account) { this.state.selected[harness] = account.id; this.save(); }
+  }
+  conversationPlan(harness, conversation, file) {
+    if (!["codex", "claude"].includes(harness) || conversation.harness !== harness ||
+        !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(conversation.sessionId)) throw Error("会话客户端或标识无效");
+    const target = this.oauthHistoryTarget(harness);
+    if (target.blocked) throw Error(target.blocked);
+    const status = inspectCredentials(harness, target.dir, { native: true });
+    if (!this.options.proxyConfig?.clients[harness]?.accountless && !status.rows.some((a) => a.ready))
+      throw Error("当前客户端没有可用登录，请先登录或切换账户；不会恢复旧账户的凭据");
+    const requested = conversation.cwd || this.state.workspace;
+    if (!requested || !path.isAbsolute(requested)) throw Error("会话缺少工作目录，请先在客户端设置中选择工作目录");
+    let workspace = requested;
+    try { safePath(workspace); if (!fs.statSync(workspace).isDirectory()) throw Error(); }
+    catch {
+      workspace = this.state.workspace;
+      if (!workspace || !path.isAbsolute(workspace) || !fs.statSync(workspace).isDirectory())
+        throw Error("原项目目录不存在，请先在客户端设置中选择可用的工作目录");
+      safePath(workspace);
+    }
+    return { harness, dir: target.dir, workspace, env: isolatedEnv(harness, target.dir, this.nativeEnv), files: [],
+      args: harness === "codex" ? ["resume", conversation.sessionId] : ["--resume", file || conversation.sessionId],
+      accountKind: "conversation", routed: !!this.options.isConnected?.(harness), expectInteractive: true,
+      hint: "继续本地对话，使用当前客户端的登录与接入配置；旧账户凭据不会恢复。" };
   }
   oauthHistoryTarget(id, provider) {
     if (!this.spec(id).oauth) throw Error("此客户端不支持 OAuth 账户切换");
@@ -660,11 +735,21 @@ class HarnessManager {
         ];
         // Native model discovery is independent of which account cards we show.
         const modelAccounts = accounts.filter((a) => a.kind !== "api");
-        const visible = accounts.filter((a) => a.kind === "api" ||
+        const eligibleAccounts = accounts.filter((a) => a.kind === "api" ||
           acceptsNativeAccount(s.id, a, this.piProviders) ||
           (a.kind === "auth" && !a.provider && s.oauth &&
             (!a.oauthProvider || (s.id === "pi" ? this.piProviders.some((p) => p.id === a.oauthProvider)
               : ACCOUNT_SERVICES[s.id].includes(a.oauthProvider)))));
+        // Model discovery keeps every source. Account cards represent actual
+        // API identities, not both the native credential and its saved supplier.
+        const visible = [], canonicalIds = new Map(), apiIdentities = [];
+        for (const a of eligibleAccounts) {
+          const credential = a.kind === "api" ? this.getState().providers.find((p) => p.id === a.providerId)
+            : nativeOfficialProvider(s, a, { home: this.nativeHome, env: this.nativeEnv });
+          const match = credential && apiIdentities.find((item) => sameApi(item.credential, credential));
+          if (match) { canonicalIds.set(a.id, match.account.id); continue; }
+          visible.push(a); if (credential) apiIdentities.push({ credential, account: a });
+        }
         const saved = this.state.selected[s.id];
         const legacy = visible.filter((a) => a.profileId === saved);
         const launcher = accountsOnly ? {} : this.launcher(s.id), desktop = accountsOnly ? null : this.desktop(s.id);
@@ -679,8 +764,8 @@ class HarnessManager {
           executable: launcher.executable,
           launcher,
           desktop,
-          selected: visible.some((a) => a.id === saved)
-            ? saved
+          selected: visible.some((a) => a.id === (canonicalIds.get(saved) || saved))
+            ? canonicalIds.get(saved) || saved
             : legacy.length === 1
               ? legacy[0].id
               : "",
@@ -800,8 +885,13 @@ class HarnessManager {
   }
   setInjection(harness, changes) {
     if (this.spec(harness).injectionUnsupported) throw Error("此客户端尚未支持供应商接入");
-    if (!changes || typeof changes !== "object" || Array.isArray(changes) || Object.keys(changes).some((k) => k !== "excludedProviders"))
+    if (!changes || typeof changes !== "object" || Array.isArray(changes) || Object.keys(changes).some((k) => !["excludedProviders", "defaultModel"].includes(k)))
       throw Error("接入范围请按供应商设置");
+    if (Object.hasOwn(changes, "defaultModel") && harness !== "codex")
+      throw Error("接入范围请按供应商设置");
+    if (Object.hasOwn(changes, "defaultModel") && changes.defaultModel !== null &&
+        (typeof changes.defaultModel !== "string" || changes.defaultModel.length > 500))
+      throw Error("默认模型引用无效");
     const next = { ...this.state.injections[harness], ...changes };
     if (!Array.isArray(next.excludedProviders) || next.excludedProviders.length > 5000 ||
         next.excludedProviders.some((r) => typeof r !== "string" || !r || r.length > 250 || /[\x00-\x1f]/.test(r)))
@@ -957,7 +1047,7 @@ class HarnessManager {
           );
           const original = own
             ? own.before || ""
-            : legacyBaseline("codex", "config.toml", existing);
+            : existing;
           if (
             original &&
             !/^cli_auth_credentials_store = "file"\s*$/.test(original)
@@ -966,11 +1056,13 @@ class HarnessManager {
               "此 Codex 授权账户含既有配置，请先检查其配置；ASS 不会直接覆盖",
             );
           const applied = this.options.proxyConfig?.clients.codex;
+          const baseUrl = `http://127.0.0.1:${this.options.port || 25819}/clients/ASS/v1`;
           const catalog = applied ? `model_catalog_json = ${JSON.stringify(this.options.proxyConfig.config.catalog)}\n` : "";
           const defaultModel = applied?.defaultModel ? `model = ${JSON.stringify(applied.defaultModel.model)}\nmodel_reasoning_effort = ${JSON.stringify(applied.defaultModel.effort)}\n` : "";
+          // Resumed threads can retain built-in OpenAI independently of this provider.
           files.push([
             "config.toml",
-            `cli_auth_credentials_store = "file"\n${catalog}${defaultModel}model_provider = "ass_official"\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = "http://127.0.0.1:${this.options.port || 25819}/clients/ASS/v1"\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n`,
+            `cli_auth_credentials_store = "file"\n${catalog}${defaultModel}model_provider = "ass_official"\nopenai_base_url = ${JSON.stringify(baseUrl)}\n[model_providers.ass_official]\nname = "ASS Official"\nbase_url = ${JSON.stringify(baseUrl)}\nwire_api = "responses"\nrequires_openai_auth = true\nsupports_websockets = false\n`,
           ]);
         } else if (!fs.existsSync(path.join(dir, "config.toml"))) {
           files.push(["config.toml", 'cli_auth_credentials_store = "file"\n']);
@@ -1181,8 +1273,12 @@ class HarnessManager {
     if (!["codex", "claude"].includes(harness) || !applied?.accountless)
       throw Error("请先开启无账号启动");
     this.options.proxyConfig.requireApplied(harness);
-    const p = applied.providers.find((p) => p.models.some((m) => m.enabled));
-    const m = p?.models.find((m) => m.enabled);
+    const selected = applied.defaultModel
+      ? applied.providers.flatMap((provider) => provider.models.filter((model) => model.enabled !== false).map((model) => ({ provider, model })))
+        .find(({ provider, model }) => (harness === "codex" ? codexModelId(provider.id, model.model) : provider.id + "::" + model.model) === applied.defaultModel.model)
+      : null;
+    const p = selected?.provider || applied.providers.find((provider) => provider.models.some((model) => model.enabled !== false));
+    const m = selected?.model || p?.models.find((model) => model.enabled !== false);
     if (!p || !m) throw Error("没有已注入的模型");
     const plan = this.modelPlan(harness, modelRef(p.id, m.model), token);
     // Do not silently reuse a model home into which the user later logged in.

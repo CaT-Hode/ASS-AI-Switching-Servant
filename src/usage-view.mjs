@@ -1,3 +1,4 @@
+import { accountPlan } from './account-plan.mjs';
 export const CLIENT_NAMES = {
   codex: "Codex",
   claude: "Claude Code",
@@ -165,7 +166,7 @@ export function overviewAccounts(state, clientFilter) {
         client,
         clients: [client.name],
         name: get("email") || get("name") || a.label,
-        plan: get("plan"),
+        plan: accountPlan(a),
         quotas: (quota?.fields || []).filter((f) => f.kind === "quota"),
         amounts: amounts.length
           ? amounts

@@ -41,7 +41,9 @@ html { scrollbar-color: light-dark(#a8b3c2, #55647a) var(--surface); }
   -webkit-app-region: drag; user-select: none;
 }
 .app-shell[data-window-chrome="true"] > .sidebar { padding-top: calc(var(--window-chrome-height) + 16px); background: var(--sidebar-surface); }
-.app-shell[data-window-chrome="true"] > main { padding-top: calc(var(--window-chrome-height) + 14px); }
+.app-shell[data-window-chrome="true"] > main { padding-top: calc(var(--window-chrome-height) + 8px); }
+.page-heading-accessible { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+main { padding-top: 18px; }
 .app-shell[data-window-chrome="true"] .client-list { top: calc(var(--window-chrome-height) + 16px); max-height: calc(100vh - var(--window-chrome-height) - 32px); }
 .page-header .button { background: transparent; box-shadow: none; border-color: var(--border); }
 .page-header .button:hover { background: var(--panel); }
