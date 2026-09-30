@@ -78,13 +78,9 @@ class ProtocolNegotiation {
     if (!force && this.get(p, m)) return this.get(p, m);
     const job = (async () => {
       const report = { time: new Date(this.now()).toISOString(), protocols: {} };
-      // Both native protocols are always checked. Chat is a compatibility
-      // fallback, not a reason to skip the Responses / Messages probes.
+      // Each protocol needs its own evidence, even when another one succeeds.
       for (const protocol of ORDER) {
         signal?.throwIfAborted();
-        const r = this.get(p, m);
-        if (protocol === "openai-chat" && ["openai-responses", "anthropic"].some(k =>
-          (report.protocols[k] || r?.protocols[k])?.status === "passed")) break;
         this.jobDetails.set(key, protocol); this.onChange();
         progress(protocol);
         const result = await nativeProbe(p, m, protocol, this.fetcher, { signal });

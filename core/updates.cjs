@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { atomic } = require("./config.cjs");
-const REPOSITORY = "CaT-Hode/ASS-AI-Switching-Servant";
+const REPOSITORY = "CaT-Hode/ASS-Agent-Switching-Servant";
 const RELEASES_URL = `https://github.com/${REPOSITORY}/releases`;
 const API_URL = `https://api.github.com/repos/${REPOSITORY}/releases?per_page=100`;
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000;

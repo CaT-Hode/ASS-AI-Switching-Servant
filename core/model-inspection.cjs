@@ -389,8 +389,7 @@ async function probeCapabilities(
       if (result.status === "passed") {
         working ||= protocol;
       }
-      if (result.httpStatus === 429) break;
-      if (protocol === "anthropic" && working) break;
+      if (result.httpStatus === 429) return report;
     }
     if (!working) return report;
     const tool = await run(working, { tool: true }, "验证工具调用");

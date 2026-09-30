@@ -1,12 +1,12 @@
 {
   "name": "agent-switching-servant",
   "productName": "ASS",
-  "version": "0.2.17",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/CaT-Hode/ASS-AI-Switching-Servant.git"
+    "url": "https://github.com/CaT-Hode/ASS-Agent-Switching-Servant.git"
   },
   "description": "ASS（Agent-Switching-Servant）— 模型随你切，账户由你管。Windows 桌面 AI 路由与账户助手。",
   "main": "electron/main.cjs",

@@ -1235,10 +1235,11 @@ else {
         if (!url || url.startsWith('#')) throw Error('不支持打开此链接');
         return shell.openExternal(url);
       });
-      register("project-conversations-list", () => projectConversations.list());
+      register("project-conversations-list", (input) => projectConversations.list(input));
       register("project-conversations-search", (input) => projectConversations.search(input));
       register("project-conversations-delete", (input) => projectConversations.remove(input));
-      register("project-conversations-trash", () => projectConversations.trashList());
+      register("project-conversations-trash", (input) => projectConversations.trashList(input));
+      register("project-conversations-trash-purge", (input) => projectConversations.purgeTrash(input));
       register("project-conversations-restore", (id) => projectConversations.restoreTrash(id));
       register("project-conversations-configure", (id, options) => projectConversations.configure(id, options));
       register("project-conversations-sync", (id) => projectConversations.sync(id));
@@ -1275,15 +1276,22 @@ else {
         return { ...result, mode: prepared.mode, message: harness === "dsh" ? plan.hint : "已在当前客户端继续共享对话；已完成的新内容将自动同步。" };
       }));
       register("conversations-preview", (id, before) => conversations.preview(id, before));
+      register("conversations-backups", (input) => conversations.backups(input));
+      register("conversations-backup-preview", (id, before) => conversations.backupPreview(id, before));
+      register("conversations-backup-cleanup", (input) => conversations.cleanupBackups(input));
+      register("conversations-backup-restore", (id) => connections.launch(async () => {
+        const row = conversations.lookup(id), plan = harnesses.conversationPlan(row.harness, row);
+        return conversations.restoreBackup(id, plan.dir);
+      }));
       register("conversations-pin", (id, value) => conversations.pin(id, value));
       register("conversations-preserve", (id) => connections.launch(() => conversations.preserve(id)));
       register("conversations-resume", (id) => connections.launch(async () => {
-        const row = conversations.lookup(id), launcher = harnesses.launcher(row.harness);
+        const row = conversations.resumeRow(id), launcher = harnesses.launcher(row.harness);
         if (!launcher.ready) throw Error(launcher.message);
         // Validate the CURRENT login before restoring any transcript. The file's
         // former home and account are never used as a credential source.
         const plan = harnesses.conversationPlan(row.harness, row);
-        const staged = await conversations.stage(id, plan.dir);
+        const staged = await conversations.stage(row.id, plan.dir);
         if (row.harness === "claude") plan.args = ["--resume", staged.file];
         if (connections.enabled[row.harness] && connections.needsRouter(row.harness) && !router.server)
           await router.start(servicePort);

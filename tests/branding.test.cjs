@@ -22,7 +22,7 @@ test("brand rename retains persisted data location, app identity and update comp
   assert.ok(main.includes('appIconPath: app.isPackaged ? process.execPath : path.join(__dirname, "../assets/ass.ico")'));
   assert.ok(main.includes('relaunchDisplayName: "ASS"'));
   assert.ok(main.includes('relaunchCommand: app.isPackaged ? `"${process.execPath}"` : `"${process.execPath}" "${app.getAppPath()}"`'));
-  assert.ok(updates.includes('CaT-Hode/ASS-AI-Switching-Servant'));
+  assert.ok(updates.includes('CaT-Hode/ASS-Agent-Switching-Servant'));
   assert.ok(updates.includes('AI-Switch-Servant-v${v.text}-win32-x64.zip'));
   assert.ok(read("core/config.cjs").includes('name = "ASS"'));
   assert.ok(!read("core/config.cjs").includes('name = "AI Switch Servant"'));

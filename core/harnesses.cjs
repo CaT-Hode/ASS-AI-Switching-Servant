@@ -416,7 +416,7 @@ class HarnessManager {
         issue: "Kimi OAuth 配置无法读取" }]; }
     }));
     return [...native, ...ACTIVE_SPECS.filter((s) => s.oauth && !s.nativeLoginOnly).flatMap(({ id }) => [
-      ...nativeLocations(id, this.nativeHome, this.nativeEnv, this.state.credentialHomes[id], this.codexDir)
+      ...this.nativeLocations(id)
         .map((dir) => ({ harness: id, dir, native: true })),
       ...this.state.profiles.filter((p) => p.harness === id)
         .map((p) => ({ harness: id, dir: this.root(id, p.id), native: false })),
@@ -436,7 +436,7 @@ class HarnessManager {
     // API/model windows and older OAuth profiles can outlive their account card.
     // Enumerate only ASS-owned runtime directories, not arbitrary home folders.
     for (const harness of ["dsh", "opencode", "pi"])
-      for (const dir of nativeLocations(harness, this.nativeHome, this.nativeEnv, this.state.credentialHomes[harness]))
+      for (const dir of this.nativeLocations(harness))
         sources.push({ harness, dir, label: "本机共享历史" });
     for (const harness of ["codex", "claude", "dsh", "opencode", "pi"]) {
       const dir = path.join(this.dataDir, "clients", harness);
@@ -456,7 +456,7 @@ class HarnessManager {
     if (["codex", "claude"].includes(harness)) return this.conversationPlan(harness, { harness, cwd, sessionId }, file);
     if (!["dsh", "opencode", "pi"].includes(harness) || !path.isAbsolute(cwd)) throw Error("项目或客户端无效");
     safePath(cwd); if (!fs.statSync(cwd).isDirectory()) throw Error("项目目录不存在");
-    const dir = nativeLocations(harness, this.nativeHome, this.nativeEnv, this.state.credentialHomes[harness])[0];
+    const dir = this.nativeLocations(harness)[0];
     const env = isolatedEnv(harness, dir, this.nativeEnv);
     if (harness === "opencode") {
       env.XDG_DATA_HOME = path.dirname(dir);
@@ -630,6 +630,10 @@ class HarnessManager {
     if (!/^[a-f0-9]{24}$/.test(id)) throw new Error("账户 ID 无效");
     return path.join(this.dataDir, "clients", harness, id);
   }
+  nativeLocations(harness) {
+    return nativeLocations(harness, this.nativeHome, this.nativeEnv, this.state.credentialHomes[harness], this.codexDir,
+      harness === 'dsh' ? this.launcher(harness) : undefined);
+  }
   snapshot({ accountsOnly = false } = {}) {
     return withReadScope(() => memoRead(this, ["snapshot", accountsOnly], () => this.readSnapshot(accountsOnly)));
   }
@@ -673,6 +677,7 @@ class HarnessManager {
           workspace: this.state.workspace,
           override: this.state.credentialHomes[s.id],
           codexDir: this.codexDir,
+          launcher: s.id === 'dsh' ? this.launcher(s.id) : undefined,
           owns: (file, provider) => this.options.nativeConfig?.owns(s.id, file, provider),
         });
         const apiCandidates = apiAccounts(
@@ -852,6 +857,7 @@ class HarnessManager {
     if (!accounts && ["codex", "claude", "dsh", "opencode", "pi"].includes(harness))
       accounts = discoverNative(harness, {
         home: this.nativeHome, env, override: target?.dir || this.state.credentialHomes[harness], codexDir: this.codexDir,
+        launcher: harness === 'dsh' ? this.launcher(harness) : undefined,
         workspace: target ? undefined : this.state.workspace,
         owns: (file, provider) => this.options.nativeConfig?.owns(harness, file, provider),
       }).flatMap((source) => source.accounts);

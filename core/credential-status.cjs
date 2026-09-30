@@ -232,7 +232,8 @@ function inspectCredentials(
     message: rows.length ? "已读取本地凭据" : "未检测到本地凭据",
   };
 }
-function nativeLocations(harness, home, env, override, codexDir) {
+function nativeLocations(harness, home, env, override, codexDir, launcher) {
+  if (harness === 'dsh') return require('./dsh-locations.cjs').locations({ home, env, override, launcher }).dirs;
   const defaults = {
     codex: path.join(home, ".codex"),
     claude: path.join(home, ".claude"),
@@ -344,9 +345,9 @@ function configuredNativeApiProviders(harness, dir, { home, env = {}, authData =
 }
 function discoverNative(
   harness,
-  { home, env = {}, override, codexDir, now = Date.now(), owns, workspace },
+  { home, env = {}, override, codexDir, now = Date.now(), owns, workspace, launcher },
 ) {
-  const dirs = nativeLocations(harness, home, env, override, codexDir);
+  const dirs = nativeLocations(harness, home, env, override, codexDir, launcher);
   const sources = dirs.map((dir) => {
     const result = inspectCredentials(harness, dir, { native: true, now });
     const rows = result.rows.length
@@ -404,6 +405,10 @@ function discoverNative(
       accounts,
     };
   });
+  if (harness === 'dsh') {
+    const { issue } = require('./dsh-locations.cjs').locations({ home, env, override, launcher });
+    if (issue) sources.push({ file: launcher?.entryPoint || launcher?.location, dir: dirs[0], rows: [], accounts: [], status: 'external', message: issue });
+  }
   if (harness === "claude" && has(env.CLAUDE_CODE_OAUTH_TOKEN)) {
     const row = oauth("anthropic", env.CLAUDE_CODE_OAUTH_TOKEN, "", null, now);
     const file = "环境变量 CLAUDE_CODE_OAUTH_TOKEN";

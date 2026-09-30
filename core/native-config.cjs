@@ -46,12 +46,16 @@ function locations(harness, manager) {
   });
   const env = manager.nativeEnv,
     home = manager.nativeHome;
-  const dir = nativeLocations(
+  if (harness === 'dsh') {
+    const resolved = require('./dsh-locations.cjs').locations({ home, env, override: manager.state.credentialHomes[harness], launcher: manager.launcher?.(harness) });
+    if (resolved.issue) throw Error(resolved.issue);
+  }
+  const dir = (manager.nativeLocations ? manager.nativeLocations(harness) : nativeLocations(
     harness,
     home,
     env,
     manager.state.credentialHomes[harness],
-  )[0];
+  ))[0];
   if (harness === "opencode") {
     const configDir = path.join(
       env.XDG_CONFIG_HOME || path.join(home, ".config"),

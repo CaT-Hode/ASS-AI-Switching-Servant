@@ -18,6 +18,10 @@ const launch = () => electron.launch({ executablePath, args: ["--qa"], env: { ..
       const put = (relative, value) => { const file = path.join(home, relative); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value)); };
       let requests = 0;
       global.assTest.setFetch(async () => { requests++; throw Error("Network prohibited in native discovery QA"); });
+      // A host's portable DSH must never become this disposable profile's home.
+      fs.mkdirSync(home, { recursive: true });
+      fs.writeFileSync(path.join(home, 'dsh.cmd'), '@echo off\r\nset "DSH_HOME=%~dp0.dsh"\r\n');
+      harnesses.state.executables.dsh = home; harnesses.save();
       put(".dsh/settings.yaml", { "llm-pi-ai": { providers: { relay: { baseURL: "https://native-qa.example/v1", api: "openai-completions", apiKey: "qa-synthetic-a", models: [{ id: "demo" }] } } } });
       put(".pi/agent/models.json", { providers: { relay: { baseUrl: "https://native-qa.example/v1", api: "openai-completions", apiKey: "qa-synthetic-a", models: [{ id: "demo" }] } } });
       put(".config/opencode/opencode.json", { provider: { relay: { npm: "@ai-sdk/openai-compatible", options: { baseURL: "https://native-qa.example/v1", apiKey: "qa-synthetic-a" }, models: { demo: {} } } } });

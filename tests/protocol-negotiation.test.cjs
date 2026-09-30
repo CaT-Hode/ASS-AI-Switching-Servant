@@ -22,20 +22,56 @@ function fixture(t, fetcher) {
   store.updateProvider({ id: "test", baseUrl: "https://example.test/v1", apiKey: "synthetic-private", models: [{ model: "alpha", wireApi: "openai-chat" }] });
   const p = store.state.providers[0], m = p.models[0], calls = [];
   const options = { dataDir, crypto: crypt, getProviders: () => store.state.providers,
-    fetcher: async (url, init) => { calls.push(url); return fetcher ? fetcher(url, init) : success(url.endsWith("/messages") ? "anthropic" : "openai-responses"); } };
+    fetcher: async (url, init) => { calls.push(url); return fetcher ? fetcher(url, init) : success(url.endsWith("/messages") ? "anthropic" : url.endsWith("/completions") ? "openai-chat" : "openai-responses"); } };
   const protocols = new ProtocolNegotiation(options);
   return { dataDir, store, p, m, options, protocols, calls };
 }
-test("checks both native protocols, selects per client, persists and avoids duplicate probes", async t => {
+test("checks all three protocols, selects per client, persists and avoids duplicate probes", async t => {
   const f = fixture(t);
   await Promise.all([f.protocols.ensure(f.p, f.m), f.protocols.ensure(f.p, f.m)]);
-  assert.deepEqual(f.calls.map(u => u.split("/").at(-1)), ["responses", "messages"]);
+  assert.deepEqual(f.calls.map(u => new URL(u).pathname), ["/v1/responses", "/v1/messages", "/v1/chat/completions"]);
+  assert.equal(f.protocols.get(f.p, f.m).protocols["openai-chat"].status, "passed");
   assert.equal(f.protocols.select(f.p, f.m, "claude"), "anthropic");
   for (const id of ["codex", "opencode", "pi", "dsh", "kimi", "zcode"]) assert.equal(f.protocols.select(f.p, f.m, id), "openai-responses");
   const reloaded = new ProtocolNegotiation(f.options);
-  await reloaded.ensure(f.p, f.m); assert.equal(f.calls.length, 2);
+  await reloaded.ensure(f.p, f.m); assert.equal(f.calls.length, 3);
+  assert.equal(reloaded.get(f.p, f.m).protocols["openai-chat"].status, "passed");
   assert.equal(f.m.wireApi, "openai-chat", "initial hint is not permanently rewritten");
   assert.doesNotMatch(JSON.stringify(reloaded.public()), /synthetic-private|fingerprint/);
+});
+test("Chat is checked independently when either Responses or Messages succeeds", async t => {
+  for (const working of ["openai-responses", "anthropic"]) {
+    const f = fixture(t, url => {
+      const protocol = url.endsWith("/messages") ? "anthropic" : url.endsWith("/completions") ? "openai-chat" : "openai-responses";
+      return protocol === working || protocol === "openai-chat" ? success(protocol) : Response.json({}, { status: 405 });
+    });
+    await f.protocols.ensure(f.p, f.m);
+    assert.equal(f.calls.length, 3);
+    assert.equal(f.protocols.get(f.p, f.m).protocols["openai-chat"].status, "passed");
+    assert.equal(f.protocols.select(f.p, f.m, "codex"), working);
+  }
+});
+test("manual recheck fills legacy Chat evidence and persists explicit endpoint rejection", async t => {
+  const f = fixture(t, url => url.endsWith("/completions") ? Response.json({}, { status: 404 }) : success(url.endsWith("/messages") ? "anthropic" : "openai-responses"));
+  f.protocols.record(f.p, f.m, { time: new Date().toISOString(), protocols: { "openai-responses": { status: "passed" }, anthropic: { status: "passed" } } });
+  await f.protocols.ensure(f.p, f.m);
+  assert.equal(f.calls.length, 0, "Old history must not trigger unrequested background probes");
+  await f.protocols.ensure(f.p, f.m, { force: true });
+  assert.equal(f.calls.length, 3);
+  const reloaded = new ProtocolNegotiation(f.options);
+  assert.equal(reloaded.get(f.p, f.m).protocols["openai-chat"].status, "unsupported");
+  assert.equal(reloaded.get(f.p, f.m).protocols["openai-chat"].httpStatus, 404);
+});
+test("later protocol rate limits stop the remaining probes", async t => {
+  for (const limitAt of ["anthropic", "openai-chat"]) {
+    const f = fixture(t, url => {
+      const protocol = url.endsWith("/messages") ? "anthropic" : url.endsWith("/completions") ? "openai-chat" : "openai-responses";
+      return protocol === limitAt ? Response.json({}, { status: 429 }) : success(protocol);
+    });
+    await f.protocols.ensure(f.p, f.m, { force: true });
+    assert.equal(f.calls.length, limitAt === "anthropic" ? 2 : 3);
+    assert.equal(f.protocols.get(f.p, f.m).protocols[limitAt].lastStatus, "unknown");
+  }
 });
 test("Chat is tested when neither native protocol works; 502 does not mean unsupported", async t => {
   const f = fixture(t, (url) => url.endsWith("completions") ? success("openai-chat") : Response.json({}, { status: url.endsWith("responses") ? 502 : 405 }));

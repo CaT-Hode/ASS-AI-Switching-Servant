@@ -85,6 +85,32 @@ test("release selection filters drafts, validates repository URLs, and supports 
   r.assets[0].state = "starter";
   assert.equal(safeRelease(r).download, null);
 });
+test("canonical GitHub release URLs remain usable after the repository rename", async (t) => {
+  const page = "https://github.com/CaT-Hode/ASS-Agent-Switching-Servant/releases/tag/v0.3.0";
+  const download = "https://github.com/CaT-Hode/ASS-Agent-Switching-Servant/releases/download/v0.3.0/ASS-v0.3.0-win32-x64.zip";
+  const checksum = "https://github.com/CaT-Hode/ASS-Agent-Switching-Servant/releases/download/v0.3.0/SHA256SUMS.txt";
+  const checker = fixture({
+    fetchRelease: async (url) => {
+      assert.equal(url, "https://api.github.com/repos/CaT-Hode/ASS-Agent-Switching-Servant/releases?per_page=100");
+      return Response.json([{
+        tag_name: "v0.3.0", draft: false, prerelease: false, html_url: page,
+        assets: [
+          { name: "ASS-v0.3.0-win32-x64.zip", state: "uploaded", size: 123456, browser_download_url: download },
+          { name: "SHA256SUMS.txt", state: "uploaded", size: 92, browser_download_url: checksum },
+        ],
+      }]);
+    },
+  });
+  t.after(() => fs.rmSync(path.dirname(checker.file), { recursive: true, force: true }));
+  assert.equal((await checker.check()).available, true);
+  assert.equal(checker.openUrl("release"), page);
+  assert.equal(checker.openUrl("download"), download);
+  assert.equal(checker.openUrl("checksum"), checksum);
+  const loaded = new UpdateChecker({ dataDir: path.dirname(checker.file), currentVersion: "0.2.22" });
+  assert.equal(loaded.snapshot().available, true);
+  assert.equal(loaded.openUrl("download"), download);
+});
+
 test("preview channel applies GitHub flags and semantic prerelease tags, not release order", () => {
   const releases = [
     release("v0.1.9", { prerelease: false }),

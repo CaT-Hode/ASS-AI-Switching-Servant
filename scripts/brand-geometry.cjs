@@ -1,12 +1,12 @@
 "use strict";
 
-// Keep all eight traced petals byte-for-byte. Only the central hub is built
-// from their actual root contours, including the eight gap-width bridges.
+// Narrow each traced petal in its own radial frame, then fit the central hub
+// to the resulting roots and gap-width bridges. The reference SVG stays intact.
 const fs = require("node:fs");
 const path = require("node:path");
 const SPEC = Object.freeze({
-  size: 1254, center: [626.5, 627], petals: 8, gap: 16,
-  rootDepth: 32, simplifyTolerance: 1.5, holeRadius: 132,
+  size: 1254, center: [626.5, 627], petals: 8, gap: 20, petalWidthScale: 0.93,
+  rootDepth: 32, simplifyTolerance: 1.5, holeRadius: 116,
   petalColor: "#82807c", hubColor: "#dc782f",
 });
 const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
@@ -88,8 +88,20 @@ function rootContour(petal) {
   const contour = simplify(chain, SPEC.simplifyTolerance);
   return { id: petal.id, angle, minimum, samples, contour };
 }
+function narrowPetal(petal) {
+  const samples = samplePath(petal.d), centroid = samples.reduce((a, p) => add(a, p), [0, 0]).map(v => v / samples.length);
+  const radial = unit(sub(centroid, SPEC.center)), tangent = [-radial[1], radial[0]];
+  const tokens = petal.d.match(/[MLCZ]|[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?/gi), transformed = [];
+  for (let i = 0; i < tokens.length;) {
+    if (/^[MLCZ]$/i.test(tokens[i])) { transformed.push(tokens[i++]); continue; }
+    const offset = sub([Number(tokens[i++]), Number(tokens[i++])], SPEC.center);
+    transformed.push(point(add(SPEC.center, add(mul(radial, dot(offset, radial)), mul(tangent, dot(offset, tangent) * SPEC.petalWidthScale)))));
+  }
+  const d = transformed.join(' ');
+  return { ...petal, d, tag: petal.tag.replace(/\bd="[^"]*"/, `d="${d}"`) };
+}
 function createGeometry() {
-  const petals = loadPetals(), roots = petals.map(rootContour).sort((a, b) => a.angle - b.angle);
+  const petals = loadPetals().map(narrowPetal), roots = petals.map(rootContour).sort((a, b) => a.angle - b.angle);
   const perimeter = [], kinds = [];
   for (const root of roots) {
     for (let i = 0; i < root.contour.length; i++) {
@@ -114,6 +126,6 @@ function buildLogoSvg(geometry = createGeometry()) {
   const outer = `M ${point(geometry.hub[0])} ` + geometry.hub.slice(1).map(p => `L ${point(p)}`).join(" ") + " Z";
   const [cx, cy] = SPEC.center, r = SPEC.holeRadius;
   const hole = `M ${n(cx + r)} ${n(cy)} A ${r} ${r} 0 1 0 ${n(cx - r)} ${n(cy)} A ${r} ${r} 0 1 0 ${n(cx + r)} ${n(cy)} Z`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254" role="img" aria-labelledby="title">\n<title id="title">ASS — original traced petals and a root-and-gap fitted orange hub</title>\n${geometry.petals.map(p => p.tag).join("\n")}\n<path id="hub-fitted" fill="${SPEC.hubColor}" fill-rule="evenodd" d="${outer} ${hole}"/>\n</svg>\n`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254" role="img" aria-labelledby="title">\n<title id="title">ASS — narrow traced petals and a bold fitted orange hub</title>\n${geometry.petals.map(p => p.tag).join("\n")}\n<path id="hub-fitted" fill="${SPEC.hubColor}" fill-rule="evenodd" d="${outer} ${hole}"/>\n</svg>\n`;
 }
-module.exports = { SPEC, loadPetals, createGeometry, buildLogoSvg, pointSegmentDistance };
+module.exports = { SPEC, loadPetals, narrowPetal, samplePath, createGeometry, buildLogoSvg, pointSegmentDistance };

@@ -3,6 +3,7 @@
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto'), zlib = require('node:zlib');
 const { safePath } = require('./native-fields.cjs');
 const HARNESSES = ['codex', 'claude', 'dsh', 'opencode', 'pi'];
+const DSH_TRANSCRIPT_REVISION = 2;
 const hash = (x) => crypto.createHash('sha256').update(x).digest('hex');
 const { displayPath, pathKey } = require('./conversation-paths.cjs');
 const libraryFiles = require('./conversation-files.cjs');
@@ -35,10 +36,28 @@ function blockText(content) {
     return '';
   }).filter(Boolean).join('\n');
 }
+function dshText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((b) => {
+    if (['text', 'input_text', 'output_text'].includes(b?.type)) return typeof b.text === 'string' ? b.text : '';
+    if (b?.type === 'text-chunks' && Array.isArray(b.texts)) return b.texts.filter((text) => typeof text === 'string').join('');
+    return '';
+  }).filter(Boolean).join('\n');
+}
 function message(role, content, timestamp, nativeId) {
   const text = blockText(content);
   if (!text) return null;
   return { role: role === 'user' ? 'user' : 'assistant', text, timestamp: typeof timestamp === 'string' ? timestamp : new Date(Number(timestamp) || 0).toISOString(), nativeId: String(nativeId || '') };
+}
+function dshMessage(role, data, timestamp) {
+  if (!data || (data.role !== undefined && data.role !== role)) return null;
+  // A DSH user/message is model-visible input, including agent.inject() context.
+  // Its source identifies human input; event type alone does not. Missing
+  // source/role fields remain compatible with older minimal text records.
+  const kind = data.source?.kind;
+  if (kind !== undefined && kind !== (role === 'user' ? 'user' : 'model')) return null;
+  return message(role, dshText(data.content), timestamp, data.id);
 }
 function decode(harness, rows, { completed = true } = {}) {
   let header = {}, messages = [], model = '', title = '', pending = false;
@@ -126,10 +145,8 @@ function decode(harness, rows, { completed = true } = {}) {
       surface.push(r);
     }
     for (const r of surface) {
-      if (r.type === 'user/message') messages.push(message('user', r.data?.content, r.time, r.data?.id));
-      else if (r.type === 'assistant/message') messages.push(message('assistant', r.data?.message?.content, r.time, r.data?.message?.id));
-      else if (r.type === 'tool/result') messages.push(message('assistant', '[历史工具结果]\n' + blockText(r.data?.message?.content), r.time, r.data?.callId));
-      else if (r.type === 'compaction/summary') messages.push(message('assistant', '[历史压缩摘要]\n' + blockText(r.data?.summary), r.time));
+      if (r.type === 'user/message') messages.push(dshMessage('user', r.data, r.time));
+      else if (r.type === 'assistant/message') messages.push(dshMessage('assistant', r.data?.message, r.time));
       if (r.type === 'request/header') model = r.data?.header?.config?.model || model;
     }
   }
@@ -229,8 +246,9 @@ function discover(sources, { cwd, includeMessages = false, cache = {}, processed
         const id = hash(source.harness + '\0' + pathKey(file)); if (seen.has(id)) continue; seen.add(id);
         try {
           const stat = fs.statSync(file), sig = stamp(stat), old = cache[id];
-          if (old?.signature === sig && cwd && pathKey(cwd) !== pathKey(old.cwd)) continue;
-          if (old?.signature === sig && (!includeMessages || processed[source.harness + '\0' + old.sessionId] === sig)) {
+          const cached = old?.signature === sig && (source.harness !== 'dsh' || old.transcriptRevision === DSH_TRANSCRIPT_REVISION);
+          if (cached && cwd && pathKey(cwd) !== pathKey(old.cwd)) continue;
+          if (cached && (!includeMessages || processed[source.harness + '\0' + old.sessionId] === sig)) {
             if (!cwd || pathKey(cwd) === pathKey(old.cwd)) rows.push(old); continue;
           }
           // Off-project JSONL files need only their first header, not a full body scan.
@@ -244,6 +262,7 @@ function discover(sources, { cwd, includeMessages = false, cache = {}, processed
           const data = decode(source.harness, lines(file)); if (!data.sessionId || data.sidechain || (cwd && pathKey(cwd) !== pathKey(data.cwd || '.'))) continue;
           const { messages, ...meta } = data;
           const row = { ...meta, id, harness: source.harness, file, dir: source.dir, signature: sig, size: stat.size, nativePresent: true,
+            ...(source.harness === 'dsh' ? { transcriptRevision: DSH_TRANSCRIPT_REVISION } : {}),
             relative: path.relative(source.dir, file), updatedAt: new Date(stat.mtimeMs).toISOString() };
           const stable = stamp(fs.statSync(file)) === sig;
           if (stable) cache[id] = row;

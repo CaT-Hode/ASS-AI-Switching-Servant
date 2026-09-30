@@ -3,6 +3,7 @@ const fs = require('node:fs'), path = require('node:path'), crypto = require('no
 const { safePath } = require('./native-fields.cjs');
 const codecs = require('./project-codecs.cjs');
 const { hash, pathKey } = codecs;
+const { historyStatus, inScope } = require('./conversation-status.cjs');
 const prefix = (a, b) => a.length <= b.length && a.every((v, i) => v === b[i]);
 const identity = (row) => row.harness + '\0' + row.sessionId;
 function project(id) { const p = data.state.projects.find((p) => p.id === id); if (!p) throw Error('项目不存在'); return p; }
@@ -66,9 +67,15 @@ function discover() {
     const same = old?.file === history.file;
     if (same || prefer(old, history)) records.set(identity(history), { ...old, ...history, libraryId: history.id, dir: history.dir || old?.dir || path.dirname(history.file) });
   }
-  const retired = new Set(data.state.projects.flatMap((p) => p.retired || []));
-  for (const entry of data.state.trash || []) if (entry.phase === 'deleted') for (const row of entry.rows || []) retired.add(identity(row));
+  const retired = new Set([...(data.state.deleted || []), ...data.state.projects.flatMap((p) => p.retired || [])]);
+  for (const entry of data.state.trash || []) if (['deleted', 'purging'].includes(entry.phase)) for (const row of entry.rows || []) retired.add(identity(row));
   for (const [key] of records) if (retired.has(key)) records.delete(key);
+  const inactive = {};
+  for (const [key, row] of records) {
+    row.historyStatus = historyStatus(row);
+    if (row.historyStatus !== 'active') inactive[row.harness] = (inactive[row.harness] || 0) + 1;
+    if (!inScope(row, data.scope || 'active')) records.delete(key);
+  }
   for (const row of records.values()) {
     const cwd = row.projectless ? '' : row.projectExplicit ? row.cwd : codecs.projectPath(row.cwd, data.sources), id = cwd ? hash(pathKey(cwd)) : codecs.NO_PROJECT; row.projectId = id;
     const route = data.state.projects.flatMap((p) => p.threads.flatMap((t) => t.routes.map((r) => ({ p, t, r })))).find(({ r }) => identity(r) === identity(row));
@@ -78,7 +85,7 @@ function discover() {
     if (!p.keys.has(identity(row))) { p.count++; p.counts[row.harness] = (p.counts[row.harness] || 0) + 1; p.keys.add(identity(row)); }
     if (!p.harnesses.includes(row.harness)) p.harnesses.push(row.harness);
   }
-  return { projects: [...grouped.values()].map(({ keys, ...p }) => p), records: [...records.values()], errors: result.errors, observed: data.state.observed, catalog: data.state.catalog };
+  return { projects: [...grouped.values()].map(({ keys, ...p }) => p), records: [...records.values()], inactive, errors: result.errors, observed: data.state.observed, catalog: data.state.catalog };
 }
 function sync() {
   let updated = 0;
@@ -87,7 +94,11 @@ function sync() {
     const processed = Object.fromEntries(Object.entries(data.state.observed).filter(([key]) => key.startsWith(p.id + ':')).map(([key, sig]) => [key.slice(p.id.length + 1), sig]));
     const r = codecs.discover(data.sources, { cwd: p.cwd, includeMessages: true, cache: data.state.catalog, processed }); p.errors = r.errors;
     const unique = new Map();
-    for (const row of r.rows) { const old = unique.get(identity(row)); if (!old || Number(!!row.indexedFile) > Number(!!old.indexedFile) || (row.indexedFile === old.indexedFile && row.updatedAt > old.updatedAt)) unique.set(identity(row), row); }
+    for (const row of r.rows) {
+      const ownedProjection = historyStatus(row) === 'residual' && p.threads.some(t => t.routes.some(route => identity(route) === identity(row) && pathKey(route.nativeFile) === pathKey(row.file)));
+      if (!inScope(row) && !ownedProjection) continue;
+      const old = unique.get(identity(row)); if (!old || Number(!!row.indexedFile) > Number(!!old.indexedFile) || (row.indexedFile === old.indexedFile && row.updatedAt > old.updatedAt)) unique.set(identity(row), row);
+    }
     for (const row of unique.values()) {
       const origin = p.origins[identity(row)], shared = origin && p.threads.find((t) => t.id === origin.threadId);
       if (shared?.home?.harness === row.harness && shared.home.sessionId === row.sessionId && row.title) shared.title = row.title;

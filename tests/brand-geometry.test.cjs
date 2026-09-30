@@ -1,14 +1,24 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { SPEC, loadPetals, createGeometry, buildLogoSvg, pointSegmentDistance } = require("../scripts/brand-geometry.cjs");
+const { SPEC, loadPetals, narrowPetal, samplePath, createGeometry, buildLogoSvg, pointSegmentDistance } = require("../scripts/brand-geometry.cjs");
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-7, `${a} != ${b}`);
 
-test("all eight traced petals stay byte-identical; only the central orange path changes", () => {
+test("eight individually traced petals become narrower while keeping their radial length and flat silhouette", () => {
   const reference = loadPetals(), svg = buildLogoSvg();
   assert.equal(reference.length, 8);
-  for (const petal of reference) assert.ok(svg.includes(petal.tag), petal.id);
+  for (const petal of reference) {
+    const narrowed = narrowPetal(petal); assert.notEqual(narrowed.d, petal.d); assert.ok(svg.includes(narrowed.tag), petal.id);
+    assert.ok(narrowed.tag.includes(`id="${petal.id}"`)); assert.ok(narrowed.tag.includes(` d="${narrowed.d}"`));
+    const original = samplePath(petal.d), next = samplePath(narrowed.d);
+    const mean = original.reduce((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]).map(v => v / original.length);
+    const radial = sub(mean, SPEC.center), len = Math.hypot(...radial), axis = radial.map(v => v / len), tangent = [-axis[1], axis[0]];
+    const span = (points, direction) => { const values = points.map(p => dot(sub(p, SPEC.center), direction)); return Math.max(...values) - Math.min(...values); };
+    assert.ok(Math.abs(span(next, tangent) / span(original, tangent) - 0.93) < 0.001);
+    assert.ok(Math.abs(span(next, axis) / span(original, axis) - 1) < 0.001);
+  }
+  assert.ok(SPEC.gap > 16); assert.ok(SPEC.holeRadius < 132);
   assert.equal((svg.match(/<path /g) || []).length, 9);
   assert.ok(svg.includes('id="hub-fitted"'));
   assert.ok(svg.includes(`A ${SPEC.holeRadius} ${SPEC.holeRadius}`));
@@ -25,7 +35,7 @@ test("actual petal-root facets AND all eight gap-width bridges share the same hu
     assert.ok(hub[i].every(Number.isFinite));
   }
 });
-test("fitted hub stays clear of the original unmodified Bezier petals and keeps a substantial circular band", () => {
+test("fitted hub stays clear of narrowed Bezier petals and keeps a substantial inward-thickened circular band", () => {
   const { hub, roots } = createGeometry();
   let closest = Infinity;
   for (let i = 0; i < hub.length; i++) {

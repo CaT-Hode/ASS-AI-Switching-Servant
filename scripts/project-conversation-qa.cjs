@@ -88,12 +88,22 @@ async function launch(target) {
     });
     assert.deepEqual({ ...geometry, centerDifference: Math.round(geometry.centerDifference), horizontalDifference: Math.round(geometry.horizontalDifference), verticalDifference: Math.round(geometry.verticalDifference) },
       { width: 22, height: 22, iconWidth: 14, iconHeight: 14, centerDifference: 0, horizontalDifference: 0, verticalDifference: 0, reserved: true });
-    await ocTrash.hover();
-    await page.waitForFunction(() => document.querySelector('.conversation-delete svg[data-icon-phase="hover"]'));
-    const hoverFrames = await ocTrash.locator('[data-part="lid"]').evaluate(async (node) => {
-      const frames = []; for (let i = 0; i < 14; i++) { await new Promise(requestAnimationFrame); frames.push(getComputedStyle(node).transform); }
-      return new Set(frames).size;
+    // Record at the hover transition; sampling after a remote tool roundtrip can
+    // miss the entire short animation on a busy desktop.
+    await ocTrash.evaluate(button => {
+      window.assTrashHoverFrames = new Promise(resolve => {
+        const svg = button.querySelector('svg'), lid = svg.querySelector('[data-part="lid"]');
+        const observer = new MutationObserver(async () => {
+          if (svg.dataset.iconPhase !== 'hover') return;
+          observer.disconnect(); const frames = [];
+          for (let i = 0; i < 14; i++) { await new Promise(requestAnimationFrame); frames.push(getComputedStyle(lid).transform); }
+          resolve(new Set(frames).size);
+        });
+        observer.observe(svg, { attributes: true, attributeFilter: ['data-icon-phase'] });
+      });
     });
+    await ocTrash.hover();
+    const hoverFrames = await page.evaluate(() => window.assTrashHoverFrames);
     assert.ok(hoverFrames > 1, 'trash lid animates without moving its button');
     await page.screenshot({ path: path.join(out, 'conversation-trash-hover.png') });
     await page.mouse.down();
@@ -160,8 +170,16 @@ async function launch(target) {
           const bottom = b.getBoundingClientRect().bottom;
           return [...b.children].every((c) => c.getBoundingClientRect().bottom <= bottom);
         });
-        return window.innerWidth === w && document.documentElement.scrollWidth <= window.innerWidth && r.right <= window.innerWidth && r.bottom <= window.innerHeight && actions.right <= detail.right && labelsFit;
-      }, width);
+        // Fractional Windows scaling rounds the requested window width by a DIP.
+        return Math.abs(window.innerWidth - w) <= 2 && document.documentElement.scrollWidth <= window.innerWidth && r.right <= window.innerWidth && r.bottom <= window.innerHeight && actions.right <= detail.right && labelsFit;
+      }, width).catch(async error => {
+        await page.screenshot({ path: path.join(out, 'project-sync-layout-failure.png'), animations: 'disabled' });
+        console.error(JSON.stringify(await page.evaluate(() => ({ viewport: [innerWidth, innerHeight], scrollWidth: document.documentElement.scrollWidth,
+          resume: document.querySelector('.project-resume').getBoundingClientRect().toJSON(), detail: document.querySelector('.conversation-detail').getBoundingClientRect().toJSON(),
+          actions: document.querySelector('.conversation-detail-heading .actions').getBoundingClientRect().toJSON(),
+          clipped: [...document.querySelectorAll('.project-thread-main')].filter(b => [...b.children].some(c => c.getBoundingClientRect().bottom > b.getBoundingClientRect().bottom)).map(b => b.textContent) }))));
+        throw error;
+      });
     }
     await page.screenshot({ path: path.join(out, 'project-sync-compact.png'), animations: 'disabled' });
     assert.equal(await page.locator('vite-error-overlay').count(), 0);

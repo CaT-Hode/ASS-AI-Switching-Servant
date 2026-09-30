@@ -4,6 +4,7 @@ import { Folder, Search, Loader2, MessagesSquare, Play, RefreshCw, ShieldCheck, 
 import { useConversationColumns } from './conversation-columns.jsx';
 import { detectedClients } from './usage-view.mjs';
 import { ConversationMarkdown } from './conversation-markdown.mjs';
+import { ConversationHistory, HistoryBadge, HistorySource } from './conversation-history.jsx';
 const api = window.ass, labels = { codex: 'Codex', claude: 'Claude Code', dsh: 'DSH', opencode: 'OpenCode', pi: 'pi' };
 const brands = { codex: 'openai', claude: 'anthropic', dsh: 'deepseek', opencode: 'opencode', pi: 'pi' };
 const originLabels = { ...labels, claude: 'CC' };
@@ -25,6 +26,7 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
   const [view, setView] = useState(initialHarness || state.preferences.conversations?.harness || 'codex'), [target, setTarget] = useState(initialHarness || 'codex'), [confirm, setConfirm] = useState('');
   const [nativeView, setNativeView] = useState(false);
   const [deleting, setDeleting] = useState(null), [trash, setTrash] = useState(null);
+  const [scope, setScope] = useState('active'), [historyOpen, setHistoryOpen] = useState(false);
   const columns = useConversationColumns(state.preferences.conversations?.columns, (value) => api.call('ui-preferences', { conversations: { columns: value } }).catch((e) => setError(errorText(e))));
   useEffect(() => {
     if (!deleting) return;
@@ -35,24 +37,24 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
   useEffect(() => { if (available.length && !available.some((c) => c.id === view)) setView(available[0].id); }, [available.map((c) => c.id).join(','), view]);
   useEffect(() => {
     let current = true;
-    api.call('project-conversations-list').then((r) => {
+    api.call('project-conversations-list', { scope }).then((r) => {
       if (!current) return; setList(r); setError(r.error || '');
       setProject((old) => r.items.find((p) => p.id === old?.id) || r.items.find((p) => p.id === state.preferences.conversations?.project) || r.items[0] || null);
     }).catch((e) => { if (current) setError(errorText(e)); });
     return () => { current = false; };
-  }, [revision]);
-  const shared = project?.enabled && project.targets.includes(view) && !nativeView;
+  }, [revision, scope]);
+  const shared = scope === 'active' && project?.enabled && project.targets.includes(view) && !nativeView;
   const searchTerm = query.trim();
-  const searchReady = search?.query === searchTerm && search?.harness === view && search?.nativeView === nativeView;
+  const searchReady = search?.query === searchTerm && search?.harness === view && search?.nativeView === (nativeView || scope === 'inactive');
   const matches = useMemo(() => new Map(search?.items.map((p) => [p.id, p]) || []), [search]);
   const threadQuery = searchTerm && searchReady && !matches.get(project?.id)?.projectMatch ? searchTerm : '';
   useEffect(() => {
     let current = true; setSearch(null);
     if (!searchTerm || !list) return;
-    const timer = setTimeout(() => api.call('project-conversations-search', { query: searchTerm, harness: view, nativeView })
+    const timer = setTimeout(() => api.call('project-conversations-search', { query: searchTerm, harness: view, nativeView: nativeView || scope === 'inactive' })
       .then((r) => { if (current) setSearch(r); }).catch((e) => { if (current) setError(errorText(e)); }), 180);
     return () => { current = false; clearTimeout(timer); };
-  }, [searchTerm, view, nativeView, list]);
+  }, [searchTerm, view, nativeView, list, scope]);
   useEffect(() => {
     let current = true; setThreads(null); setConfirm('');
     const timer = setTimeout(() => { if (project && list) api.call(shared ? 'project-conversations-threads' : 'project-conversations-records', project.id,
@@ -106,8 +108,9 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
       setView(c.id); setOffset(0); setBefore(0); if (!shared) setSelected(null); setNativeView(false);
       api.call('ui-preferences', { conversations: { harness: c.id } }).catch((e) => setError(errorText(e)));
     }}><img src={'./providers/' + brands[c.id] + '.svg'} alt="" />{labels[c.id]}</button>)}</div>
-      <span className="conversation-count">{list ? items.reduce((n, p) => n + (p.enabled ? p.count : p.counts?.[view] || 0), 0) + ' 个对话 · ' + (list.retained?.[view] || 0) + ' 个已保留' : '读取记录…'}</span>
-      <div className="actions">{['codex', 'claude'].includes(view) && <button className="button" disabled={!!busy} onClick={() => action('conversations-preserve', view)}><ShieldCheck size={15} />保留历史</button>}
+      <div className="conversation-scope" aria-label="对话范围">{[['active', '当前对话'], ['inactive', '归档及残留']].map(([id, label]) => <button key={id} aria-pressed={scope === id} onClick={() => { setScope(id); setOffset(0); setBefore(0); setSelected(null); }}>{label}{id === 'inactive' && !!list?.inactive?.[view] && <small>{list.inactive[view]}</small>}</button>)}</div>
+      <span className="conversation-count">{list ? items.reduce((n, p) => n + (p.enabled ? p.count : p.counts?.[view] || 0), 0) + ' 个对话' : '读取记录…'}</span>
+      <div className="actions"><button className="button" disabled={!!busy} onClick={() => setHistoryOpen(true)}><ShieldCheck size={15} />历史与存储</button>
         <button className="icon-button" aria-label="已删除记录" onClick={async () => { try { setTrash(await api.call('project-conversations-trash')); } catch (e) { setError(errorText(e)); } }}><Trash2 size={17} /></button>
         <button className="icon-button" aria-label="刷新项目记录" disabled={!!busy} onClick={() => setRevision((n) => n + 1)}><RefreshCw size={17} /></button></div></div>
     {error && <p className="error-box" role="alert">{error}</p>}{notice && <p className="client-notice" role="status">{notice}</p>}
@@ -122,7 +125,7 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
       <div {...columns.separator('projects')} />
       <section className="conversation-detail" aria-label="项目会话">{project ? <>
         <header className="conversation-detail-heading"><div className="conversation-project-path" title={project.cwd || project.name}>{project.cwd || project.name}</div>
-          {!project.nonProject && <div className="actions"><button className="icon-button" aria-label="同步当前项目" disabled={!project.enabled || !!busy} onClick={() => action('project-conversations-sync', project.id)}><RefreshCw size={17} className={busy ? 'spin' : ''} /></button>
+          {!project.nonProject && scope === 'active' && <div className="actions"><button className="icon-button" aria-label="同步当前项目" disabled={!project.enabled || !!busy} onClick={() => action('project-conversations-sync', project.id)}><RefreshCw size={17} className={busy ? 'spin' : ''} /></button>
             <div className="project-toggle-control">{confirm === 'disable' && <div className="conversation-resume-confirm" role="dialog" aria-label="关闭项目同步确认"><p>完成内容归回初始客户端，移除同步副本。请先结束续聊。</p><div className="actions"><button className="button" onClick={() => setConfirm('')}>取消</button><button className="button primary" onClick={() => action('project-conversations-configure', project.id, { enabled: false, targets })}>确定</button></div></div>}
               <button className="project-sync-switch" role="switch" aria-label="项目同步" aria-checked={project.enabled} disabled={!!busy}
                 onClick={() => project.enabled ? setConfirm('disable') : action('project-conversations-configure', project.id, { enabled: true, targets })}><span className="project-switch-track"><i /></span>项目同步</button></div></div>}
@@ -133,14 +136,14 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
           {!shared && <div className="conversation-pin-control"><button className="icon-button conversation-pin-filter" aria-label="只看置顶" aria-describedby="conversation-pin-description" aria-pressed={pinned} title={pinned ? '显示全部对话' : '只显示当前项目的置顶对话'} onClick={() => { setPinned(!pinned); setOffset(0); }}><Pin size={14} /></button><span id="conversation-pin-description" role="tooltip">{pinned ? '显示全部对话' : '只看置顶对话'}</span></div>}</div>
           {threads?.items.map((t) => <article data-record-id={t.id} key={t.id} className={'project-thread-row' + (t.id === selected?.id ? ' selected' : '')}><button className="project-thread-main" aria-pressed={t.id === selected?.id} onClick={() => { setSelected(t); setBefore(0); }}>
             <strong>{t.title}</strong><small>{t.branchOf ? '分支 · ' : ''}{t.kind === 'native' ? labels[t.harness] : t.harnesses.map((h) => labels[h]).join(' / ')} · {time(t.updatedAt)}</small>
-            {(t.syncedFrom || (!t.kind && t.originHarness !== view)) && <span className="conversation-sync-origin">来自 {originLabels[t.syncedFrom || t.originHarness]} 的同步</span>}{t.retained && !t.nativePresent && <span className="conversation-retained">已保留副本</span>}</button>
+            {(t.syncedFrom || (!t.kind && t.originHarness !== view)) && <span className="conversation-sync-origin">来自 {originLabels[t.syncedFrom || t.originHarness]} 的同步</span>}<HistoryBadge row={t} /></button>
             <div className="conversation-row-actions">{t.libraryId && <button className={'icon-button conversation-pin' + (t.pinned ? ' pinned' : '')} aria-label={t.pinned ? '取消置顶对话' : '置顶对话'} title={t.pinned ? '取消置顶' : '置顶此对话'} disabled={!!busy} onClick={() => action('conversations-pin', t.libraryId, !t.pinned)}><Pin size={14} /></button>}
-            <button className="icon-button conversation-delete" data-delete-opener aria-label={'删除对话 ' + t.title} title={project.enabled ? '关闭同步后删除原生记录' : '删除本地对话，保留备份'} disabled={!!busy || project.enabled} onClick={(e) => deletePrompt(e, project, t)}><Trash2 size={14} /></button></div></article>)}
+            <button className="icon-button conversation-delete" data-delete-opener aria-label={t.retained && !t.nativePresent ? '管理保留副本 ' + t.title : '删除对话 ' + t.title} title={t.retained && !t.nativePresent ? '在历史与存储中查看或清理副本' : project.enabled ? '关闭同步后删除原生记录' : '删除本地对话，保留备份'} disabled={!!busy || project.enabled} onClick={(e) => t.retained && !t.nativePresent ? setHistoryOpen(true) : deletePrompt(e, project, t)}><Trash2 size={14} /></button></div></article>)}
           {!threads && <Loader2 className="spin" />}{threads && !threads.items.length && <p>暂无对话</p>}
           <div className="project-thread-pages"><button className="icon-button" aria-label="上一页对话" disabled={!offset || !threads} onClick={() => setOffset((n) => Math.max(0, n - 40))}><ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /></button><small>{threads?.total || 0} 个对话</small><button className="icon-button" aria-label="下一页对话" disabled={!threads || offset + 40 >= threads.total} onClick={() => setOffset((n) => n + 40)}><ChevronRight size={14} /></button></div></nav>
           <div {...columns.separator('threads')} />
           <div className="project-shared-preview">{selected ? <>
-            <div className="conversation-transcript"><div className="conversation-message-pages"><button className="text-button" disabled={!preview?.hasEarlier} onClick={() => setBefore((n) => n + 40)}><RotateCcw size={13} />更早内容</button>
+            <div className="conversation-transcript">{native && <HistorySource row={selected} />}<div className="conversation-message-pages"><button className="text-button" disabled={!preview?.hasEarlier} onClick={() => setBefore((n) => n + 40)}><RotateCcw size={13} />更早内容</button>
               <span>{preview?.total || 0} 条消息</span>{before > 0 && <button className="text-button" onClick={() => setBefore((n) => Math.max(0, n - 40))}>较新内容<ChevronRight size={13} /></button>}</div><Transcript value={preview} /></div>
             <footer className="project-resume">{native ? <button className="conversation-current-account" onClick={() => onClient?.(resumeHarness)}><span>当前账户<strong>{account?.profile?.fields?.find((f) => f.id === 'email')?.value || account?.label || labels[resumeHarness]}</strong></span></button>
               : <span className="conversation-retained">共享项目记录</span>}
@@ -161,5 +164,6 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
       {!trash.items.length && <div className="empty">暂无已删除记录</div>}
       {error && <p className="error-box" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     </section></div>}
+    {historyOpen && <ConversationHistory initialHarness={view} onClose={() => setHistoryOpen(false)} onChange={() => setRevision(n => n + 1)} />}
   </section>;
 }

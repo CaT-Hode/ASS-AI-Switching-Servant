@@ -362,14 +362,131 @@ test('pi v1/v2 linear migration, system filtering and incomplete tools are read-
   rows.push({ type: 'message', message: { role: 'user', content: 'pending' } }, { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', name: 'bash', arguments: {} }], stopReason: 'toolUse' } });
   assert.equal(codecs.decode('pi', rows).pending, true); assert.equal(codecs.decode('pi', rows).messages.length, 2);
 });
-test('DSH current replacement surface and nested tool results preserve the final conversation', () => {
+test('DSH current replacement surface preserves the final answer and omits nested tool results', () => {
   const header = { type: 'session', version: 3, id: ID, cwd: process.cwd(), createdAt: Date.parse(timestamp) };
   const rows = [header, { type: 'turn/start', seq: 0 }, { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'Question' }] } },
     { type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'Old output' }] } } },
     { type: 'assistant/message', seq: 3, surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 }, data: { message: { content: [{ type: 'text', text: 'Final output' }] } } },
     { type: 'tool/result', seq: 4, data: { message: { content: [{ type: 'tool-result', content: [{ type: 'text', text: 'Nested output' }] }] } } }, { type: 'turn/end', seq: 5 }];
-  const parsed = codecs.decode('dsh', rows); assert.ok(!parsed.messages.some((m) => m.text.includes('Old output'))); assert.ok(parsed.messages.some((m) => m.text.includes('Nested output')));
+  const parsed = codecs.decode('dsh', rows); assert.deepEqual(parsed.messages.map(m => m.text), ['Question', 'Final output']);
   assert.throws(() => codecs.decode('dsh', [{ ...header, version: 5 }]), /尚未支持/);
+});
+test('DSH v0-v4 transcripts keep text and Markdown while skipping typed tools, thinking and summaries', () => {
+  const answer = '## Answer\n\n```js\nconst result = 42;\n```\n[历史工具结果] is quoted assistant text.';
+  for (const version of [0, 1, 2, 3, 4]) {
+    const rows = [{ type: 'session', version, id: ID, cwd: process.cwd(), createdAt: Date.parse(timestamp) },
+      { type: 'turn/start', seq: 0 },
+      { type: 'user/message', seq: 1, data: { content: [{ type: 'input_text', text: 'Question' }, { type: 'image', name: 'attachment' }] } },
+      { type: 'assistant/message', seq: 2, data: { message: { content: [
+        { type: 'thinking', thinking: 'private reasoning', text: 'also private' },
+        { type: 'reasoning', text: 'DSH reasoning block' },
+        { type: 'tool-call', name: 'read', arguments: { file: 'private-path' }, text: 'tool block text' },
+        { type: 'tool-result', content: [{ type: 'text', text: 'nested private output' }] },
+        { type: 'text-chunks', texts: ['## Answer\n\n', '```js\nconst result = 42;\n```'] },
+        { type: 'output_text', text: '[历史工具结果] is quoted assistant text.' },
+      ] } } },
+      { type: 'tool/result', seq: 3, data: { message: { content: 'tool output' } } },
+      { type: 'compaction/summary', seq: 4, data: { summary: 'internal summary' } },
+      { type: 'turn/end', seq: 5 }];
+    const parsed = codecs.decode('dsh', rows);
+    assert.deepEqual(parsed.messages.map(m => [m.role, m.text]), [['user', 'Question'], ['assistant', answer]]);
+    assert.equal(parsed.pending, false);
+  }
+});
+test('DSH tool-only messages cannot count as answers and unfinished turns stay outside shared history', () => {
+  const header = { type: 'session', version: 4, id: ID, cwd: process.cwd(), createdAt: Date.parse(timestamp) };
+  const rows = [header, { type: 'turn/start', seq: 0 }, { type: 'user/message', seq: 1, data: { content: 'Answered question' } },
+    { type: 'assistant/message', seq: 2, data: { message: { content: 'Completed answer' } } }, { type: 'turn/end', seq: 3 },
+    { type: 'turn/start', seq: 4 }, { type: 'user/message', seq: 5, data: { content: 'Pending question' } },
+    { type: 'assistant/message', seq: 6, data: { message: { content: [{ type: 'toolCall', name: 'read', arguments: {} }] } } },
+    { type: 'tool/result', seq: 7, data: { message: { content: 'not an answer' } } }];
+  assert.deepEqual(codecs.decode('dsh', rows).messages.map(m => m.text), ['Answered question', 'Completed answer']);
+  assert.equal(codecs.decode('dsh', rows).pending, true);
+  assert.deepEqual(codecs.decode('dsh', rows, { completed: false }).messages.map(m => m.text), ['Answered question', 'Completed answer', 'Pending question']);
+});
+test('DSH v0-v4 distinguish human prompts from system, developer and injected user-role context by source', () => {
+  const question = 'Explain system prompts and <think> tags as a programming topic.';
+  for (const version of [0, 1, 2, 3, 4]) {
+    const rows = [{ type: 'session', version, id: ID, cwd: process.cwd(), createdAt: Date.parse(timestamp) }];
+    const event = (type, data) => rows.push({ type, seq: rows.length - 1, time: Date.parse(timestamp), data });
+    event('turn/start', {});
+    event('system/message', { message: { role: 'system', content: 'hidden system prompt' } });
+    event('developer/message', { message: { role: 'developer', content: 'hidden developer prompt' } });
+    for (const kind of ['runtime-context', 'skill-catalog', 'skill-invocation', 'time-context', 'tool-jobs', 'agent-message', 'subagent-settled', 'plugin', 'future-injection', null]) {
+      event('user/message', { role: 'user', source: { kind }, content: [{ type: 'text', text: 'hidden ' + kind }] });
+    }
+    event('user/message', { role: 'system', source: { kind: 'user' }, content: 'hidden mismatched role' });
+    event('user/message', { role: 'user', source: { kind: 'user' }, content: [{ type: 'input_text', text: question }] });
+    event('assistant/message', { message: { role: 'system', source: { kind: 'model' }, content: 'hidden mismatched assistant role' } });
+    event('assistant/message', { message: { role: 'assistant', source: { kind: 'plugin' }, content: 'hidden generated context' } });
+    event('assistant/message', { message: { role: 'assistant', source: { kind: 'model' }, content: [{ type: 'reasoning', text: 'hidden thought' }, { type: 'text', text: 'Visible answer' }] } });
+    event('turn/end', {});
+    const parsed = codecs.decode('dsh', rows);
+    assert.deepEqual(parsed.messages.map(m => [m.role, m.text]), [['user', question], ['assistant', 'Visible answer']]);
+    assert.equal(parsed.title, question);
+    assert.equal(parsed.pending, false);
+  }
+});
+test('DSH legacy messages without source metadata remain visible but explicit non-dialogue roles do not', () => {
+  const rows = [{ type: 'session', version: 0, id: ID, cwd: process.cwd(), createdAt: Date.parse(timestamp) },
+    { type: 'turn/start', seq: 0 },
+    { type: 'user/message', seq: 1, data: { role: 'system', content: 'hidden legacy system prompt' } },
+    { type: 'user/message', seq: 2, data: { role: 'developer', content: 'hidden legacy developer prompt' } },
+    { type: 'user/message', seq: 3, data: { content: 'Legacy human question' } },
+    { type: 'assistant/message', seq: 4, data: { message: { role: 'user', content: 'hidden mismatched message' } } },
+    { type: 'assistant/message', seq: 5, data: { message: { content: 'Legacy answer' } } }, { type: 'turn/end', seq: 6 }];
+  assert.deepEqual(codecs.decode('dsh', rows).messages.map(m => [m.role, m.text]), [['user', 'Legacy human question'], ['assistant', 'Legacy answer']]);
+});
+test('DSH older metadata is reparsed without a log change so system context cannot persist in titles or newly collected history', async t => {
+  const f = fixture(t), file = path.join(f.dirs.dsh, 'sessions', 'project', ID, 'session.v4.jsonl.zstd');
+  const rows = [{ type: 'session', version: 4, id: ID, cwd: f.cwd, createdAt: Date.parse(timestamp) },
+    { type: 'turn/start', seq: 0 },
+    { type: 'user/message', seq: 1, data: { role: 'user', source: { kind: 'runtime-context' }, content: 'hidden cached system context' } },
+    { type: 'user/message', seq: 2, data: { role: 'user', source: { kind: 'user' }, content: 'True human question' } },
+    { type: 'assistant/message', seq: 3, data: { message: { role: 'assistant', source: { kind: 'model' }, content: [{ type: 'reasoning', text: 'hidden thought' }, { type: 'text', text: 'Final answer' }] } } },
+    { type: 'turn/end', seq: 4 }];
+  write(file, require('node:zlib').zstdCompressSync(Buffer.from(codecs.jsonl(rows))));
+  const before = fs.readFileSync(file), signature = codecs.stamp(fs.statSync(file));
+  f.options.sources = () => f.sources.filter(s => s.harness === 'dsh');
+  const previous = codecs.discover(f.options.sources()).rows[0];
+  delete previous.transcriptRevision; previous.title = 'hidden cached system context';
+  f.library.state.catalog = { [previous.id]: previous }; f.library.persist();
+  const library = new ProjectConversations(f.options), project = (await library.list()).items[0];
+  const record = (await library.records(project.id)).items[0];
+  assert.equal(record.signature, signature);
+  assert.equal(record.title, 'True human question');
+  assert.deepEqual((await library.nativePreview(record.id)).messages.map(m => m.text), ['True human question', 'Final answer']);
+  await library.configure(project.id, { enabled: true, targets: ['dsh'] });
+  const shared = (await library.threads(project.id)).items[0];
+  assert.equal(shared.title, 'True human question');
+  assert.deepEqual((await library.preview(project.id, shared.id)).messages.map(m => m.text), ['True human question', 'Final answer']);
+  assert.deepEqual(fs.readFileSync(file), before);
+  assert.equal(codecs.stamp(fs.statSync(file)), signature);
+});
+test('DSH native preview ignores tool history on an unchanged cached file and after restart; new shared history contains only text', async t => {
+  const f = fixture(t), dshFile = path.join(f.dirs.dsh, 'sessions', 'project', ID, 'session.v4.jsonl.zstd');
+  const rows = [{ type: 'session', version: 4, id: ID, cwd: f.cwd, createdAt: Date.parse(timestamp) },
+    { type: 'turn/start', seq: 0 }, { type: 'user/message', seq: 1, data: { content: 'DSH text question' } },
+    { type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'thinking', thinking: 'omitted reasoning' }, { type: 'text', text: 'DSH final answer' }] } } },
+    { type: 'tool/result', seq: 3, data: { message: { content: [{ type: 'tool-result', content: [{ type: 'text', text: 'omitted tool' }] }] } } },
+    { type: 'compaction/summary', seq: 4, data: { summary: 'omitted summary' } }, { type: 'turn/end', seq: 5 }];
+  write(dshFile, require('node:zlib').zstdCompressSync(Buffer.from(codecs.jsonl(rows))));
+  const before = fs.readFileSync(dshFile), signature = codecs.stamp(fs.statSync(dshFile));
+  f.options.sources = () => f.sources.filter(s => s.harness === 'dsh');
+  let library = new ProjectConversations(f.options);
+  const project = (await library.list()).items[0];
+  const native = (await library.records(project.id, { harness: 'dsh' })).items[0];
+  for (let i = 0; i < 2; i++) {
+    await library.list();
+    assert.deepEqual((await library.nativePreview(native.id)).messages.map(m => m.text), ['DSH text question', 'DSH final answer']);
+    library = new ProjectConversations(f.options);
+  }
+  await library.list();
+  await library.configure(project.id, { enabled: true, targets: ['dsh'] });
+  const shared = (await library.threads(project.id)).items[0];
+  assert.deepEqual((await library.preview(project.id, shared.id)).messages.map(m => m.text), ['DSH text question', 'DSH final answer']);
+  assert.deepEqual(fs.readFileSync(dshFile), before);
+  assert.equal(codecs.stamp(fs.statSync(dshFile)), signature);
 });
 test('pi custom session root is discovered and current model defaults override historical metadata on resume', (t) => {
   const f = fixture(t), custom = path.join(f.root, 'custom-sessions');

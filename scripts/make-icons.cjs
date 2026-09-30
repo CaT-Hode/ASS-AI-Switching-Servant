@@ -42,6 +42,7 @@ app
     const pngs = sizes.map((size) =>
       icon.resize({ width: size, height: size, quality: "best" }).toPNG(),
     );
+    fs.writeFileSync(path.join(root, 'design/logo/ass-preview.png'), pngs.at(-1));
     const header = Buffer.alloc(6 + 16 * sizes.length);
     header.writeUInt16LE(1, 2);
     header.writeUInt16LE(sizes.length, 4);

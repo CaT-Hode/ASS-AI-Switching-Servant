@@ -44,26 +44,34 @@ function enumerate(dir, output, depth = 0, allowUnnamed = false) {
 }
 function codexIndex(dir) {
   const rows = new Map();
+  rows.databaseState = 'absent';
   // SQLite is an enrichment, not the only source of truth. Missing or locked
   // indexes cannot make retained JSONL disappear after an account change.
   try {
     const { DatabaseSync } = require("node:sqlite");
     const names = fs.readdirSync(dir).filter((n) => /^state_\d+\.sqlite$/.test(n)).sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0]));
     if (names[0]) {
+      rows.databaseState = 'unavailable';
       const file = path.join(dir, names[0]); safePath(file);
       const db = new DatabaseSync(file, { readOnly: true, timeout: 500 });
       try {
         const fields = new Set(db.prepare("PRAGMA table_info(threads)").all().map((r) => r.name));
         const selected = ["id", "name", "title", "cwd", "model", "model_provider", "archived", "source", "rollout_path", "project_id"].filter((n) => fields.has(n));
-        if (fields.has("id")) for (const row of db.prepare(`SELECT ${selected.join(",")} FROM threads LIMIT 20000`).all()) rows.set(row.id, { ...row, title: row.name?.trim() || row.title });
+        if (fields.has("id")) {
+          const threads = db.prepare(`SELECT ${selected.join(",")} FROM threads LIMIT 20001`).all();
+          rows.databaseState = threads.length > 20000 ? 'partial' : 'ready';
+          for (const row of threads.slice(0, 20000)) rows.set(row.id.toLowerCase(), { ...row, indexPresent: true, title: row.name?.trim() || row.title });
+        }
       } finally { db.close(); }
     }
   } catch { /* Native clients can rebuild indexes from their transcripts. */ }
   try {
     const file = path.join(dir, "session_index.jsonl"); safePath(file);
     if (fs.statSync(file).size <= 16 * 1024 ** 2)
-      for (const r of records(fs.readFileSync(file, "utf8"))) if (typeof r.id === "string")
-        rows.set(r.id, { ...rows.get(r.id), title: rows.get(r.id)?.title || r.thread_name });
+      for (const r of records(fs.readFileSync(file, "utf8"))) if (typeof r.id === "string") {
+        const id = r.id.toLowerCase();
+        rows.set(id, { ...rows.get(id), title: rows.get(id)?.title || r.thread_name });
+      }
   } catch {}
   try {
     const file = path.join(dir, '.codex-global-state.json'); safePath(file);
@@ -87,6 +95,9 @@ function metadata(file, source, stat, index) {
   const meta = values.find((r) => r.type === "session_meta")?.payload || {};
   const id = (source.harness === 'codex' ? meta.id || filenameIds.at(-1) : filenameIds.at(-1) || values.find((r) => r.sessionId)?.sessionId)?.toLowerCase();
   const native = index?.get(id) || {};
+  const nativeIndexState = source.harness !== 'codex' ? undefined : native.indexPresent
+    ? native.rollout_path && key(native.rollout_path) !== key(file) ? 'other-file' : 'indexed'
+    : index?.databaseState === 'ready' ? 'missing' : index?.databaseState || 'absent';
   if (!id || (meta.id && !filenameIds.some((v) => v.toLowerCase() === id))) throw Error("会话标识与文件名不一致");
   if (source.harness === "claude" && values.some((r) => r.sessionId && r.sessionId.toLowerCase() !== id)) throw Error("CC 会话标识不一致");
   const sidechain = source.harness === "codex" ? !!meta.source?.subagent || native.source === "subagent" : values.some((r) => r.isSidechain);
@@ -113,7 +124,8 @@ function metadata(file, source, stat, index) {
   return { id: hash(source.harness + "\0" + key(file)), sessionId: id, harness: source.harness,
     file, dir: source.dir, relative: path.relative(source.dir, file), sourceLabel: source.label || "本机历史",
     title, cwd, model, indexedFile: native.rollout_path && key(native.rollout_path) === key(file), projectless: native.projectless, projectExplicit: native.projectExplicit, projectName: native.projectName,
-    archived: file.includes(path.sep + "archived_sessions" + path.sep) || !!native.archived,
+    nativeIndexState,
+    archived: path.relative(source.dir, file).split(path.sep)[0] === 'archived_sessions' || [true, 1, '1'].includes(native.archived),
     updatedAt: new Date(stat.mtimeMs).toISOString(), createdAt: clean(meta.timestamp || values.find((r) => r.timestamp)?.timestamp, 50),
     size: stat.size, signature: signature(stat), nativePresent: true };
 }
@@ -177,7 +189,7 @@ function input(row, vault, secret, backupOnly = false) {
   source.on("error", (e) => decipher.destroy(e)); source.pipe(decipher);
   return decipher;
 }
-async function preview(row, vault, secret, before = 0) {
+async function preview(row, vault, secret, before = 0, backupOnly = false) {
   let messages = [], fallback = [], total = 0, fallbackTotal = 0;
   const remember = (m, event) => {
     if (!m.text) return;
@@ -186,7 +198,7 @@ async function preview(row, vault, secret, before = 0) {
     list.push(m); if (list.length > 2000) list.shift();
     if (event) fallbackTotal++; else total++;
   };
-  for await (const r of jsonLines(input(row, vault, secret))) {
+  for await (const r of jsonLines(input(row, vault, secret, backupOnly))) {
     if (row.harness === "codex") {
       if (r.type === "response_item" && r.payload?.type === "message" && ["user", "assistant"].includes(r.payload.role))
         remember({ role: r.payload.role, text: contentText(r.payload.content), timestamp: clean(r.timestamp, 50) });
@@ -221,17 +233,17 @@ async function preserve(row, vault, secret) {
     return { blob, signature: signature(stat), size: stat.size, digest: digest.digest("hex"), capturedAt: new Date().toISOString() };
   } catch (e) { fs.unlinkSync(file); throw e; }
 }
-async function stage(row, target, vault, secret) {
+async function stage(row, target, vault, secret, backupOnly = false) {
   if (!path.isAbsolute(target) || !["codex", "claude"].includes(row.harness)) throw Error("续聊目录无效");
   safePath(target);
   // Existing transcripts in the active home are used in place, never replaced.
-  if (inside(target, row.file)) {
+  if (!backupOnly && inside(target, row.file)) {
     try { safePath(row.file); if (fs.statSync(row.file).isFile()) return { file: row.file, copied: false }; }
     catch (e) { if (e.code !== "ENOENT") throw e; }
   }
   // CC supports an explicit transcript path, so a different credential home
   // need not receive a duplicate. OAuth comes ONLY from the current target.
-  if (row.harness === "claude") {
+  if (!backupOnly && row.harness === "claude") {
     try { safePath(row.file); if (fs.statSync(row.file).isFile()) return { file: row.file, copied: false }; }
     catch (e) { if (e.code !== "ENOENT") throw e; }
   }
@@ -253,8 +265,8 @@ async function stage(row, target, vault, secret) {
   const tmp = file + "." + crypto.randomBytes(8).toString("hex") + ".tmp", digest = crypto.createHash("sha256");
   const meter = new Transform({ transform(chunk, _, done) { digest.update(chunk); done(null, chunk); } });
   try {
-    await pipeline(input(row, vault, secret), meter, fs.createWriteStream(tmp, { flags: "wx", mode: 0o600 }));
-    if (!fs.existsSync(row.file) && digest.digest("hex") !== row.snapshot?.digest) throw Error("会话副本校验失败，未恢复");
+    await pipeline(input(row, vault, secret, backupOnly), meter, fs.createWriteStream(tmp, { flags: "wx", mode: 0o600 }));
+    if ((backupOnly || !fs.existsSync(row.file)) && digest.digest("hex") !== row.snapshot?.digest) throw Error("会话副本校验失败，未恢复");
     // An exclusive hard-link commit cannot overwrite a file created by a client
     // while the restore was in progress. Temp and target share a filesystem.
     safePath(file); fs.linkSync(tmp, file);

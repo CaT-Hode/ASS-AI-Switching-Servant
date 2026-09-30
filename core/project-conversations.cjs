@@ -38,14 +38,18 @@ class ProjectConversations {
   project(id) { const p = this.state.projects.find((p) => p.id === id); if (!p) throw Error('项目不存在，请刷新'); return p; }
   summary(p) { return { id: p.id, cwd: p.cwd, name: p.name, enabled: p.enabled, targets: p.targets, count: p.enabled ? p.threads.length : this.recordsCache.filter((r) => r.projectId === p.id).length,
     branches: p.threads.filter((r) => r.branchOf).length, lastSync: p.lastSync, errors: p.errors || [] }; }
-  async list() {
+  async list({ scope = 'active' } = {}) {
+    if (!['active', 'inactive', 'all'].includes(scope)) throw Error('对话范围无效');
+    this.scope = scope;
     return this.serial(async () => {
-      const r = await this.run('discover', { history: await this.history?.() || [] }); this.candidates = r.projects; this.recordsCache = r.records;
+      const r = await this.run('discover', { scope, history: await this.history?.() || [] }); this.candidates = r.projects; this.recordsCache = r.records;
       if (!this.error) { this.state.observed = r.observed; this.state.catalog = r.catalog; this.persist(); }
       const map = new Map(r.projects.map((p) => [p.id, { ...p, enabled: false, targets: HARNESSES, lastSync: '', branches: 0 }]));
-      for (const p of this.state.projects) if (p.enabled || map.has(p.id)) map.set(p.id, { ...map.get(p.id), ...this.summary(p) });
+      for (const p of this.state.projects) if ((p.enabled && scope !== 'inactive') || map.has(p.id)) {
+        const native = map.get(p.id); map.set(p.id, { ...native, ...this.summary(p), ...(scope === 'inactive' ? { enabled: false, count: native.count } : {}) });
+      }
       return { items: [...map.values()].sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name)),
-        retained: Object.fromEntries(HARNESSES.map((h) => [h, r.records.filter((r) => r.harness === h && r.retained).length])), errors: r.errors, error: this.error || this.lastError || '' };
+        scope, inactive: r.inactive, retained: Object.fromEntries(HARNESSES.map((h) => [h, r.records.filter((r) => r.harness === h && r.retained).length])), errors: r.errors, error: this.error || this.lastError || '' };
     });
   }
   async configure(id, { enabled, targets = HARNESSES } = {}) {
@@ -108,7 +112,7 @@ class ProjectConversations {
     if (typeof query !== 'string' || query.length > 500 || !HARNESSES.includes(harness) || typeof nativeView !== 'boolean') throw Error('会话查询无效');
     const term = query.trim().toLowerCase();
     const projects = new Map(this.candidates.map((p) => [p.id, p]));
-    for (const p of this.state.projects) if (p.enabled) projects.set(p.id, { ...projects.get(p.id), ...p });
+    for (const p of this.state.projects) if (p.enabled && this.scope !== 'inactive') projects.set(p.id, { ...projects.get(p.id), ...p });
     const native = new Map();
     for (const r of this.recordsCache) if (r.harness === harness) {
       if (!native.has(r.projectId)) native.set(r.projectId, []);
@@ -128,16 +132,42 @@ class ProjectConversations {
     return { query: query.trim(), harness, nativeView, items };
   }
   record(id) { const r = this.recordsCache.find((r) => r.id === id); if (!r) throw Error('会话不存在，请刷新'); return r; }
-  trashList() { return { items: (this.state.trash || []).filter((r) => r.phase !== 'restored').map((r) => ({ id: r.id, label: r.label, createdAt: r.createdAt, count: r.rows.length, phase: r.phase })) }; }
+  trashList({ includeRestored = false } = {}) {
+    const items = (this.state.trash || []).filter((r) => includeRestored || r.phase !== 'restored').map((r) => ({ id: r.id, label: r.label, createdAt: r.createdAt, count: r.rows.length, phase: r.phase,
+      bytes: require('./conversation-storage.cjs').trashFiles(this.vault, r).reduce((n, f) => n + f.bytes, 0) }));
+    return { items, bytes: items.reduce((n, r) => n + r.bytes, 0) };
+  }
+  async purgeTrash({ id, confirmed } = {}) {
+    if (confirmed !== true) throw Error('请确认永久清理删除备份');
+    return this.serial(() => {
+      const entry = this.state.trash?.find((r) => r.id === id);
+      if (!entry || !['deleted', 'restored', 'purging'].includes(entry.phase)) throw Error('删除尚未完成，保留恢复备份');
+      const plans = require('./conversation-storage.cjs').trashFiles(this.vault, entry);
+      if (entry.phase !== 'restored') this.state.deleted = [...new Set([...(this.state.deleted || []), ...entry.rows.map(r => r.harness + '\0' + r.sessionId)])];
+      const phase = entry.phase; entry.phase = 'purging';
+      try { this.persist(); } catch (e) { entry.phase = phase; throw e; }
+      let bytes = 0;
+      for (const item of plans) if (fs.existsSync(item.file)) {
+        safePath(item.file); const stat = fs.lstatSync(item.file);
+        if (!stat.isFile() || require('./conversation-files.cjs').signature(stat) !== item.stamp) throw Error('删除备份已变化，请刷新后重试清理');
+        fs.unlinkSync(item.file); bytes += item.bytes;
+      }
+      for (const dir of [path.join(this.vault, 'trash', id, 'records'), path.join(this.vault, 'trash', id)]) {
+        safePath(dir); try { fs.rmdirSync(dir); } catch (e) { if (!['ENOENT', 'ENOTEMPTY'].includes(e.code)) throw e; }
+      }
+      this.state.trash = this.state.trash.filter(r => r.id !== id); this.persist(); this.recordsCache = [];
+      return { bytes, message: '删除备份已永久清理。' };
+    });
+  }
   async remove({ projectId, recordId, threadId, confirmed } = {}) {
     if (confirmed !== true) throw Error('请确认删除本地记录');
     if (!projectId || (recordId && threadId)) throw Error('删除选项无效');
     const active = this.state.projects.find((p) => p.id === projectId && p.enabled);
     if (active) throw Error('请先关闭项目同步，再删除原生对话');
-    await this.list();
-    const selected = this.recordsCache.filter((r) => r.projectId === projectId && (!recordId || r.id === recordId));
+    await this.list({ scope: this.scope || 'active' });
+    const selected = this.recordsCache.filter((r) => r.nativePresent && r.projectId === projectId && (!recordId || r.id === recordId));
     if (threadId) throw Error('请先关闭项目同步，再删除原生对话');
-    if (!selected.length) throw Error('没有可删除的本地对话');
+    if (!selected.length) throw Error('没有可删除的原生对话；保留副本请在“历史与存储”中清理');
     await this.assertDeletionIdle?.(selected);
     return this.serial(async () => {
       this.persist();
@@ -150,7 +180,7 @@ class ProjectConversations {
         await this.releaseImports({ imports: entry.imports, returns: [] });
       }
       const updated = await this.run('trash-commit', { entry });
-      Object.assign(entry, updated); this.recordsCache = []; this.persist();
+      Object.assign(entry, updated); this.recordsCache = []; this.state.deleted = [...new Set([...(this.state.deleted || []), ...entry.rows.map(r => r.harness + '\0' + r.sessionId)])]; this.persist();
       return { id: entry.id, message: `已删除 ${entry.rows.length} 个本地对话，可从“已删除记录”恢复。` };
     });
   }
@@ -174,7 +204,9 @@ class ProjectConversations {
           await this.releaseImports({ returns, imports: [] });
         } finally { for (const item of returns) if (fs.existsSync(item.file)) fs.unlinkSync(item.file); }
       }
-      const updated = await this.run('trash-restore', { entry }); Object.assign(entry, updated); this.persist();
+      const updated = await this.run('trash-restore', { entry }); Object.assign(entry, updated);
+      const keys = new Set(entry.rows.map(r => r.harness + '\0' + r.sessionId));
+      this.state.deleted = (this.state.deleted || []).filter(key => !keys.has(key)); this.persist();
       return { message: '本地对话已恢复，项目文件未改动。' };
     });
   }

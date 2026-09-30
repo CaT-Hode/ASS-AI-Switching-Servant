@@ -39,10 +39,11 @@ function resolveTarget(dir, manager) {
     path.resolve(e.file).toLowerCase().startsWith(path.resolve(dir, "profiles").toLowerCase() + path.sep));
   // Independent account homes inherit the profile format, not desktop runtime
   // metadata. A generated patch remains readable after ASS or DSH restarts.
-  const profileFile = path.join(dir, "profiles", "web", "cordis.patch.yml");
-  const modern = usesProfile(version) || owned || (!version && fs.existsSync(profileFile));
   const profile = link.profile || "web";
-  if (modern && !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(profile)) throw Error("DSH 当前 profile 名称无效，未写入配置");
+  const validProfile = /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(profile);
+  const profileFile = path.join(dir, "profiles", validProfile ? profile : 'web', "cordis.patch.yml");
+  const modern = usesProfile(version) || owned || (!version && fs.existsSync(profileFile));
+  if (modern && !validProfile) throw Error("DSH 当前 profile 名称无效，未写入配置");
   return { dir, auth: path.join(dir, ".credentials.yaml"),
     config: modern ? path.join(dir, "profiles", profile, "cordis.patch.yml") : path.join(dir, "settings.yaml"),
     format: modern ? "dsh-patch" : "yaml", profile, version };

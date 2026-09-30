@@ -396,10 +396,11 @@
   position: relative;
 }
 .inline-model.dirty {
-  background: light-dark(#fbfcfb, #242424);
+  --model-draft-background: light-dark(#fbfcfb, #242424);
+  background: var(--model-draft-background);
   box-shadow:
-    12px 0 light-dark(#fbfcfb, #000000),
-    -12px 0 light-dark(#fbfcfb, #000000);
+    12px 0 var(--model-draft-background),
+    -12px 0 var(--model-draft-background);
 }
 .inline-model-fields {
   display: grid;
