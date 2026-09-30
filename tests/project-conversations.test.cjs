@@ -61,6 +61,32 @@ test('Codex current project assignment and title override the original session h
   const raw = codecs.discover(f.sources).rows.find((r) => r.sessionId === ID); assert.equal(raw.projectless, true);
 });
 
+test('unified metadata search covers project paths and native titles, scoped to the current harness without rescanning', async (t) => {
+  const f = fixture(t, true), id = crypto.randomUUID();
+  write(path.join(f.dirs.codex, 'sessions', `rollout-${id}.jsonl`), codecs.encode('codex', { id, cwd: f.other, title: 'Unique history needle', messages: [{ ...messages[0], text: 'Unique history needle' }, messages[1]], createdAt: timestamp }).bytes);
+  const list = await f.library.list(), original = fs.readFileSync(f.file);
+  const home = list.items.find((p) => p.cwd === f.cwd), other = list.items.find((p) => p.cwd === f.other);
+  f.library.run = () => { throw Error('search must use cached metadata'); };
+  assert.deepEqual(f.library.search({ harness: 'codex', query: '  NEEDLE  ' }).items, [{ id: other.id, projectMatch: false, matches: 1 }]);
+  assert.equal(f.library.search({ harness: 'codex', query: 'other-project' }).items[0].projectMatch, true);
+  assert.equal(f.library.search({ harness: 'codex', query: 'OpenCode project' }).items.length, 0);
+  assert.equal(f.library.search({ harness: 'opencode', query: 'OpenCode project' }).items[0].id, home.id);
+  assert.equal(f.library.search({ harness: 'codex', query: 'Existing answer' }).items.length, 0, 'message bodies are not searched or transferred');
+  assert.equal(f.library.search({ harness: 'codex', query: '' }).items.length, 2);
+  assert.deepEqual(fs.readFileSync(f.file), original);
+  for (const input of [{ harness: 'other' }, { harness: 'codex', query: 'x'.repeat(501) }, { harness: 'codex', nativeView: 'yes' }]) assert.throws(() => f.library.search(input), /查询无效/);
+});
+
+test('shared search and cached paging do not trigger synchronization, while native view stays native', async (t) => {
+  const f = fixture(t), id = await enable(f), p = f.library.project(id);
+  p.threads[0].title = 'Shared needle';
+  f.library.run = () => { throw Error('search must not synchronize'); };
+  assert.equal(f.library.search({ harness: 'pi', query: 'needle' }).items[0].id, id);
+  assert.equal(f.library.search({ harness: 'pi', query: 'needle', nativeView: true }).items.length, 0);
+  assert.equal((await f.library.threads(id, { cached: true, query: 'needle' })).items[0].title, 'Shared needle');
+  await assert.rejects(f.library.threads(id, { cached: 'true' }), /查询无效/);
+});
+
 test('large Codex logs are listed and synchronized without a full-file buffer or 128 MiB exclusion', async (t) => {
   const f = fixture(t), fd = fs.openSync(f.file, 'a');
   const noise = JSON.stringify({ type: 'debug_only', payload: 'x'.repeat(128 * 1024) }) + '\n';

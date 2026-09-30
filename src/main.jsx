@@ -400,6 +400,14 @@ function App() {
     diagnostics: "连接诊断",
     updates: "关于 ASS",
   }[view];
+  const brand = <div className="brand">
+    <img src="./ass-app-icon.png" alt="ASS 菊花标志" />
+    <div><div className="brand-title"><strong>ASS</strong>
+      <button className="version-button" aria-label="查看 ASS 版本与更新" title={state.updates.available ? "发现新版本" : "版本与更新"} onClick={() => setView("updates")}>
+        {state.updates.available && <span className="update-dot" />}v{state.version}
+      </button>
+    </div><small>AI 路由</small></div>
+  </div>;
   return (
     <div
       className="app-shell"
@@ -416,19 +424,9 @@ function App() {
         e.currentTarget.dataset.input = "keyboard";
       }}
     >
-      {api.windowChrome && <div className="window-chrome" aria-hidden="true" />}
+      {api.windowChrome && <header className="window-chrome" aria-label="应用顶栏">{brand}</header>}
       <aside className="sidebar">
-        <div className="brand">
-          <img src="./ass-app-icon.png" alt="ASS 菊花标志" />
-          <div>
-            <div className="brand-title"><strong>ASS</strong>
-              <button className="version-button" aria-label="查看 ASS 版本与更新" title={state.updates.available ? "发现新版本" : "版本与更新"} onClick={() => setView("updates")}>
-                {state.updates.available && <span className="update-dot" />}v{state.version}
-              </button>
-            </div>
-            <small>AI 路由</small>
-          </div>
-        </div>
+        {!api.windowChrome && brand}
         <div className="nav-label">工作空间</div>
         <nav aria-label="主导航">
           {[

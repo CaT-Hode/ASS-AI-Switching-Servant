@@ -11,6 +11,8 @@ for (const h of ['codex', 'claude', 'pi', 'dsh']) {
   const encoded = codecs.encode(h, { id: sourceId, cwd, title: '共享项目讨论', messages, createdAt: timestamp });
   write(path.join(dirs[h], h === 'claude' ? 'projects' : 'sessions', 'project', h === 'dsh' ? sourceId + '/session.v3.jsonl.zstd' : sourceId + '.jsonl'), encoded.bytes);
 }
+const searchProject = path.join(home, 'z-search-project'), searchId = crypto.randomUUID(); fs.mkdirSync(searchProject);
+write(path.join(dirs.codex, 'sessions', 'project', searchId + '.jsonl'), codecs.encode('codex', { id: searchId, cwd: searchProject, title: '独立项目检索目标', messages: [{ role: 'user', text: '独立项目检索目标', timestamp }, { role: 'assistant', text: '跨项目搜索样本', timestamp }], createdAt: timestamp }).bytes);
 fs.mkdirSync(dirs.opencode, { recursive: true });
 const { DatabaseSync } = require('node:sqlite'), db = new DatabaseSync(path.join(dirs.opencode, 'opencode.db'));
 db.exec('CREATE TABLE session(id TEXT PRIMARY KEY,title TEXT,directory TEXT,time_created INTEGER,time_updated INTEGER,parent_id TEXT,version TEXT,project_id TEXT,slug TEXT); CREATE TABLE message(id TEXT PRIMARY KEY,session_id TEXT,time_created INTEGER,time_updated INTEGER,data TEXT); CREATE TABLE part(id TEXT PRIMARY KEY,message_id TEXT,session_id TEXT,time_created INTEGER,time_updated INTEGER,data TEXT)');
@@ -49,6 +51,28 @@ async function launch(target) {
     await page.getByRole('switch', { name: '项目同步', exact: true }).waitFor();
     assert.equal(await page.getByRole('switch', { name: '项目同步' }).getAttribute('aria-checked'), 'false');
     const discovered = await call('project-conversations-list'); assert.deepEqual(new Set(discovered.items[0].harnesses), new Set(codecs.HARNESSES));
+    const searchInput = page.getByRole('searchbox', { name: '搜索项目或对话', exact: true });
+    assert.equal(await page.locator('.project-conversation-page input[type="search"]').count(), 1);
+    assert.equal(await page.locator('.conversation-detail-heading h2').count(), 0);
+    assert.ok((await page.locator('.conversation-detail-heading').boundingBox()).height <= 46);
+    assert.ok((await page.locator('.conversation-list .conversation-row').first().boundingBox()).height <= 64);
+    const pinFilter = page.getByRole('button', { name: '只看置顶', exact: true });
+    const pinGeometry = await pinFilter.evaluate((button) => { const icon = button.querySelector('svg'), b = button.getBoundingClientRect(), i = icon.getBoundingClientRect(); return { width: b.width, height: b.height, padding: getComputedStyle(button).padding, icon: i.width }; });
+    assert.deepEqual(pinGeometry, { width: 30, height: 30, padding: '0px', icon: 14 });
+    await pinFilter.hover(); await page.getByRole('tooltip').getByText('只看置顶对话', { exact: true }).waitFor();
+    await page.screenshot({ path: path.join(out, 'conversation-pin-tooltip.png'), animations: 'disabled' });
+    await pinFilter.click(); assert.equal(await pinFilter.getAttribute('aria-pressed'), 'true');
+    await page.locator('.project-shared-threads').getByText('暂无对话', { exact: true }).waitFor();
+    await pinFilter.click(); await page.locator('.project-thread-main').first().waitFor();
+    await searchInput.fill('独立项目检索目标');
+    await page.locator('.conversation-project-path').filter({ hasText: 'z-search-project' }).waitFor();
+    await page.locator('.project-thread-main').filter({ hasText: '独立项目检索目标' }).waitFor();
+    assert.equal(await page.locator('.conversation-list .conversation-row').count(), 1);
+    await page.screenshot({ path: path.join(out, 'conversation-unified-search.png'), animations: 'disabled' });
+    await searchInput.fill('missing-search-fixture'); await page.locator('.conversation-list').getByText('暂无项目记录', { exact: true }).waitFor();
+    await searchInput.fill('shared-project'); await page.locator('.conversation-project-path').filter({ hasText: /shared-project$/ }).waitFor();
+    await page.locator('.project-thread-main').first().waitFor();
+    await searchInput.fill('');
     // The former absolute top:34px and inherited nav SVG size displaced the
     // trash control on wrapped titles. Test the same two-line OpenCode title.
     await page.locator('.conversation-tabs').getByRole('button', { name: 'OpenCode', exact: true }).click();
@@ -89,6 +113,8 @@ async function launch(target) {
     await page.getByRole('button', { name: '关闭通知', exact: true }).click();
     await app.evaluate(() => { const p = global.assTest.projectConversations; p.assertDeletionIdle = global.assTest.previousDeleteGuard; delete global.assTest.previousDeleteGuard; });
     await page.locator('.conversation-tabs').getByRole('button', { name: 'Codex', exact: true }).click();
+    await page.locator('.project-thread-row').first().waitFor();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     for (const [label, delta] of [['调整项目栏宽度', 65], ['调整对话栏宽度', 55]]) {
       const separator = page.getByRole('separator', { name: label }), box = await separator.boundingBox();
       const original = Number(await separator.getAttribute('aria-valuenow'));
@@ -182,6 +208,7 @@ async function launch(target) {
     await row.locator('.project-thread-main').click();
     const rendered = page.locator('.conversation-markdown').filter({ has: page.getByRole('heading', { name: 'Markdown 记录', exact: true }) });
     await rendered.getByRole('heading', { name: 'Markdown 记录', exact: true }).waitFor();
+    await rendered.locator('blockquote').waitFor(); await rendered.locator('table').waitFor();
     assert.equal(await rendered.locator('strong').first().textContent(), '强调');
     assert.equal(await rendered.locator('blockquote').count(), 1); assert.equal(await rendered.locator('table').count(), 1);
     assert.equal(await rendered.locator('input[type="checkbox"][disabled][checked]').count(), 1);
@@ -206,6 +233,6 @@ async function launch(target) {
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
     await page.screenshot({ path: path.join(out, 'conversation-columns-light.png'), animations: 'disabled' });
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, data, browser: 'Browser plugin not available; Electron Playwright', viewport: '1520x980, 1280x900, 1100x900 desktop', checks: ['five native sources', 'opt-in project sync', 'current credential targets', 'hardlink handoff', 'CC + pi divergent branches', 'cancel resume', 'drag + keyboard resize with restart persistence', '22px borderless delete control + 14px centered SVG', 'trash hover/press animation on wrapped titles', 'bottom-right failed deletion toast without inline error', 'native delete cancel/confirm + encrypted recovery', 'CommonMark/GFM structure + inert HTML/links/images', 'long fenced code scrolls within the pane', 'client conversation shortcut directly left of connection switch', 'persistent project settings and history', 'light/dark rendered UI', 'no clipping or horizontal overflow', 'no renderer/console errors or framework overlay'], nativeInference: false }));
+    console.log(JSON.stringify({ ok: true, data, browser: 'Browser plugin not available; Electron Playwright', viewport: '1520x980, 1280x900, 1100x900 desktop', checks: ['five native sources', 'single search across project paths and conversation titles', '30px pin filter with hover and focus help', 'compact two-line projects without repeated title', 'opt-in project sync', 'current credential targets', 'hardlink handoff', 'CC + pi divergent branches', 'cancel resume', 'drag + keyboard resize with restart persistence', '22px borderless delete control + 14px centered SVG', 'trash hover/press animation on wrapped titles', 'bottom-right failed deletion toast without inline error', 'native delete cancel/confirm + encrypted recovery', 'CommonMark/GFM structure + inert HTML/links/images', 'long fenced code scrolls within the pane', 'client conversation shortcut directly left of connection switch', 'persistent project settings and history', 'light/dark rendered UI', 'no clipping or horizontal overflow', 'no renderer/console errors or framework overlay'], nativeInference: false }));
   } finally { await close(); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });

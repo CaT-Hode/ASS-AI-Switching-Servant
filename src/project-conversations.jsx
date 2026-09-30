@@ -1,6 +1,6 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Folder, Loader2, MessagesSquare, Play, RefreshCw, ShieldCheck, ChevronRight, RotateCcw, Pin, Monitor, Trash2, X } from './icons.jsx';
+import { Folder, Search, Loader2, MessagesSquare, Play, RefreshCw, ShieldCheck, ChevronRight, RotateCcw, Pin, Monitor, Trash2, X } from './icons.jsx';
 import { useConversationColumns } from './conversation-columns.jsx';
 import { detectedClients } from './usage-view.mjs';
 import { ConversationMarkdown } from './conversation-markdown.mjs';
@@ -20,7 +20,7 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
   const [list, setList] = useState(null), [query, setQuery] = useState(''), [project, setProject] = useState(null);
   const [threads, setThreads] = useState(null), [selected, setSelected] = useState(null), [preview, setPreview] = useState(null), [before, setBefore] = useState(0);
   const [revision, setRevision] = useState(0), [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const [offset, setOffset] = useState(0), [threadQuery, setThreadQuery] = useState(''), [pinned, setPinned] = useState(false);
+  const [offset, setOffset] = useState(0), [search, setSearch] = useState(null), [pinned, setPinned] = useState(false);
   const available = detectedClients(state).filter((c) => Object.hasOwn(labels, c.id));
   const [view, setView] = useState(initialHarness || state.preferences.conversations?.harness || 'codex'), [target, setTarget] = useState(initialHarness || 'codex'), [confirm, setConfirm] = useState('');
   const [nativeView, setNativeView] = useState(false);
@@ -42,14 +42,25 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
     return () => { current = false; };
   }, [revision]);
   const shared = project?.enabled && project.targets.includes(view) && !nativeView;
+  const searchTerm = query.trim();
+  const searchReady = search?.query === searchTerm && search?.harness === view && search?.nativeView === nativeView;
+  const matches = useMemo(() => new Map(search?.items.map((p) => [p.id, p]) || []), [search]);
+  const threadQuery = searchTerm && searchReady && !matches.get(project?.id)?.projectMatch ? searchTerm : '';
+  useEffect(() => {
+    let current = true; setSearch(null);
+    if (!searchTerm || !list) return;
+    const timer = setTimeout(() => api.call('project-conversations-search', { query: searchTerm, harness: view, nativeView })
+      .then((r) => { if (current) setSearch(r); }).catch((e) => { if (current) setError(errorText(e)); }), 180);
+    return () => { current = false; clearTimeout(timer); };
+  }, [searchTerm, view, nativeView, list]);
   useEffect(() => {
     let current = true; setThreads(null); setConfirm('');
     const timer = setTimeout(() => { if (project && list) api.call(shared ? 'project-conversations-threads' : 'project-conversations-records', project.id,
-      { offset, query: threadQuery, harness: view, pinned }).then((r) => {
+      { offset, query: threadQuery, harness: view, pinned, cached: !!searchTerm }).then((r) => {
       if (current) { setThreads(r); setSelected((old) => r.items.find((t) => t.id === old?.id) || r.items[0] || null); }
-    }).catch((e) => { if (current) setError(errorText(e)); }); }, threadQuery ? 200 : 0);
+    }).catch((e) => { if (current) setError(errorText(e)); }); }, 0);
     return () => { current = false; clearTimeout(timer); };
-  }, [project?.id, shared, view, list, offset, threadQuery, pinned]);
+  }, [project?.id, shared, view, list, offset, threadQuery, pinned, !!searchTerm]);
   useEffect(() => {
     let current = true; setPreview(null); setConfirm('');
     if (selected) api.call(selected.kind === 'native' ? 'project-conversations-native-preview' : 'project-conversations-preview',
@@ -64,8 +75,10 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
     document.addEventListener('keydown', close); document.addEventListener('pointerdown', close);
     return () => { cancelAnimationFrame(focus); document.removeEventListener('keydown', close); document.removeEventListener('pointerdown', close); if (opener?.isConnected) opener.focus(); };
   }, [confirm]);
-  const items = useMemo(() => list?.items.filter((p) => (p.harnesses?.includes(view) || (p.enabled && p.targets.includes(view))) && (p.name + ' ' + p.cwd).toLowerCase().includes(query.toLowerCase())) || [], [list, query, view]);
-  useEffect(() => { if (list && !items.some((p) => p.id === project?.id)) setProject(items[0] || null); }, [list, view, project?.id]);
+  const items = useMemo(() => list?.items.filter((p) => (p.harnesses?.includes(view) || (p.enabled && p.targets.includes(view))) && (!searchTerm || !searchReady || matches.has(p.id))) || [], [list, view, searchTerm, searchReady, matches]);
+  useEffect(() => { if (list && !items.some((p) => p.id === project?.id)) {
+    setProject(items[0] || null); setOffset(0); setBefore(0);
+  } }, [items, list, project?.id]);
   async function action(name, ...args) {
     setBusy(name); setError(''); setNotice(''); setConfirm('');
     const destructive = ['project-conversations-delete', 'project-conversations-restore'].includes(name);
@@ -75,7 +88,7 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
       if (!name.includes('resume') && name !== 'conversations-open-desktop') setRevision((n) => n + 1);
     } catch (e) { if (destructive && onNotify) onNotify(errorText(e), true); else setError(errorText(e)); } finally { setBusy(''); }
   }
-  function choose(p) { setProject(p); setSelected(null); setOffset(0); setThreadQuery(''); setBefore(0); setNotice(''); setError('');
+  function choose(p) { setProject(p); setSelected(null); setOffset(0); setBefore(0); setNotice(''); setError('');
     api.call('ui-preferences', { conversations: { project: p.id, scope: 'projects' } }).catch((e) => setError(errorText(e))); }
   const targets = project?.targets || available.map((c) => c.id);
   useEffect(() => { setTarget(view); }, [view]);
@@ -90,7 +103,7 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
   }
   return <section ref={columns.root} className="project-conversation-page" aria-label="对话管理">
     <div className="project-sync-toolbar"><div className="conversation-tabs" aria-label="会话客户端">{available.map((c) => <button key={c.id} aria-pressed={view === c.id} onClick={() => {
-      setView(c.id); setOffset(0); setBefore(0); if (!shared) setSelected(null); setThreadQuery(''); setNativeView(false);
+      setView(c.id); setOffset(0); setBefore(0); if (!shared) setSelected(null); setNativeView(false);
       api.call('ui-preferences', { conversations: { harness: c.id } }).catch((e) => setError(errorText(e)));
     }}><img src={'./providers/' + brands[c.id] + '.svg'} alt="" />{labels[c.id]}</button>)}</div>
       <span className="conversation-count">{list ? items.reduce((n, p) => n + (p.enabled ? p.count : p.counts?.[view] || 0), 0) + ' 个对话 · ' + (list.retained?.[view] || 0) + ' 个已保留' : '读取记录…'}</span>
@@ -99,16 +112,16 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
         <button className="icon-button" aria-label="刷新项目记录" disabled={!!busy} onClick={() => setRevision((n) => n + 1)}><RefreshCw size={17} /></button></div></div>
     {error && <p className="error-box" role="alert">{error}</p>}{notice && <p className="client-notice" role="status">{notice}</p>}
     <div className="conversation-layout project-sync-layout">
-      <section className="conversation-list" aria-label="项目记录列表"><div className="conversation-search"><Folder size={16} /><input type="search" aria-label="搜索项目" placeholder="搜索项目" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+      <section className="conversation-list" aria-label="项目记录列表"><div className="conversation-search"><Search size={15} /><input type="search" aria-label="搜索项目或对话" placeholder="搜索项目或对话" maxLength={500} value={query} onChange={(e) => { setQuery(e.target.value); setOffset(0); setBefore(0); }} /></div>
         <div className="conversation-rows">{items.slice(0, 200).map((p) => <article data-project-id={p.id} className={'conversation-row' + (p.id === project?.id ? ' selected' : '')} key={p.id}>
           <button className="conversation-row-main" aria-pressed={p.id === project?.id} onClick={() => choose(p)}><span className="conversation-row-title">{p.nonProject ? <MessagesSquare size={14} /> : <Folder size={14} />}{p.name}</span>
-            {p.cwd && <span className="conversation-row-project" title={p.cwd}>{p.cwd}</span>}<span className="conversation-row-meta">{p.enabled ? p.count : p.counts?.[view] || 0} 个对话{p.enabled && <span className="conversation-retained">同步中</span>}</span></button>
+            <span className="conversation-row-meta">{p.cwd && <span className="conversation-row-project" title={p.cwd}>{p.cwd}</span>}<span className="conversation-row-count">{p.enabled ? p.count : p.counts?.[view] || 0} 个对话</span>{p.enabled && <span className="conversation-retained">同步中</span>}</span></button>
           <div className="conversation-row-actions"><button className="icon-button conversation-delete" data-delete-opener aria-label={'删除项目对话 ' + p.name} disabled={!!busy || p.enabled} title={p.enabled ? '关闭同步后删除原生记录' : '删除项目的本地对话，保留可恢复备份'} onClick={(e) => deletePrompt(e, p)}><Trash2 size={14} /></button></div></article>)}
           {list && !items.length && <div className="empty"><Folder size={30} /><p>暂无项目记录</p></div>}{!list && <div className="empty"><Loader2 className="spin" /></div>}</div>
         <footer className="conversation-pagination">{items.length} 个分组</footer></section>
       <div {...columns.separator('projects')} />
       <section className="conversation-detail" aria-label="项目会话">{project ? <>
-        <header className="conversation-detail-heading"><div><h2>{project.name}</h2>{project.cwd && <p title={project.cwd}>{project.cwd}</p>}</div>
+        <header className="conversation-detail-heading"><div className="conversation-project-path" title={project.cwd || project.name}>{project.cwd || project.name}</div>
           {!project.nonProject && <div className="actions"><button className="icon-button" aria-label="同步当前项目" disabled={!project.enabled || !!busy} onClick={() => action('project-conversations-sync', project.id)}><RefreshCw size={17} className={busy ? 'spin' : ''} /></button>
             <div className="project-toggle-control">{confirm === 'disable' && <div className="conversation-resume-confirm" role="dialog" aria-label="关闭项目同步确认"><p>完成内容归回初始客户端，移除同步副本。请先结束续聊。</p><div className="actions"><button className="button" onClick={() => setConfirm('')}>取消</button><button className="button primary" onClick={() => action('project-conversations-configure', project.id, { enabled: false, targets })}>确定</button></div></div>}
               <button className="project-sync-switch" role="switch" aria-label="项目同步" aria-checked={project.enabled} disabled={!!busy}
@@ -116,12 +129,12 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
         </header>
         {project.enabled && <div className="project-record-tabs"><button aria-pressed={!nativeView} onClick={() => { setNativeView(false); setOffset(0); }}>共享记录</button><button aria-pressed={nativeView} onClick={() => { setNativeView(true); setOffset(0); }}>原生记录</button><small>{time(project.lastSync)}</small></div>}
         {project.enabled && <details className="project-target-options"><summary>同步客户端</summary><div className="project-sync-targets" aria-label="参与同步的客户端">{available.map(({ id: h }) => <button key={h} aria-label={'参与同步 ' + labels[h]} aria-pressed={targets.includes(h)} disabled={!!busy} onClick={() => toggleTarget(h)}>{labels[h]}</button>)}</div></details>}
-        <div className="project-shared-body"><nav className="project-shared-threads" aria-label="项目对话列表"><div className="project-thread-search"><input type="search" aria-label="搜索对话" placeholder="搜索对话" value={threadQuery} onChange={(e) => { setThreadQuery(e.target.value); setOffset(0); }} />
-          {!shared && <button className="icon-button" aria-label="只看置顶" aria-pressed={pinned} onClick={() => { setPinned(!pinned); setOffset(0); }}><Pin size={14} /></button>}</div>
+        <div className="project-shared-body"><nav className="project-shared-threads" aria-label="项目对话列表"><div className="project-thread-toolbar"><span>{threads?.total || 0} 个对话</span>
+          {!shared && <div className="conversation-pin-control"><button className="icon-button conversation-pin-filter" aria-label="只看置顶" aria-describedby="conversation-pin-description" aria-pressed={pinned} title={pinned ? '显示全部对话' : '只显示当前项目的置顶对话'} onClick={() => { setPinned(!pinned); setOffset(0); }}><Pin size={14} /></button><span id="conversation-pin-description" role="tooltip">{pinned ? '显示全部对话' : '只看置顶对话'}</span></div>}</div>
           {threads?.items.map((t) => <article data-record-id={t.id} key={t.id} className={'project-thread-row' + (t.id === selected?.id ? ' selected' : '')}><button className="project-thread-main" aria-pressed={t.id === selected?.id} onClick={() => { setSelected(t); setBefore(0); }}>
             <strong>{t.title}</strong><small>{t.branchOf ? '分支 · ' : ''}{t.kind === 'native' ? labels[t.harness] : t.harnesses.map((h) => labels[h]).join(' / ')} · {time(t.updatedAt)}</small>
             {(t.syncedFrom || (!t.kind && t.originHarness !== view)) && <span className="conversation-sync-origin">来自 {originLabels[t.syncedFrom || t.originHarness]} 的同步</span>}{t.retained && !t.nativePresent && <span className="conversation-retained">已保留副本</span>}</button>
-            <div className="conversation-row-actions">{t.libraryId && <button className={'icon-button conversation-pin' + (t.pinned ? ' pinned' : '')} aria-label={t.pinned ? '取消置顶对话' : '置顶对话'} disabled={!!busy} onClick={() => action('conversations-pin', t.libraryId, !t.pinned)}><Pin size={14} /></button>}
+            <div className="conversation-row-actions">{t.libraryId && <button className={'icon-button conversation-pin' + (t.pinned ? ' pinned' : '')} aria-label={t.pinned ? '取消置顶对话' : '置顶对话'} title={t.pinned ? '取消置顶' : '置顶此对话'} disabled={!!busy} onClick={() => action('conversations-pin', t.libraryId, !t.pinned)}><Pin size={14} /></button>}
             <button className="icon-button conversation-delete" data-delete-opener aria-label={'删除对话 ' + t.title} title={project.enabled ? '关闭同步后删除原生记录' : '删除本地对话，保留备份'} disabled={!!busy || project.enabled} onClick={(e) => deletePrompt(e, project, t)}><Trash2 size={14} /></button></div></article>)}
           {!threads && <Loader2 className="spin" />}{threads && !threads.items.length && <p>暂无对话</p>}
           <div className="project-thread-pages"><button className="icon-button" aria-label="上一页对话" disabled={!offset || !threads} onClick={() => setOffset((n) => Math.max(0, n - 40))}><ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} /></button><small>{threads?.total || 0} 个对话</small><button className="icon-button" aria-label="下一页对话" disabled={!threads || offset + 40 >= threads.total} onClick={() => setOffset((n) => n + 40)}><ChevronRight size={14} /></button></div></nav>

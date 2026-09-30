@@ -808,8 +808,8 @@ async function balance(id, automatic = false) {
   return balances[id];
 }
 function windowChrome() {
-  return { color: nativeTheme.shouldUseDarkColors ? "#161b23" : "#f3f5f8",
-    symbolColor: nativeTheme.shouldUseDarkColors ? "#e8edf5" : "#202a38", height: 36 };
+  return { color: nativeTheme.shouldUseDarkColors ? "#1a1a1a" : "#f3f3f3",
+    symbolColor: nativeTheme.shouldUseDarkColors ? "#e4e8e5" : "#272928", height: 44 };
 }
 function syncWindowTheme() {
   if (!window || window.isDestroyed()) return;
@@ -830,7 +830,7 @@ function showWindow() {
     minHeight: 740,
     title: "ASS · 模型随你切",
     icon: iconPath,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#161b23" : "#f3f5f8",
+    backgroundColor: windowChrome().color,
     autoHideMenuBar: true,
     ...(process.platform === "win32" ? { titleBarStyle: "hidden", titleBarOverlay: windowChrome() } : {}),
     webPreferences: {
@@ -1236,6 +1236,7 @@ else {
         return shell.openExternal(url);
       });
       register("project-conversations-list", () => projectConversations.list());
+      register("project-conversations-search", (input) => projectConversations.search(input));
       register("project-conversations-delete", (input) => projectConversations.remove(input));
       register("project-conversations-trash", () => projectConversations.trashList());
       register("project-conversations-restore", (id) => projectConversations.restoreTrash(id));

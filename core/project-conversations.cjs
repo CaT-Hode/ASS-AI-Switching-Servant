@@ -89,9 +89,9 @@ class ProjectConversations {
       return { updated: r.updated, message: (r.updated ? `已同步 ${r.updated} 条对话更新` : '项目对话已同步') + (errors ? `；${errors} 个来源暂时无法读取` : ''), projects: this.state.projects.map((p) => this.summary(p)) };
     });
   }
-  async threads(id, { offset = 0, query = '' } = {}) {
-    if (!Number.isInteger(offset) || offset < 0 || typeof query !== 'string' || query.length > 500) throw Error('对话查询无效');
-    await this.sync(id); const p = this.project(id);
+  async threads(id, { offset = 0, query = '', cached = false } = {}) {
+    if (!Number.isInteger(offset) || offset < 0 || typeof query !== 'string' || query.length > 500 || typeof cached !== 'boolean') throw Error('对话查询无效');
+    if (!cached) await this.sync(id); const p = this.project(id);
     const filtered = p.threads.filter((t) => t.title.toLowerCase().includes(query.toLowerCase())).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return { ...this.summary(p), total: filtered.length, offset, items: filtered.slice(offset, offset + 40).map((t) => ({ id: t.id, title: t.title, count: t.refs.length, updatedAt: t.updatedAt,
       branchOf: t.branchOf || '', originHarness: t.home?.harness || t.origins[0]?.harness, harnesses: [...new Set(t.origins.map((o) => o.harness))], projections: t.routes.map((r) => ({ harness: r.harness, mode: r.mode })) })) };
@@ -103,6 +103,29 @@ class ProjectConversations {
     const filtered = all.filter((r) => (!pinned || r.pinned) && `${r.title} ${r.sessionId}`.toLowerCase().includes(query.toLowerCase()))
       .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
     return { total: filtered.length, offset, items: filtered.slice(offset, offset + 40).map((r) => ({ ...r, kind: 'native' })) };
+  }
+  search({ query = '', harness, nativeView = false } = {}) {
+    if (typeof query !== 'string' || query.length > 500 || !HARNESSES.includes(harness) || typeof nativeView !== 'boolean') throw Error('会话查询无效');
+    const term = query.trim().toLowerCase();
+    const projects = new Map(this.candidates.map((p) => [p.id, p]));
+    for (const p of this.state.projects) if (p.enabled) projects.set(p.id, { ...projects.get(p.id), ...p });
+    const native = new Map();
+    for (const r of this.recordsCache) if (r.harness === harness) {
+      if (!native.has(r.projectId)) native.set(r.projectId, []);
+      native.get(r.projectId).push(r);
+    }
+    const items = [];
+    for (const p of projects.values()) {
+      const shared = p.enabled && p.targets.includes(harness) && !nativeView;
+      if (!shared && !native.has(p.id)) continue;
+      const rows = shared ? this.project(p.id).threads : native.get(p.id) || [];
+      const projectMatch = `${p.name} ${p.cwd || ''}`.toLowerCase().includes(term);
+      const matches = rows.filter((r) => `${r.title} ${r.sessionId || ''}`.toLowerCase().includes(term)).length;
+      if (projectMatch || matches) items.push({ id: p.id, projectMatch, matches });
+    }
+    // Metadata already discovered by list()/sync(); typing never rescans logs,
+    // projects or message bodies and does not trigger native synchronization.
+    return { query: query.trim(), harness, nativeView, items };
   }
   record(id) { const r = this.recordsCache.find((r) => r.id === id); if (!r) throw Error('会话不存在，请刷新'); return r; }
   trashList() { return { items: (this.state.trash || []).filter((r) => r.phase !== 'restored').map((r) => ({ id: r.id, label: r.label, createdAt: r.createdAt, count: r.rows.length, phase: r.phase })) }; }

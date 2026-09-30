@@ -10,7 +10,7 @@
 }
 .inventory-toolbar > select {
   border: 1px solid var(--border);
-  background: light-dark(white, #1e2530);
+  background: light-dark(white, #242424);
   color: var(--ink);
   border-radius: 8px;
   padding: 10px 12px;
@@ -36,7 +36,7 @@
   flex-direction: column;
   cursor: pointer;
   position: relative;
-  background: light-dark(#fff, #1e2530);
+  background: light-dark(#fff, #242424);
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 17px 18px;
@@ -46,7 +46,7 @@
 }
 .supplier-card:hover,
 .supplier-card:focus-within {
-  border-color: light-dark(#9ebfee, #3b526f);
+  border-color: var(--border);
 }
 .supplier-open {
   position: absolute;
@@ -91,17 +91,17 @@
   z-index: 20;
   pointer-events: none;
   opacity: 0.88;
-  box-shadow: 0 14px 34px light-dark(#14243c2b, #0000002b);
-  border-color: light-dark(#2783ed, #2783ed);
+  box-shadow: 0 14px 34px light-dark(#2729282b, #0000002b);
+  border-color: var(--border);
   will-change: transform;
 }
 .supplier-card.dragging * {
   pointer-events: none;
 }
 .supplier-card.drop-target {
-  outline: 2px solid light-dark(#2783ed, #2783ed);
+  outline: 2px solid light-dark(#7c9885, #7c9885);
   outline-offset: 3px;
-  background: light-dark(#f2f7ff, #242e3c);
+  background: light-dark(#f8f9f8, #2f3130);
 }
 .supplier-symbol img {
   width: 29px;
@@ -119,9 +119,9 @@
   height: 42px;
   display: grid;
   place-items: center;
-  background: light-dark(#edf3fc, #242e3c);
+  background: light-dark(#f3f6f4, #2f3130);
   border-radius: 11px;
-  color: light-dark(#345f96, #87baff);
+  color: var(--accent);
   font-size: 23px;
   font-weight: 650;
   flex: none;
@@ -170,7 +170,7 @@
   min-height: 0;
   margin-top: 13px;
   padding-top: 10px;
-  border-top: 1px solid light-dark(#eaf0f6, #364253);
+  border-top: 1px solid var(--border);
 }
 .supplier-quota-heading {
   flex: none;
@@ -193,7 +193,7 @@
   max-width: calc(100% - 38px);
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: light-dark(white, #1e2530);
+  background: light-dark(white, #242424);
   padding: 4px 6px;
 }
 .supplier-quota-heading .model-icon {
@@ -295,9 +295,9 @@
   max-width: 100%;
   padding: 4px 8px;
   border-radius: 5px;
-  background: light-dark(#f4f6fa, #242e3c);
+  background: light-dark(#f6f8f7, #2f3130);
   font-size: 11px;
-  color: light-dark(#53647b, #a9b5c7);
+  color: light-dark(#626262, #b4b4b4);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -340,10 +340,10 @@
   z-index: 40;
   min-width: 172px;
   padding: 6px;
-  background: light-dark(#fff, #1e2530);
+  background: light-dark(#fff, #242424);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 6px 28px light-dark(#14243c22, #00000022);
+  box-shadow: 0 6px 28px light-dark(#27292822, #00000022);
 }
 .action-menu-panel > button {
   width: 100%;
@@ -360,7 +360,7 @@
 }
 .action-menu-panel > button:hover,
 .action-menu-panel > button:focus-visible {
-  background: light-dark(#edf4ff, #21334d);
+  background: light-dark(#f5f7f6, #363837);
 }
 .provider-dialog-toolbar {
   display: flex;
@@ -375,7 +375,7 @@
 }
 .configured-models {
   min-height: 270px;
-  background: light-dark(#fff, #1e2530);
+  background: light-dark(#fff, #242424);
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 22px;
@@ -396,10 +396,10 @@
   position: relative;
 }
 .inline-model.dirty {
-  background: light-dark(#f8fbff, #1e2530);
+  background: light-dark(#fbfcfb, #242424);
   box-shadow:
-    12px 0 light-dark(#f8fbff, #000000),
-    -12px 0 light-dark(#f8fbff, #000000);
+    12px 0 light-dark(#fbfcfb, #000000),
+    -12px 0 light-dark(#fbfcfb, #000000);
 }
 .inline-model-fields {
   display: grid;
@@ -417,10 +417,10 @@
 .inline-model-fields input,
 .inline-model-fields select {
   width: 100%;
-  border: 1px solid light-dark(#d8e1ec, #3b526f);
+  border: 1px solid var(--border);
   border-radius: 7px;
   padding: 9px 10px;
-  background: light-dark(white, #1e2530);
+  background: light-dark(white, #242424);
   color: var(--ink);
   font-size: 12px;
   min-width: 0;
@@ -576,7 +576,7 @@
   border: 1px solid var(--border);
   padding: 8px;
   border-radius: 7px;
-  background: light-dark(#fff, #1e2530);
+  background: light-dark(#fff, #242424);
   color: var(--ink);
   font-size: 12px;
 }

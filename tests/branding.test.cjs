@@ -39,3 +39,15 @@ test("Pi uses the official compact monochrome mark, black in light and white in 
   assert.ok(read("src/theme.css").includes('img[src="./providers/pi.svg"] { filter: var(--pi-logo-filter); }'));
   assert.ok(read("src/theme.css").includes(':root[data-theme="dark"] { --pi-logo-filter: invert(1); }'));
 });
+test('Windows app registration and icon export share the stable packaged ASS brand', () => {
+  const { windowsBrandSpec } = require('../scripts/local-release.cjs');
+  const spec = windowsBrandSpec({ releaseRoot: path.join(root, 'release'), current: path.join(root, 'release/current') });
+  assert.equal(spec.AppId, 'local.ass.desktop');
+  assert.equal(spec.Executable, path.join(root, 'release/current/ASS.exe'));
+  assert.equal(spec.Icon, path.join(root, 'release/current/resources/ass.ico'));
+  assert.ok(read('scripts/package.mjs').includes('extraResource: [fileURLToPath(new URL("../assets/ass.ico"'));
+  const registration = read('scripts/windows-brand-registration.ps1');
+  assert.ok(registration.includes("Name='IconUri'; Value=$icon") && registration.includes('Value="$exe,0"'));
+  assert.ok(registration.includes('Refusing foreign ASS registry entry') && registration.includes('Export-Clixml'));
+  assert.ok(registration.includes('SHChangeNotify') && !registration.includes('Stop-Process'));
+});

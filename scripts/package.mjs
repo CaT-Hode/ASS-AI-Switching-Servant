@@ -16,6 +16,7 @@ const outputs = await packager({
   appCopyright: "ASS · Agent-Switching-Servant",
   win32metadata: { FileDescription: "Agent-Switching-Servant", ProductName: "ASS" },
   icon: fileURLToPath(new URL("../assets/ass.ico", import.meta.url)),
+  extraResource: [fileURLToPath(new URL("../assets/ass.ico", import.meta.url))],
   asar: true,
   platform: "win32",
   arch: "x64",

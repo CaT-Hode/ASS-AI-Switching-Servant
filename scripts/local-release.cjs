@@ -492,11 +492,24 @@ function parseArgs(argv = process.argv.slice(2)) {
 function usage() {
   return "Usage: node scripts/local-release.cjs [plan|install] [--prune] [--json]";
 }
+function windowsBrandSpec(ctx) {
+  return { ReleaseRoot: ctx.releaseRoot, Executable: path.join(ctx.current, 'ASS.exe'),
+    Icon: path.join(ctx.current, 'resources', 'ass.ico'), AppId: 'local.ass.desktop' };
+}
+function registerWindowsBrand(ctx) {
+  const spec = windowsBrandSpec(ctx);
+  if (!ctx.fsApi.existsSync(spec.Icon)) throw Error('Packaged ASS icon is missing');
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'windows-brand-registration.ps1')],
+    { encoding: 'utf8', windowsHide: true, env: { ...ctx.env, ASS_BRAND_SPEC: JSON.stringify(spec) } });
+  if (result.status !== 0) throw Error('ASS Windows icon registration failed: ' + (result.stderr || result.error?.message || '').trim());
+  return { registered: true, appId: spec.AppId, icon: spec.Icon };
+}
 function main(argv = process.argv.slice(2), options = {}) {
   const args = parseArgs(argv);
   if (args.help) { console.log(usage()); return { help: true }; }
   const ctx = makeContext(options);
   const result = args.command === "install" ? executeInstall(ctx, args) : buildPlan(ctx, args);
+  if (args.command === 'install' && process.platform === 'win32') result.brand = registerWindowsBrand(ctx);
   console.log(JSON.stringify(result, null, args.json ? 2 : 0));
   return result;
 }
@@ -508,4 +521,5 @@ if (require.main === module) {
 module.exports = {
   RUNTIME_FILES, makeContext, parseArgs, usage, buildPlan, executeInstall,
   validatePackage, inspectCurrent, collectPruneCandidates, shortcutSpec, prePackageGuard,
+  windowsBrandSpec,
 };

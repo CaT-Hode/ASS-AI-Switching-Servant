@@ -42,6 +42,7 @@ const allowed = [
   "oauth-switch-apply",
   "conversations-list",
   "project-conversations-list",
+  "project-conversations-search",
   "project-conversations-delete",
   "project-conversations-trash",
   "project-conversations-restore",

@@ -10,7 +10,7 @@
 }
 .overview-client-tabs button {
   border: 1px solid var(--border);
-  background: light-dark(white, #1e2530);
+  background: light-dark(white, #242424);
   border-radius: 12px;
   padding: 10px 14px;
   display: flex;
@@ -21,9 +21,9 @@
     border-color 0.15s;
 }
 .overview-client-tabs button[aria-pressed="true"] {
-  background: light-dark(#edf4ff, #21334d);
-  border-color: light-dark(#9ec4fd, #3b526f);
-  color: light-dark(#145bb8, #87baff);
+  background: light-dark(#f5f7f6, #363837);
+  border-color: var(--border);
+  color: var(--accent);
 }
 .overview-client-tabs small {
   color: var(--muted);
@@ -33,7 +33,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: light-dark(#acb6c6, #acb6c6);
+  background: light-dark(#b5b5b5, #b5b5b5);
 }
 .client-presence.present {
   background: light-dark(#28a378, #28a378);
@@ -50,7 +50,7 @@
 .usage-segments {
   display: inline-flex;
   gap: 3px;
-  background: light-dark(#eef1f6, #242e3c);
+  background: light-dark(#f0f4f1, #2f3130);
   border-radius: 12px;
   padding: 4px;
 }
@@ -58,7 +58,7 @@
   border: 0;
   padding: 7px 14px;
   border-radius: 9px;
-  color: light-dark(#6b778d, #a9b5c7);
+  color: light-dark(#767676, #b4b4b4);
   background: transparent;
   font-weight: 550;
   transition:
@@ -67,9 +67,9 @@
     box-shadow 0.15s;
 }
 .usage-segments button[aria-pressed="true"] {
-  background: light-dark(white, #1e2530);
-  color: light-dark(#172f52, #e1e8f2);
-  box-shadow: 0 1px 4px light-dark(#13335916, #00000016);
+  background: light-dark(white, #242424);
+  color: light-dark(#333634, #e7ece9);
+  box-shadow: 0 1px 4px light-dark(#35373616, #00000016);
 }
 .usage-overview button:active {
   transform: scale(0.97);
@@ -80,7 +80,7 @@
   border: 1px solid var(--border);
   border-radius: 18px;
   padding: 22px 0;
-  background: linear-gradient(130deg, light-dark(#fff, #1e2530), light-dark(#f9fbff, #1e2530));
+  background: linear-gradient(130deg, light-dark(#fff, #242424), light-dark(#fcfcfc, #242424));
 }
 .usage-kpi {
   padding: 0 24px;
@@ -165,7 +165,7 @@
 }
 .heatmap-cell {
   padding: 0;
-  border: 1px solid light-dark(#18234604, #18234604);
+  border: 1px solid var(--border);
   border-radius: 4px;
   min-width: 0;
   transition:
@@ -176,7 +176,7 @@
 .heatmap-cell:focus-visible,
 .heatmap-cell.selected {
   filter: brightness(0.93);
-  outline: 2px solid light-dark(#6554aa, #6554aa);
+  outline: 2px solid light-dark(#708e7a, #708e7a);
   outline-offset: 1px;
 }
 .periodmap-surface {
@@ -205,12 +205,12 @@
   aspect-ratio: 1;
 }
 .periodmap-future {
-  border: 1px dashed light-dark(#e8eaf1, #364253);
+  border: 1px dashed var(--border);
   border-radius: 4px;
 }
 .usage-grain {
   margin-right: 12px;
-  color: light-dark(#7654b7, #c7adff);
+  color: light-dark(#779481, #d1dbd4);
 }
 .usage-daily-only {
   margin-top: 18px;
@@ -225,7 +225,7 @@
   margin-right: 12px;
 }
 .usage-daily-only strong {
-  color: light-dark(#354967, #e1e8f2);
+  color: light-dark(#4c504d, #e7ece9);
   font-weight: 550;
 }
 .usage-daily-only dl {
@@ -236,7 +236,7 @@
 .usage-daily-only dl > div {
   border: 0;
   border-radius: 7px;
-  background: light-dark(#f6f5fa, #242e3c);
+  background: light-dark(#f7f8f7, #2f3130);
   padding: 10px 12px;
   display: flex;
   gap: 18px;
@@ -251,19 +251,19 @@
   margin-left: auto;
 }
 .usage-overview [data-level="0"] {
-  background: light-dark(#f0eff5, #242e3c);
+  background: light-dark(#f0f0f0, #2f3130);
 }
 .usage-overview [data-level="1"] {
-  background: light-dark(#ddd5f3, #21334d);
+  background: light-dark(#e1e7e3, #363837);
 }
 .usage-overview [data-level="2"] {
-  background: light-dark(#b6a3df, #b6a3df);
+  background: light-dark(#bac8bf, #bac8bf);
 }
 .usage-overview [data-level="3"] {
-  background: light-dark(#9475cc, #9475cc);
+  background: light-dark(#95ac9d, #95ac9d);
 }
 .usage-overview [data-level="4"] {
-  background: light-dark(#7654b7, #7654b7);
+  background: light-dark(#779481, #779481);
 }
 .heatmap-footer {
   margin-top: 18px;
@@ -295,7 +295,7 @@
   font-variant-numeric: tabular-nums;
 }
 .usage-day-detail strong {
-  color: light-dark(#354967, #e1e8f2);
+  color: light-dark(#4c504d, #e7ece9);
   font-weight: 550;
 }
 .usage-chart-meta {
@@ -303,7 +303,7 @@
   justify-content: space-between;
   padding-top: 18px;
   margin-top: 16px;
-  border-top: 1px solid light-dark(#eef1f5, #364253);
+  border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 12px;
 }
@@ -341,8 +341,8 @@
     to top,
     transparent 0,
     transparent calc(50% - 1px),
-    light-dark(#edf0f6, #242e3c) calc(50% - 1px),
-    light-dark(#edf0f6, #242e3c) 50%
+    light-dark(#f0f3f1, #2f3130) calc(50% - 1px),
+    light-dark(#f0f3f1, #2f3130) 50%
   );
 }
 .token-bars button {
@@ -366,13 +366,13 @@
   min-height: 0;
 }
 .token-input {
-  background: light-dark(#8bb4ec, #8bb4ec);
+  background: light-dark(#b3c4b9, #b3c4b9);
 }
 .token-cache {
-  background: light-dark(#d0bcee, #21334d);
+  background: light-dark(#d0dad3, #363837);
 }
 .token-output {
-  background: light-dark(#7954b8, #7954b8);
+  background: light-dark(#779581, #779581);
 }
 .token-legend {
   display: flex;
@@ -427,13 +427,13 @@
 .usage-group-track {
   border-radius: 5px;
   height: 7px;
-  background: light-dark(#f2f0f7, #242e3c);
+  background: light-dark(#f2f5f3, #2f3130);
   overflow: hidden;
 }
 .usage-group-track i {
   display: block;
   height: 100%;
-  background: light-dark(#a28ac8, #a28ac8);
+  background: light-dark(#9fb3a6, #9fb3a6);
   border-radius: 5px;
 }
 .overview-accounts-grid {
@@ -476,8 +476,8 @@
   width: 35px;
   height: 35px;
   border-radius: 11px;
-  background: light-dark(#f0edf7, #242e3c);
-  color: light-dark(#8b73b8, #c7adff);
+  background: light-dark(#f0f4f1, #2f3130);
+  color: light-dark(#89a291, #d1dbd4);
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -511,10 +511,10 @@
   overflow: hidden;
 }
 .overview-quota-windows progress::-webkit-progress-bar {
-  background: light-dark(#edeaf4, #242e3c);
+  background: light-dark(#edf1ee, #2f3130);
 }
 .overview-quota-windows progress::-webkit-progress-value {
-  background: light-dark(#9c83c7, #9c83c7);
+  background: light-dark(#9ab0a1, #9ab0a1);
   border-radius: 5px;
 }
 .overview-account footer {

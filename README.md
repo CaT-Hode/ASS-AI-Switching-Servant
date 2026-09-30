@@ -259,6 +259,8 @@ npm.cmd run deploy:local
 
 已有当前发布包时可运行 `npm.cmd run install:local`；只读预览使用 `node scripts/local-release.cjs`。工具不自动结束进程，相关版本正在运行、目录归属不明或快捷方式冲突时会拒绝继续。`npm.cmd run package` 只打包，不修改用户开始菜单；运行中的当前包不会被覆盖。
 
+Windows 本机安装同时登记当前用户的 ASS 应用身份、启动路径和图标路径；仅更新本项目的注册项，遇到同名外部路径会拒绝覆盖，并在 `release/brand-registry-before-*.xml` 保存原值。顶栏、关于页、托盘、EXE 和注册图标都由同一张八瓣灰色花瓣、红色中环 Logo 导出。界面采用中性灰黑基调；订阅额度条保留原有分时段颜色与动效。
+
 清理不删除 `%APPDATA%\AI Switch Servant` 中的账户、凭据、恢复日志与备份，也不删除客户端聊天记录。当前协议适配、原生客户端格式支持和必要事务恢复不是废弃兼容层；历史发布说明保留在源码中，但不再进入应用发布包。
 
 实现按 `core/`（路由、账户、目录与配置）、`electron/`（原生窗口、网络和凭据）、`src/`（React UI）划分。设计及协议来源见 [SOURCES.md](SOURCES.md)。

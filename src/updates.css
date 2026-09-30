@@ -2,12 +2,12 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  border: 1px solid light-dark(#cfdeef, #3b526f);
-  background: light-dark(#eef5fd, #242e3c);
+  border: 1px solid var(--border);
+  background: light-dark(#f4f7f5, #2f3130);
   border-radius: 12px;
   padding: 14px 18px;
   margin-bottom: 24px;
-  color: light-dark(#3469a8, #87baff);
+  color: var(--accent);
 }
 .update-banner > div {
   flex: 1;
@@ -20,7 +20,7 @@
   display: block;
   margin-top: 4px;
   font-size: 12px;
-  color: light-dark(#61748e, #a9b5c7);
+  color: light-dark(#727272, #b4b4b4);
 }
 .update-banner .text-button {
   white-space: nowrap;
@@ -53,11 +53,11 @@
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0;
-  color: light-dark(#65758c, #a9b5c7);
+  color: light-dark(#737373, #b4b4b4);
   border: 1px solid var(--border);
   border-radius: 20px;
   padding: 6px 10px;
-  background: light-dark(#fff, #1e2530);
+  background: light-dark(#fff, #242424);
 }
 .ass-brand-hero h2 {
   font-size: 20px;
@@ -67,12 +67,12 @@
 }
 .ass-brand-hero p {
   font-size: 12px;
-  color: light-dark(#7a8696, #a9b5c7);
+  color: light-dark(#858585, #b4b4b4);
 }
 .update-card {
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: light-dark(white, #1e2530);
+  background: light-dark(white, #242424);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
@@ -88,9 +88,9 @@
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  background: light-dark(#edf4ff, #21334d);
+  background: light-dark(#f5f7f6, #363837);
   border-radius: 14px;
-  color: light-dark(#2770d0, #87baff);
+  color: var(--accent);
 }
 .update-status-icon.warning {
   background: light-dark(#fff4e8, #39282d);
@@ -106,7 +106,7 @@
 .update-status-copy p {
   font-size: 12px;
   line-height: 1.7;
-  color: light-dark(#758397, #a9b5c7);
+  color: light-dark(#818181, #b4b4b4);
   margin-top: 6px;
 }
 .update-card-heading > .button {
@@ -118,16 +118,16 @@
   gap: 10px 28px;
   padding: 0 26px 22px;
   font-size: 11px;
-  color: light-dark(#8490a0, #a9b5c7);
+  color: light-dark(#8f8f8f, #b4b4b4);
 }
 .update-meta strong {
   font-weight: 500;
   margin-left: 8px;
-  color: light-dark(#5d6b7d, #a9b5c7);
+  color: light-dark(#696969, #b4b4b4);
 }
 .update-preferences {
   margin: 0 26px;
-  border-top: 1px solid light-dark(#edf0f4, #364253);
+  border-top: 1px solid var(--border);
 }
 .update-toggle {
   display: flex;
@@ -135,7 +135,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 19px 0;
-  border-bottom: 1px solid light-dark(#edf0f4, #364253);
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
 }
 .update-toggle strong {
@@ -145,7 +145,7 @@
 .update-toggle small {
   display: block;
   font-size: 11px;
-  color: light-dark(#7f8a9b, #a9b5c7);
+  color: light-dark(#898989, #b4b4b4);
   margin-top: 6px;
   line-height: 1.7;
 }
@@ -155,7 +155,7 @@
   width: 38px;
   height: 22px;
   border-radius: 16px;
-  background: light-dark(#cbd3df, #21334d);
+  background: light-dark(#d2d2d2, #363837);
   border: 0;
   cursor: pointer;
   position: relative;
@@ -169,7 +169,7 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: light-dark(#fff, #1e2530);
+  background: light-dark(#fff, #242424);
   box-shadow: 0 1px 3px light-dark(#0002, #00000022);
   transition: transform 120ms ease-out;
 }
@@ -186,9 +186,9 @@
 .release-panel {
   margin: 24px 26px 0;
   padding: 20px;
-  border: 1px solid light-dark(#dce6f4, #3b526f);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: light-dark(#f9fbff, #1e2530);
+  background: light-dark(#fcfcfc, #242424);
 }
 .release-panel h3 {
   font-size: 16px;
@@ -204,7 +204,7 @@
   overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 1.9;
-  color: light-dark(#55667d, #a9b5c7);
+  color: light-dark(#646464, #b4b4b4);
   max-height: 245px;
   overflow: auto;
   margin: 14px 0 20px;
@@ -212,7 +212,7 @@
 }
 .release-digest {
   margin-top: 16px;
-  color: light-dark(#677890, #a9b5c7);
+  color: light-dark(#767676, #b4b4b4);
   font-size: 11px;
 }
 .release-digest summary {
@@ -232,7 +232,7 @@
   align-items: flex-start;
   gap: 10px;
   padding: 22px 26px;
-  color: light-dark(#7b8ba1, #a9b5c7);
+  color: light-dark(#898989, #b4b4b4);
 }
 .update-safety > svg {
   flex-shrink: 0;
@@ -248,7 +248,7 @@
   align-items: center;
   padding: 20px 4px;
   font-size: 12px;
-  color: light-dark(#738198, #a9b5c7);
+  color: light-dark(#808080, #b4b4b4);
 }
 .sidebar .version-button {
   display: flex;
@@ -256,7 +256,7 @@
   gap: 7px;
   background: none;
   border: 0;
-  color: light-dark(#738198, #a9b5c7);
+  color: light-dark(#808080, #b4b4b4);
   font-size: 11px;
   cursor: pointer;
   text-align: left;

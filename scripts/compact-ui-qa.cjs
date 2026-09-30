@@ -60,6 +60,8 @@ const call = (name, ...args) => page.evaluate(([name, args]) => window.ass.call(
     assert.equal(await page.locator('.client-account-card .account-origin, .account-expiry').count(), 0);
     assert.equal(await page.locator('.client-account-card').getByText(/账户 ID|资料来源|更多资料/).count(), 0);
     assert.equal(await page.locator('.page-header').count(), 0);
+    assert.equal(await page.locator('.window-chrome .brand').count(), 1);
+    assert.equal(await page.locator('.sidebar > .brand').count(), 0);
     assert.equal(await page.locator('.client-glyph .brand-motion-trace, .client-provider-logo .brand-motion-trace').count(), 0);
     const top = await page.locator('.clients-layout').evaluate((e) => e.getBoundingClientRect().top); assert.ok(top >= 36 && top < 65, `content top ${top}`);
     await call('ui-preferences', { theme: 'light' }); await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
@@ -88,11 +90,60 @@ const call = (name, ...args) => page.evaluate(([name, args]) => window.ass.call(
       assert.ok(await page.locator('.inventory-toolbar').evaluate((e) => e.getBoundingClientRect().top < 65));
       const buttonsFit = await page.locator('.inventory-toolbar').evaluate((e) => [...e.querySelectorAll('button')].every((b) => b.getBoundingClientRect().right <= window.innerWidth));
       assert.equal(buttonsFit, true);
+      const chrome = await page.evaluate(() => {
+        const rect = (q) => { const r = document.querySelector(q).getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom }; };
+        return { sidebar: rect('.sidebar'), main: rect('main'), brand: rect('.window-chrome .brand'), logo: rect('.brand img'),
+          version: rect('.brand .version-button'), versionSize: getComputedStyle(document.querySelector('.brand .version-button')).fontSize,
+          titleSize: getComputedStyle(document.querySelector('.brand strong')).fontSize, gradient: getComputedStyle(document.querySelector('.window-chrome')).backgroundImage,
+          drag: getComputedStyle(document.querySelector('.window-chrome')).getPropertyValue('-webkit-app-region'),
+          buttonDrag: getComputedStyle(document.querySelector('.brand .version-button')).getPropertyValue('-webkit-app-region') };
+      });
+      assert.equal(chrome.sidebar.right, chrome.main.x);
+      assert.equal(chrome.brand.width, chrome.sidebar.width);
+      assert.equal(chrome.brand.y, 15); assert.equal(chrome.brand.height, 44);
+      assert.equal(chrome.logo.width, 40); assert.equal(chrome.titleSize, '26px'); assert.equal(chrome.versionSize, '10px');
+      assert.equal(chrome.logo.y, 19); assert.ok(chrome.logo.bottom <= 59);
+      assert.ok(chrome.version.y >= 15 && chrome.version.bottom <= 59 && chrome.version.right <= chrome.sidebar.right);
+      assert.ok(await page.locator('.sidebar .nav-label').evaluate((e) => e.getBoundingClientRect().top >= 71), 'navigation avoids lowered brand');
+      assert.ok(chrome.gradient.includes(`${chrome.sidebar.width}px`));
+      assert.equal(chrome.drag, 'drag'); assert.equal(chrome.buttonDrag, 'no-drag');
     }
     await page.screenshot({ path: path.join(out, 'compact-providers-dark.png'), animations: 'disabled' });
+    await page.getByRole('button', { name: '查看 DeepSeek 另一个 Key 的模型', exact: true }).click();
+    const models = page.getByRole('dialog', { name: 'DeepSeek 另一个 Key · 模型', exact: true }); await models.waitFor();
+    await models.getByRole('button', { name: '模型详情 deepseek-chat', exact: true }).click();
+    await page.locator('.provider-side-dialog').waitFor();
+    await page.screenshot({ path: path.join(out, 'neutral-model-dialogs-dark.png'), animations: 'disabled' });
+    await page.keyboard.press('Escape');
+    await page.locator('.provider-side-dialog').waitFor({ state: 'detached' });
+    await page.keyboard.press('Escape');
+    await models.waitFor({ state: 'detached' });
+    for (const [label, file] of [['路由总览', 'neutral-overview-dark.png'], ['连接诊断', 'neutral-diagnostics-dark.png']]) {
+      await page.getByRole('button', { name: label, exact: true }).click();
+      await page.getByRole('heading', { name: label, exact: true }).waitFor();
+      assert.ok((await page.locator('main').innerText()).length > 20);
+      await page.screenshot({ path: path.join(out, file), animations: 'disabled' });
+    }
+    const palette = await page.evaluate(() => { const color = (v) => v.match(/[\d.]+/g)?.slice(0, 3).map(Number); const main = color(getComputedStyle(document.querySelector('main')).backgroundColor); return { main, border: getComputedStyle(document.documentElement).getPropertyValue('--border').trim(), logo: getComputedStyle(document.querySelector('.brand img')).filter }; });
+    assert.ok(Math.max(...palette.main) - Math.min(...palette.main) <= 6, 'main background stays neutral');
+    assert.ok(palette.border.includes('ffffff0a')); assert.equal(palette.logo, 'none');
     await page.getByRole('button', { name: '关于 ASS', exact: true }).click();
+    assert.equal(await page.locator('.ass-brand-hero img').getAttribute('src'), await page.locator('.brand img').getAttribute('src'));
+    const pixels = await page.locator('.brand img').evaluate((image) => {
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 100;
+      const c = canvas.getContext('2d'); c.drawImage(image, 0, 0, 100, 100);
+      const pixel = (x, y) => Array.from(c.getImageData(x, y, 1, 1).data);
+      return { corner: pixel(0, 0), hole: pixel(50, 50), petal: pixel(25, 25), ring: pixel(61, 50) };
+    });
+    assert.ok(pixels.corner[3] < 10 && pixels.hole[3] < 10, 'transparent background and hollow ring');
+    assert.ok(pixels.petal[3] > 240 && Math.max(...pixels.petal.slice(0, 3)) - Math.min(...pixels.petal.slice(0, 3)) < 15, 'neutral gray petals');
+    assert.ok(pixels.ring[3] > 240 && pixels.ring[0] > pixels.ring[1] * 2, 'red center retained');
+    await page.getByRole('button', { name: '供应商与模型', exact: true }).click();
+    await page.getByRole('button', { name: '查看 ASS 版本与更新', exact: true }).click();
+    await page.getByRole('heading', { name: '关于 ASS', exact: true }).waitFor();
+    await page.screenshot({ path: path.join(out, 'neutral-about-dark.png'), animations: 'disabled' });
     assert.equal(await page.getByText('从 ASS 官方 GitHub Releases 获取版本信息。').count(), 0);
     assert.equal(await page.locator('vite-error-overlay').count(), 0); assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, data, viewport: '1440x960 and 1100x960 desktop', checks: ['body starts in former title area', 'one harness refresh entry', 'subscription quotas retained', 'compact account information', 'same native/promoted API dedup after model sync', 'different API keys retained', 'static harness/provider logos', 'import only on provider page', 'light/dark screenshots', 'no horizontal overflow or renderer errors'], realProcessesTouched: false }));
+    console.log(JSON.stringify({ ok: true, data, viewport: '1440x960 and 1100x960 desktop', checks: ['body starts in former title area', 'aligned native chrome and sidebar at both desktop widths', 'logo and clickable version inside title bar', 'same transparent gray-petal/red-ring icon in header and about', 'one harness refresh entry', 'subscription quotas retained', 'compact account information', 'same native/promoted API dedup after model sync', 'different API keys retained', 'static harness/provider logos', 'import only on provider page', 'neutral palette across overview, diagnostics, about and nested model dialogs', 'light/dark screenshots', 'no horizontal overflow or renderer errors'], realProcessesTouched: false }));
   } finally { await app.evaluate(() => global.assTest.quit()).catch(() => {}); await app.close().catch(() => {}); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });
