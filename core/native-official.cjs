@@ -98,9 +98,10 @@ function resolveOfficialProvider(client, account, options) {
   const file = account.sourcePath;
   if (!file || !path.isAbsolute(file)) return null;
   try {
-    if (fs.statSync(file).size > 2 * 1024 * 1024) return null;
-    const text = fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "");
-    const data =
+    const credentialDB = client.id === 'opencode' && file.endsWith('.db');
+    if (!credentialDB && fs.statSync(file).size > 2 * 1024 * 1024) return null;
+    const text = credentialDB ? '' : fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "");
+    const data = credentialDB ? (account.credentialId ? { [rawId]: { type: 'api', key: require('./opencode-version.cjs').selected(account).value.key } } : {}) :
       client.id === "dsh"
         ? YAML.parse(text, { maxAliasCount: 20 })
         : JSON.parse(text);
@@ -124,7 +125,7 @@ function resolveOfficialProvider(client, account, options) {
     if (client.id === "opencode") {
       const dir = account.nativeDir || path.dirname(file);
       const p = opencodeProvider(account, dir, rawId, options.home || os.homedir(), env);
-      if (p.options?.apiKey !== undefined) key = resolve(p.options.apiKey);
+      if (!account.credentialId && p.options?.apiKey !== undefined) key = resolve(p.options.apiKey);
     }
     if (client.id === "dsh" && rawId === "DEEPSEEK_API_KEY") {
       const settings = require("./dsh-config.cjs").readSettings(account.nativeDir || path.dirname(file),

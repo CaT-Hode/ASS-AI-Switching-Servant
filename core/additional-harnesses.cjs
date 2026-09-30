@@ -109,7 +109,11 @@ function catalog(harness, dir, file, models) {
 
 function inspectKimi(location, { env, now }) {
   const { dir, legacy } = location, file = path.join(dir, "config.toml"), config = read(file, "toml");
-  const sources = [config], accounts = [], apiAccounts = [], models = [], providers = object(config.data?.providers) ? config.data.providers : {};
+  const normalized = require('./kimi-model-config.cjs').normalize(config.data);
+  const sources = [config], accounts = [], apiAccounts = [], models = [], providers = normalized.providers;
+  for (const message of normalized.issues) sources.push({ file, status: 'unreadable', message });
+  const environmentIssue = require('./kimi-model-config.cjs').environmentIssue(env);
+  if (environmentIssue) sources.push({ file, status: 'external', message: environmentIssue });
   const loaded = [], secrets = [];
   for (const [id, p] of Object.entries(providers)) {
     if (!object(p)) continue;
@@ -145,13 +149,13 @@ function inspectKimi(location, { env, now }) {
       auth.oauthHistoryProvider = kimiReference(dir, p)?.provider;
     } else if (has(key)) auth = apiAuth;
     if (auth && (auth.authType === "api" ? identifiableApiUrl(p.base_url) : official(p.base_url, "kimi")))
-      loaded.push({ id, auth, source, envName });
+      loaded.push({ id, auth: environmentIssue ? { ...auth, ready: false, status: 'overridden', message: environmentIssue } : auth, source, envName });
   }
   for (const row of loaded) (official(providers[row.id].base_url, "kimi") ? accounts : apiAccounts).push(account("kimi", dir, row.source, row.id,
     legacy ? "Kimi CLI（旧版）" : legacy === null ? "Kimi Code（自定义目录）" : "Kimi Code", row.auth,
     [["provider", "供应商", row.id], ["version", "配置版本", legacy ? "旧版 .kimi" : legacy === null ? "自定义目录" : "新版 .kimi-code"],
       ["keyEnvironment", "密钥变量", row.envName]], secrets));
-  for (const raw of Object.values(object(config.data?.models) ? config.data.models : {})) {
+  for (const raw of normalized.models) {
     if (!object(raw) || !Object.hasOwn(providers, raw.provider) || !object(providers[raw.provider])) continue;
     // Routing identity cannot be changed through model metadata overrides.
     const o = object(raw.overrides) ? raw.overrides : {}, v = { ...raw, ...o };

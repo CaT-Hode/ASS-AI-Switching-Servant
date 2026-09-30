@@ -11,7 +11,7 @@ const { readDesktopJson } = require("./desktop-metadata.cjs");
 const PACKAGES = {
   codex: ["@openai/codex"],
   claude: ["@anthropic-ai/claude-code"],
-  opencode: ["opencode-ai"],
+  opencode: ["@opencode/cli", "opencode-ai"],
   pi: ["@earendil-works/pi-coding-agent", "@mariozechner/pi-coding-agent"],
   dsh: ["@deepseek-ai/dsh"],
   kimi: ["@moonshot-ai/kimi-code"],
@@ -219,6 +219,17 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
       return fail("客户端 bin 入口超出所选目录，已拒绝");
     if (!stat(entry)?.isFile())
       return fail("客户端 bin 入口不存在，请先完成安装或构建");
+    let nativeBinary = false;
+    try {
+      const fd = fs.openSync(entry, 'r'), bytes = Buffer.alloc(4);
+      try { fs.readSync(fd, bytes, 0, 4, 0); } finally { fs.closeSync(fd); }
+      nativeBinary = bytes.subarray(0, 2).toString() === 'MZ' || bytes.toString('hex') === '7f454c46' || ['cffaedfe', 'feedfacf', 'cafebabe'].includes(bytes.toString('hex'));
+    } catch {}
+    if (nativeBinary) {
+      const result = launch(entry, [], 'npm-package', 'npm 客户端包入口');
+      return { ...result, ...(trustedVersion(manifest.version) ? { version: manifest.version } : {}) };
+    }
+    if (path.extname(entry).toLowerCase() === '.exe') return fail('原生客户端安装未完成；请完成官方包的安装步骤后刷新');
     if (
       [".js", ".mjs", ".cjs"].includes(path.extname(entry).toLowerCase()) ||
       !path.extname(entry)

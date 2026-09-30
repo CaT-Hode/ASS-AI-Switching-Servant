@@ -168,6 +168,7 @@ function database(file, fn) {
 }
 function openCodeBundle(file, id) {
   return database(file, (db) => {
+    if (require('./opencode-version.cjs').hasTable(db, 'session_v2')) return require('./opencode-version.cjs').bundle(db, id);
     const r = db.prepare('SELECT * FROM session WHERE id = ?').get(id); if (!r) throw Error('OpenCode 会话不存在');
     const messages = db.prepare('SELECT * FROM message WHERE session_id = ? ORDER BY time_created, id').all(id).map((m) => ({
       info: { ...JSON.parse(m.data), id: m.id, sessionID: id },
@@ -178,6 +179,16 @@ function openCodeBundle(file, id) {
   });
 }
 function decodeOpenCode(bundle) {
+  if (bundle.info.location) {
+    const rows = bundle.messages, ready = rows.filter(m => m.type === 'user' || m.type === 'assistant' && Number.isFinite(m.time?.completed) && !m.error);
+    const messages = ready.map(m => message(m.type, m.type === 'user' ? m.text : m.content, m.time?.created, m.id)).filter(Boolean);
+    const pending = rows.at(-1)?.type !== 'idle' && rows.length > 0;
+    while (messages.at(-1)?.role === 'user') messages.pop();
+    if (messages[0]?.role === 'user') messages[0].text = messages[0].text.replace(/^\[来自 (Codex|CC|DSH|OpenCode|pi) 的同步\]\n/, '');
+    return { sessionId: bundle.info.id, cwd: bundle.info.location.directory, title: bundle.info.title,
+      createdAt: new Date(bundle.info.time.created).toISOString(), model: ready.at(-1)?.model?.id || '',
+      messages, pending, sidechain: !!bundle.info.parentID, nativeVersion: 2 };
+  }
   const messages = [], ready = bundle.messages.filter((m) => m.info.role === 'user' || (Number.isFinite(m.info.time?.completed) && !m.info.error));
   for (const m of ready) {
     const content = m.parts.map((p) => p.type === 'tool' ? { type: 'text', text: `[历史工具 · ${p.tool || ''}]\n${JSON.stringify(p.state?.input || {})}\n${p.state?.output || p.state?.error || ''}` } : p);
@@ -205,7 +216,7 @@ function discover(sources, { cwd, includeMessages = false, cache = {}, processed
     try {
       if (source.harness === 'opencode') {
         const file = path.join(source.dir, 'opencode.db'); if (!fs.existsSync(file)) continue;
-        const sessions = database(file, (db) => db.prepare('SELECT id,title,directory,time_created,time_updated,parent_id FROM session ORDER BY time_updated DESC LIMIT 20000').all());
+        const sessions = database(file, (db) => db.prepare(`SELECT id,title,directory,time_created,time_updated,parent_id FROM ${require('./opencode-version.cjs').hasTable(db, 'session_v2') ? 'session_v2' : 'session'} ORDER BY time_updated DESC LIMIT 20000`).all());
         for (const s of sessions) {
           if (s.parent_id || !s.directory || (cwd && pathKey(cwd) !== pathKey(s.directory))) continue;
           const id = hash('opencode\0' + pathKey(file) + '\0' + s.id); if (seen.has(id)) continue; seen.add(id);
@@ -282,7 +293,8 @@ function readConversation(row, options) {
   }
   return value;
 }
-function encode(harness, { id, cwd, title, messages, createdAt = new Date().toISOString(), model = '' }) {
+function encode(harness, { id, cwd, title, messages, createdAt = new Date().toISOString(), model = '', nativeVersion = 1 }) {
+  if (harness === 'opencode' && nativeVersion === 2) return { bytes: Buffer.from(JSON.stringify(require('./opencode-version.cjs').encode({ id, cwd, title, messages, createdAt, model: model || 'gpt-5' }))), suffix: '.json' };
   const rows = [], emptyUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
   if (harness === 'codex') {
     rows.push({ timestamp: createdAt, type: 'session_meta', payload: { id, cwd, timestamp: createdAt, originator: 'ASS', cli_version: '0.158.0', source: 'cli', model_provider: 'openai' } });
@@ -318,7 +330,11 @@ function encode(harness, { id, cwd, title, messages, createdAt = new Date().toIS
     }
     if (openStep) event('step/end', { turn, step });
     if (openTurn) event('turn/end', { turn, reason: { kind: 'completed' } });
-    return { bytes: zlib.zstdCompressSync(Buffer.from(jsonl(rows))), suffix: '.jsonl.zstd' };
+    // Native DSH reads frame zero as exactly one header line. Event framing is
+    // independent of the JSONL contents and must not change turn/step ordering.
+    const frames = [zlib.zstdCompressSync(Buffer.from(jsonl(rows.slice(0, 1))))];
+    if (rows.length > 1) frames.push(zlib.zstdCompressSync(Buffer.from(jsonl(rows.slice(1)))));
+    return { bytes: Buffer.concat(frames), suffix: '.jsonl.zstd' };
   } else if (harness === 'opencode') {
     const time = Date.parse(createdAt), info = { id, slug: id, projectID: 'global', directory: cwd, title, version: '1.0.0', time: { created: time, updated: time } };
     let parentID = '';

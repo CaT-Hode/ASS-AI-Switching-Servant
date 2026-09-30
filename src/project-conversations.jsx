@@ -156,6 +156,7 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
     </div>
     {deleting && createPortal(<div className="conversation-delete-confirm" role="dialog" aria-label="删除本地记录确认" style={{ left: deleting.left, top: deleting.top }}>
       <strong>{deleting.title}</strong><p>{deleting.recordId ? '删除本地对话，保留可恢复备份。' : '删除该分组所有客户端的本地对话，保留备份。'}不删除项目文件。</p>
+      <p>Codex：移除 rollout 文件和原生会话索引。Codex 的 thread_history_*.sqlite 正文存储可能仍保留内容；此操作不会清除该存储或远端副本。</p>
       <div className="actions"><button className="button" autoFocus onClick={() => setDeleting(null)}>取消</button><button className="button danger" disabled={!!busy} onClick={() => { const input = { projectId: deleting.projectId, recordId: deleting.recordId, confirmed: true }; setDeleting(null); action('project-conversations-delete', input); }}>删除</button></div>
     </div>, document.body)}
     {trash && <div className="conversation-trash-backdrop" onClick={() => setTrash(null)}><section className="conversation-trash-panel" role="dialog" aria-modal="true" aria-label="已删除记录" onClick={(e) => e.stopPropagation()}>

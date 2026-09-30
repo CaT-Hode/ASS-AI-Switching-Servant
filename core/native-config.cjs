@@ -67,7 +67,7 @@ function locations(harness, manager) {
     const config = env.OPENCODE_CONFIG
       ? path.resolve(env.OPENCODE_CONFIG)
       : candidates.find((f) => fs.existsSync(f)) || candidates[0];
-    return { dir, config, auth: path.join(dir, "auth.json") };
+    return { dir, config, auth: path.join(dir, "auth.json"), major: require('./opencode-version.cjs').version(manager.launcher?.('opencode'), dir) };
   }
   if (harness === "pi")
     return {
@@ -81,7 +81,7 @@ function locations(harness, manager) {
 }
 function profileLocations(harness, dir, base) {
   if (harness === "opencode") return { dir: path.join(dir, "data/opencode"),
-    config: path.join(dir, "config/opencode/opencode.jsonc"), auth: path.join(dir, "data/opencode/auth.json") };
+    config: path.join(dir, "config/opencode/opencode.jsonc"), auth: path.join(dir, "data/opencode/auth.json"), major: base?.major || 1 };
   if (harness === "pi") return { dir, config: path.join(dir, "models.json"),
     auth: path.join(dir, "auth.json"), settings: path.join(dir, "settings.json") };
   if (harness === "dsh") return dsh.profileTarget(dir, base || { format: "yaml" });
@@ -116,6 +116,8 @@ function compose(harness, manager, selection, targetOverride) {
     fields.push({ harness, file, format, path: keys, value, ...extra });
   const providers = manager.effectiveProviders?.(harness) || manager.getState().providers;
   const settings = manager.state.injections?.[harness] || {};
+  if (harness === 'dsh') for (const p of providers.filter(p => p.enabled && p.apiKey && !(settings.excludedProviders || []).includes(p.id)))
+    for (const m of p.models.filter(m => m.enabled && !(settings.excluded || []).includes(modelRef(p.id, m.model)))) dsh.reasoning(m);
   const managedCatalog = manager.injection?.(harness, undefined, targetOverride ? { target } : {})?.models;
   const catalog = Array.isArray(managedCatalog)
     ? managedCatalog
@@ -136,10 +138,13 @@ function compose(harness, manager, selection, targetOverride) {
         base = baseUrl(harness, p, wire);
       const headers = p.extraHeaders || {};
       if (harness === "opencode") {
+        if (target.major === 2 && require('./opencode-version.cjs').credentials(target.dir)?.some(r => r.integrationID === id &&
+          (r.value.type !== 'key' || r.value.key !== p.apiKey || Object.keys(r.value.metadata || {}).length || Object.keys(r.value.configuration || {}).length)))
+          throw Error('OpenCode 接入供应商已有原生 credential，可能覆盖 ASS 密钥；请先在原生客户端整理该供应商账户');
         const value = {
           name: p.name,
           npm: NPMS[wire],
-          options: { baseURL: base, headers },
+          options: { baseURL: base, headers, ...(target.major === 2 ? { apiKey: p.apiKey } : {}) },
           models: Object.fromEntries(
             models.map((m) => [
               m.model,
@@ -164,8 +169,8 @@ function compose(harness, manager, selection, targetOverride) {
           throw Error(
             "原生 OpenCode 配置不接受导入值中的 env/file 插值，请先改为字面值",
           );
-        field(target.config, "jsonc", ["provider", id], value);
-        field(
+        field(target.config, "jsonc", ["provider", id], value, target.major === 2 ? { credentialProvider: id } : {});
+        if (target.major !== 2) field(
           target.auth,
           "json",
           [id],
@@ -239,9 +244,7 @@ function compose(harness, manager, selection, targetOverride) {
             contextWindow: m.contextWindow,
             maxTokens: m.maxOutputTokens,
             input: ["text"],
-            reasoningEfforts: Object.fromEntries(
-              m.efforts.filter((e) => LEVELS.includes(e)).map((e) => [e, e]),
-            ),
+            reasoningEfforts: dsh.reasoning(m),
           })),
         });
         field(
@@ -385,9 +388,10 @@ class NativeConfig {
       const auth = existing.find((e) => e.file === source.auth &&
         (e.path[0] === pid || e.path[1] === "llm-pi-ai/" + pid));
       const value = entry.value;
-      if (auth && value && activeApis.some((api) => sameApi(api, {
+      const apiKey = auth?.value.key || value?.options?.apiKey;
+      if (apiKey && value && activeApis.some((api) => sameApi(api, {
         baseUrl: value.baseURL || value.baseUrl || value.options?.baseURL,
-        apiKey: auth.value.key, extraHeaders: value.headers || value.options?.headers,
+        apiKey, extraHeaders: value.headers || value.options?.headers,
       }))) duplicateIds.add(pid);
     }
     const fields = existing.flatMap((e) => {

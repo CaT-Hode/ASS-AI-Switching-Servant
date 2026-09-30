@@ -218,12 +218,12 @@ class ProjectConversations {
     if (!Number.isInteger(before) || before < 0) throw Error('对话页码无效');
     return this.serial(() => this.run('preview', { projectId, threadId, before }));
   }
-  async prepare(projectId, threadId, harness, dir) {
+  async prepare(projectId, threadId, harness, dir, nativeVersion = 1) {
     if (!HARNESSES.includes(harness) || !path.isAbsolute(dir)) throw Error('客户端目录无效');
     await this.sync(projectId);
     return this.serial(async () => {
       const p = this.project(projectId); if (!p.enabled || !p.targets.includes(harness)) throw Error('请先启用此项目与客户端的同步');
-      this.persist(); const r = await this.run('prepare', { projectId, threadId, harness, dir });
+      this.persist(); const r = await this.run('prepare', { projectId, threadId, harness, dir, nativeVersion });
       const old = this.state; this.state = r.state;
       try { this.persist(); } catch (e) { this.state = old; throw e; }
       const { state, ...result } = r; return result;

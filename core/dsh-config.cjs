@@ -3,6 +3,11 @@ const path = require("node:path");
 const YAML = require("yaml");
 const { memoRead } = require("./read-scope.cjs");
 const ids = new Set(["llm-pi-ai", "llm-deepseek", "agent-default-model"]);
+function validProfile(profile) {
+  if (typeof profile !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(profile))
+    throw Error('DSH 当前 profile 名称无效，未写入配置');
+  return profile;
+}
 function json(file) {
   return memoRead(json, [file], () => readJson(file));
 }
@@ -35,22 +40,36 @@ function resolveTarget(dir, manager) {
       }
     }
   }
-  const owned = manager?.options.nativeConfig?.fields.entries.some((e) => e.harness === "dsh" && e.format === "dsh-patch" &&
-    path.resolve(e.file).toLowerCase().startsWith(path.resolve(dir, "profiles").toLowerCase() + path.sep));
+  const profiles = [...new Set((manager?.options?.nativeConfig?.fields.entries || []).flatMap((e) => {
+    if (e.harness !== 'dsh' || e.format !== 'dsh-patch') return [];
+    const relative = path.relative(path.resolve(dir, 'profiles'), path.resolve(e.file)).split(path.sep);
+    return relative.length === 2 && relative[1] === 'cordis.patch.yml' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(relative[0]) ? [relative[0]] : [];
+  }))];
+  const owned = profiles.length > 0;
   // Independent account homes inherit the profile format, not desktop runtime
   // metadata. A generated patch remains readable after ASS or DSH restarts.
-  const profile = link.profile || "web";
-  const validProfile = /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(profile);
-  const profileFile = path.join(dir, "profiles", validProfile ? profile : 'web', "cordis.patch.yml");
+  if (link.profile === undefined && profiles.length > 1) throw Error('DSH 目录包含多个受管 profile，无法确认启动目标');
+  const profile = validProfile(link.profile ?? profiles[0] ?? 'web');
+  const profileFile = path.join(dir, "profiles", profile, "cordis.patch.yml");
   const modern = usesProfile(version) || owned || (!version && fs.existsSync(profileFile));
-  if (modern && !validProfile) throw Error("DSH 当前 profile 名称无效，未写入配置");
   return { dir, auth: path.join(dir, ".credentials.yaml"),
     config: modern ? path.join(dir, "profiles", profile, "cordis.patch.yml") : path.join(dir, "settings.yaml"),
     format: modern ? "dsh-patch" : "yaml", profile, version };
 }
 function profileTarget(dir, base) {
-  return { dir, auth: path.join(dir, ".credentials.yaml"), format: base.format, profile: "web",
-    config: base.format === "dsh-patch" ? path.join(dir, "profiles/web/cordis.patch.yml") : path.join(dir, "settings.yaml") };
+  const profile = validProfile(base.profile ?? 'web');
+  return { dir, auth: path.join(dir, ".credentials.yaml"), format: base.format, profile, version: base.version,
+    config: base.format === "dsh-patch" ? path.join(dir, "profiles", profile, "cordis.patch.yml") : path.join(dir, "settings.yaml") };
+}
+function launchArgs(location) {
+  return ['--profile', validProfile(location.format === 'dsh-patch' ? location.profile : 'web')];
+}
+function reasoning(model) {
+  const supported = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const efforts = (model.efforts || []).filter(e => supported.includes(e));
+  if (!efforts.length) throw Error('DSH 模型没有可用的原生思考档位（支持 low、medium、high、xhigh、max），未写入配置');
+  if (!efforts.includes(model.defaultEffort)) throw Error('DSH 不支持该模型的默认思考档位，未写入配置');
+  return Object.fromEntries(efforts.map(e => [e, e]));
 }
 // Project only the two configurable plugin entries. The rest of the Cordis
 // patch (including !!js expressions) stays as YAML syntax and is never executed.
@@ -107,4 +126,15 @@ function readProfileSettings(location) {
   } catch (e) { if (e.code !== "ENOENT") throw e; }
   return document(content).data;
 }
-module.exports = { target, profileTarget, usesProfile, document, edit, validField, readSettings };
+function profileFiles(location, base) {
+  if (location.format !== 'dsh-patch' || ['web', 'headless', 'acp', 'sdk', 'sdk-minimal'].includes(location.profile)) return [];
+  const manifestFile = path.join(base.dir, 'profiles', validProfile(base.profile), 'package.json');
+  require('./native-fields.cjs').safePath(manifestFile);
+  const bundles = json(manifestFile).dsh?.profile?.bundles;
+  if (!Array.isArray(bundles) || !bundles.length || bundles.some(b => typeof b !== 'string' || !/^(@[\w.-]+\/)?[\w.-]+$/.test(b)))
+    throw Error('DSH 自定义 profile 缺少可迁移的 bundle 清单；请在目标目录初始化此 profile');
+  return [[path.join('profiles', location.profile, 'package.json'), JSON.stringify({
+    name: 'dsh-profile-' + location.profile, private: true, dependencies: {}, dsh: { profile: { bundles } },
+  }, null, 2) + '\n']];
+}
+module.exports = { target, profileTarget, launchArgs, validProfile, profileFiles, reasoning, usesProfile, document, edit, validField, readSettings };

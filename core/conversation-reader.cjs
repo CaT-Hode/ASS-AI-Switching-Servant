@@ -4,28 +4,29 @@ const { StringDecoder } = require('node:string_decoder');
 const { safePath } = require('./native-fields.cjs');
 const MAX_LINE = 64 * 1024 ** 2;
 function* frames(buffer) {
+  const truncated = () => { throw Error('DSH 压缩记录截断，未将不完整记录视为完整会话'); };
   let offset = 0;
   while (offset < buffer.length) {
     const start = offset;
-    if (buffer.length - offset < 5) return;
+    if (buffer.length - offset < 5) truncated();
     const magic = buffer.readUInt32LE(offset); offset += 4;
     if ((magic & 0xfffffff0) >>> 0 === 0x184d2a50) {
-      if (buffer.length - offset < 4) return;
+      if (buffer.length - offset < 4) truncated();
       const n = buffer.readUInt32LE(offset); offset += 4;
-      if (buffer.length - offset < n) return; offset += n; continue;
+      if (buffer.length - offset < n) truncated(); offset += n; continue;
     }
     if (magic !== 0xfd2fb528) throw Error('DSH 压缩记录损坏');
     const d = buffer[offset++]; if (d & 0x18) throw Error('DSH 压缩帧头无效');
     const headerBytes = (d & 0x20 ? 0 : 1) + ([0, 1, 2, 4][d & 3]) + (d >>> 6 ? 1 << (d >>> 6) : d & 0x20 ? 1 : 0);
-    if (buffer.length - offset < headerBytes) return; offset += headerBytes;
+    if (buffer.length - offset < headerBytes) truncated(); offset += headerBytes;
     for (;;) {
-      if (buffer.length - offset < 3) return;
+      if (buffer.length - offset < 3) truncated();
       const b = buffer.readUIntLE(offset, 3); offset += 3;
       const type = b >>> 1 & 3; if (type === 3) throw Error('DSH 压缩块无效');
-      const n = type === 1 ? 1 : b >>> 3; if (buffer.length - offset < n) return;
+      const n = type === 1 ? 1 : b >>> 3; if (buffer.length - offset < n) truncated();
       offset += n; if (b & 1) break;
     }
-    if (d & 4) { if (buffer.length - offset < 4) return; offset += 4; }
+    if (d & 4) { if (buffer.length - offset < 4) truncated(); offset += 4; }
     yield buffer.subarray(start, offset);
   }
 }

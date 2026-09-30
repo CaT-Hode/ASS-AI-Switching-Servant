@@ -1,7 +1,7 @@
 // Private runtime plan. Never serialize this object to the renderer: it contains
 // credentials, which are delivered only to the isolated native client process.
 const { officialApiService, acceptsApiAccount } = require("./client-policy.cjs");
-function officialAccountPlan(harness, provider) {
+function officialAccountPlan(harness, provider, major = 1) {
   if (!acceptsApiAccount(harness, provider) || !provider.apiKey)
     throw Error("此客户端不支持该官方 API 账户");
   const service = officialApiService(provider), key = provider.apiKey;
@@ -18,8 +18,13 @@ function officialAccountPlan(harness, provider) {
     credentialCheck = { file: ".credentials.yaml", format: "yaml", path: ["refs", "DEEPSEEK_API_KEY"], value: key };
     args.push("--profile", "web");
   } else if (harness === "opencode") {
+    if (major === 2) {
+      files.push(['config/opencode/opencode.jsonc', JSON.stringify({ provider: { [service]: { options: { apiKey: key } } } })]);
+      credentialCheck = { file: 'config/opencode/opencode.jsonc', format: 'jsonc', path: ['provider', service, 'options', 'apiKey'], value: key };
+    } else {
     files.push(["data/opencode/auth.json", JSON.stringify({ [service]: { type: "api", key } })]);
     credentialCheck = { file: "data/opencode/auth.json", format: "json", path: [service, "key"], value: key };
+    }
   }
   return { files, env, args, credentialCheck };
 }

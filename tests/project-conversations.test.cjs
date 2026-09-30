@@ -108,7 +108,7 @@ test('DSH v4 concatenated checked frames include all messages, native title, and
   write(file, Buffer.concat(frames)); const before = fs.readFileSync(file);
   const found = codecs.discover(f.sources, { includeMessages: true }).rows.find((r) => r.harness === 'dsh');
   assert.equal(found.title, 'DSH 原生名称'); assert.equal(found.pending, false); assert.deepEqual(found.messages.map((m) => m.text), ['DSH 问题', 'DSH 回答']);
-  fs.appendFileSync(file, frames[1].subarray(0, 9)); assert.equal(codecs.readConversation(found).messages.length, 2);
+  fs.appendFileSync(file, frames[1].subarray(0, 9)); assert.throws(() => codecs.readConversation(found), /截断/);
   assert.deepEqual(fs.readFileSync(file).subarray(0, before.length), before);
 });
 
@@ -235,7 +235,7 @@ test('closed-client deletion and encrypted recovery work through the actual Powe
 });
 for (const h of codecs.HARNESSES) test(`${h} native projection preserves ordered shared context`, () => {
   const out = codecs.encode(h, { id: h === 'opencode' ? 'ses_test' : ID, cwd: process.cwd(), title: 'Shared', messages, createdAt: timestamp });
-  const rows = h === 'dsh' ? require('node:zlib').zstdDecompressSync(out.bytes).toString() : out.bytes.toString();
+  const rows = h === 'dsh' ? Buffer.concat([...require('../core/conversation-reader.cjs').frames(out.bytes)].map(f => require('node:zlib').zstdDecompressSync(f))).toString() : out.bytes.toString();
   const value = h === 'opencode' ? codecs.decodeOpenCode(JSON.parse(rows)) : codecs.decode(h, rows.trim().split('\n').map(JSON.parse));
   assert.deepEqual(value.messages.map((m) => [m.role, m.text]), messages.map((m) => [m.role, m.text])); assert.equal(value.cwd, process.cwd());
   assert.ok(!/auth\.json|\.credentials\.json|apiKey/.test(rows));

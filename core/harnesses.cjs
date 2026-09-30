@@ -10,6 +10,7 @@ const { apiProfile } = require("./account-info.cjs");
 const additional = require("./additional-harnesses.cjs");
 const additionalOAuth = require("./additional-oauth.cjs");
 const kimiConfig = require("./kimi-config.cjs");
+const dshConfig = require('./dsh-config.cjs');
 const { officialAccountPlan } = require("./official-account-plan.cjs");
 const { assertClaudeAccount } = require("./claude-launch-policy.cjs");
 const { configureClaudeModels, assertClaudePicker, prepareClaudeOnboarding } = require("./accountless.cjs");
@@ -288,9 +289,7 @@ function routeConfig(harness, p, m, dir, token, catalog, port = 25819) {
                     name: m.displayName,
                     contextWindow: m.contextWindow,
                     maxTokens: m.maxOutputTokens,
-                    reasoningEfforts: Object.fromEntries(
-                      m.efforts.map((e) => [e, e]),
-                    ),
+                    reasoningEfforts: dshConfig.reasoning(m),
                   },
                 ],
               },
@@ -472,7 +471,7 @@ class HarnessManager {
       piArgs.push('--session-dir', path.dirname(file || path.join(dir, 'sessions', 'placeholder')));
     }
     return { harness, dir, workspace: cwd, env, files: [], expectInteractive: true,
-      args: harness === 'pi' ? piArgs : harness === 'opencode' ? ['--session', sessionId] : ['--profile', 'web'],
+      args: harness === 'pi' ? piArgs : harness === 'opencode' ? ['--session', sessionId] : dshConfig.launchArgs(dshConfig.target(dir, this)),
       hint: harness === "dsh" ? `共享对话 ${sessionId} 已写入本机记录；请在 DSH 会话列表选择它。` : "继续 ASS 项目对话，使用当前客户端的登录与接入配置。" };
   }
   selectOAuthTarget(harness) {
@@ -511,9 +510,7 @@ class HarnessManager {
       const { dir } = kimiConfig.target(this);
       const source = this.oauthHistorySources().find((s) => s.harness === id && s.provider === provider && s.dir === dir);
       if (!source) throw Error("当前 Kimi 配置没有对应区域与授权位置，请先在原生客户端登录");
-      const overrides = ["KIMI_API_KEY", "KIMI_BASE_URL", "KIMI_CODE_BASE_URL", "KIMI_CODE_OAUTH_HOST", "KIMI_OAUTH_HOST"];
-      return { ...source, blocked: overrides.some((k) => this.nativeEnv[k])
-        ? "当前环境变量覆盖 Kimi 授权，请先清除覆盖后再切换" : "" };
+      return { ...source, blocked: require('./kimi-model-config.cjs').environmentIssue(this.nativeEnv) };
     }
     if (id === "zcode") {
       const candidates = additional.locations(id, { home: this.nativeHome, env: this.nativeEnv, override: this.state.credentialHomes[id] });
@@ -677,7 +674,7 @@ class HarnessManager {
           workspace: this.state.workspace,
           override: this.state.credentialHomes[s.id],
           codexDir: this.codexDir,
-          launcher: s.id === 'dsh' ? this.launcher(s.id) : undefined,
+          launcher: ['dsh', 'opencode'].includes(s.id) ? this.launcher(s.id) : undefined,
           owns: (file, provider) => this.options.nativeConfig?.owns(s.id, file, provider),
         });
         const apiCandidates = apiAccounts(
@@ -857,7 +854,7 @@ class HarnessManager {
     if (!accounts && ["codex", "claude", "dsh", "opencode", "pi"].includes(harness))
       accounts = discoverNative(harness, {
         home: this.nativeHome, env, override: target?.dir || this.state.credentialHomes[harness], codexDir: this.codexDir,
-        launcher: harness === 'dsh' ? this.launcher(harness) : undefined,
+        launcher: ['dsh', 'opencode'].includes(harness) ? this.launcher(harness) : undefined,
         workspace: target ? undefined : this.state.workspace,
         owns: (file, provider) => this.options.nativeConfig?.owns(harness, file, provider),
       }).flatMap((source) => source.accounts);
@@ -1017,7 +1014,8 @@ class HarnessManager {
       // Key rotation creates a new runtime home, never overwriting another window.
       const id = crypto.createHash("sha256").update("official\0" + p.id + "\0" + p.apiKey).digest("hex").slice(0, 24);
       dir = this.root(harness, id);
-      ({ env: addEnv, files, args, credentialCheck } = officialAccountPlan(harness, p));
+      ({ env: addEnv, files, args, credentialCheck } = officialAccountPlan(harness, p,
+        harness === 'opencode' ? require('./opencode-version.cjs').version(this.launcher(harness), locations(harness, this).dir) : 1));
       hint = "官方 API 账户仅用于本次新启动；已有窗口和模型接入设置不变。";
     } else if (account.kind === "native") {
       // Existing native homes are read/used in place. Never inject config into
@@ -1088,7 +1086,7 @@ class HarnessManager {
             "，由原生客户端完成授权。";
       }
       if (harness === "dsh") {
-        args = ["--profile", "web"];
+        args = dshConfig.launchArgs(dshConfig.target(dir, this));
         if (action !== "launch")
           hint =
             "请在 DSH 的授权设置中完成登录或退出；登录方式由已安装的插件提供。";
@@ -1096,7 +1094,14 @@ class HarnessManager {
     }
     // Current DSH ships web/headless/ACP profiles, not a built-in "tui".
     // Native-account launches need the launcher flag too (bare dsh errors).
-    if (harness === "dsh" && !args.includes("--profile")) args.unshift("--profile", "web");
+    if (harness === 'dsh') {
+      const base = locations('dsh', this);
+      const target = path.resolve(dir) === path.resolve(base.dir) ? base : dshConfig.profileTarget(dir, base);
+      const profileAt = args.indexOf('--profile');
+      if (profileAt >= 0) args.splice(profileAt, 2);
+      args.unshift(...dshConfig.launchArgs(target));
+      if (path.resolve(dir) !== path.resolve(base.dir)) files.push(...dshConfig.profileFiles(target, base));
+    }
     const env =
       account.kind === "native" || nativeSelection
         ? isolatedEnv(harness, dir, this.nativeEnv)
@@ -1140,6 +1145,7 @@ class HarnessManager {
       nativeProfile: DIRECT.includes(harness) && account.kind !== "native" && action === "launch" && !!this.options.isConnected?.(harness),
       initializeOnly: account.kind === "api",
       credentialCheck,
+      ...(harness === 'opencode' && account.credentialId && action === 'launch' ? { nativeCredential: { ...account } } : {}),
       routed:
         (account.kind === "native" && harness === "codex" &&
           path.join(dir, "config.toml") === this.options.proxyConfig?.config.file &&
@@ -1202,8 +1208,9 @@ class HarnessManager {
   modelPlan(harness, ref, token = "") {
     this.assertManaged(harness);
     if (!this.options.isConnected?.(harness)) throw Error("请先开启此客户端的模型接入");
-    const row = this.injection(harness).models.find((m) => m.ref === ref && m.included);
-    if (!row) throw Error("请选择已纳入接入的兼容模型");
+    const candidate = this.injection(harness).models.find((m) => m.ref === ref);
+    const row = candidate?.included ? candidate : null;
+    if (!row) throw Error(candidate?.issue && harness === 'dsh' ? 'DSH 原生思维强度配置不可用：' + candidate.issue : '请选择已纳入接入的兼容模型');
     const p = this.effectiveProviders(harness).find((p) => p.id === row.providerId);
     const m = p.models.find((m) => m.model === row.model);
     if (DIRECT.includes(harness)) {
@@ -1216,7 +1223,7 @@ class HarnessManager {
         for (const k of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"])
           if (this.nativeEnv[k]) env[k] = this.nativeEnv[k]; else delete env[k];
       }
-      const launchFiles = [], dshArgs = ["--profile", "web"];
+      const launchFiles = [], dshArgs = harness === 'dsh' ? dshConfig.launchArgs(locations('dsh', this)) : [];
       if (harness === "dsh") {
         // DSH's settings user layer overrides agent-default-model composition
         // config. Use its documented --patch settings-path override with a
@@ -1311,6 +1318,15 @@ class HarnessManager {
   }
   async launchPlan(harness, plan, account, action, launcher) {
     this.materialize(plan);
+    if (harness === 'opencode' && require('./opencode-version.cjs').version(launcher, plan.dir) === 2 && !plan.args.includes('--standalone'))
+      plan = { ...plan, args: [...plan.args, '--standalone'] };
+    if (harness === 'opencode' && plan.nativeCredential) {
+      const row = require('./opencode-version.cjs').selected(plan.nativeCredential);
+      if (!row.active) await new Promise((resolve, reject) => execFile(launcher.executable,
+        [...launcher.args, 'auth', 'switch', row.integrationID, row.id, '--standalone'],
+        { env: plan.env, windowsHide: true, timeout: 30000, maxBuffer: 1024 ** 2 },
+        error => error ? reject(Error('OpenCode 原生账户切换失败，未启动')) : resolve()));
+    }
     const workspace =
       plan.workspace || this.state.workspace || path.join(this.dataDir, "workspace");
     safePath(workspace);

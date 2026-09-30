@@ -41,7 +41,9 @@ test('a relocated portable launcher discovers official DSH API and uses the same
 test('literal CMD, PowerShell and shell declarations expand only known directory variables', t => {
   const f = fixture(t), env = { USERPROFILE: f.home, HOME: f.home, CUSTOM_ROOT: f.install };
   const examples = [
-    ['wrapper.cmd', 'set "DSH_HOME=%CUSTOM_ROOT%\\state"', path.join(f.install, 'state')],
+    // Values describe paths on the host. On POSIX a backslash is a literal
+    // filename character; parsing a CMD declaration must not rewrite it.
+    ['wrapper.cmd', 'set "DSH_HOME=%CUSTOM_ROOT%\\state"', path.resolve(f.install + '\\state')],
     ['wrapper.ps1', '$env:DSH_HOME = "$PSScriptRoot/state"', path.join(f.install, 'state')],
     ['environment.ps1', '$env:DSH_HOME = "$env:USERPROFILE/custom"', path.join(f.home, 'custom')],
     ['wrapper.sh', 'export DSH_HOME="$HOME/custom"', path.join(f.home, 'custom')],

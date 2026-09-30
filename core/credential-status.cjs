@@ -186,9 +186,27 @@ function credentialFile(harness, dir, native = false) {
 function inspectCredentials(
   harness,
   dir,
-  { native = false, now = Date.now() } = {},
+  { native = false, now = Date.now(), launcher } = {},
 ) {
   const file = credentialFile(harness, dir, native);
+  if (harness === 'opencode') {
+    const dataDir = native ? dir : path.join(dir, 'data/opencode');
+    try {
+      const adapter = require('./opencode-version.cjs'), entries = adapter.credentials(dataDir);
+      if (entries !== null || adapter.version(launcher, dataDir) === 2) {
+        const rows = (entries || []).filter(r => typeof r.integrationID === 'string' && !/^ass-/.test(r.integrationID)).map(r => {
+          const row = r.value.type === 'key' ? api(r.integrationID, r.value.key)
+            : r.value.type === 'oauth' ? oauth(r.integrationID, r.value.access, r.value.refresh, r.value.expires, now)
+            : { provider: r.integrationID, authType: 'unknown', ready: false, status: 'external', message: '原生凭据类型尚未支持' };
+          return { ...row, credentialId: r.id, active: r.active,
+            label: require('./account-info.cjs').text(r.label, [r.value.key, r.value.access, r.value.refresh]) || r.integrationID,
+            message: row.message + (r.active ? ' · 当前账户' : ' · 非当前账户') };
+        });
+        return { file: path.join(dataDir, 'opencode.db'), rows, status: rows.length ? 'detected' : 'missing',
+          message: 'OpenCode v2 credential service（旧 auth.json 不代表当前登录）' };
+      }
+    } catch { return { file: path.join(dataDir, 'opencode.db'), rows: [], status: 'unreadable', message: 'OpenCode credential 数据库无法读取，未回退到旧 auth.json' }; }
+  }
   if (harness === "codex") {
     const config = read(path.join(dir, "config.toml"), "toml");
     if (
@@ -349,7 +367,7 @@ function discoverNative(
 ) {
   const dirs = nativeLocations(harness, home, env, override, codexDir, launcher);
   const sources = dirs.map((dir) => {
-    const result = inspectCredentials(harness, dir, { native: true, now });
+    const result = inspectCredentials(harness, dir, { native: true, now, launcher });
     const rows = result.rows.length
       ? result.rows
       : ["unreadable", "external"].includes(result.status)
@@ -365,12 +383,12 @@ function discoverNative(
         : [];
     const accounts = rows.map((row) => ({
       ...row,
-      id: "native:" + digest(harness + "\0" + dir + "\0" + row.provider),
+      id: "native:" + digest(harness + "\0" + dir + "\0" + row.provider + (row.credentialId ? '\0' + row.credentialId : '')),
       kind: "native",
       label:
         row.provider === "openai" && row.authType === "oauth"
           ? "ChatGPT"
-          : row.provider,
+          : row.label || row.provider,
       badge:
         row.authType === "oauth"
           ? "OAuth"
@@ -383,7 +401,9 @@ function discoverNative(
       ...(harness === "opencode" ? { workspace } : {}),
       providers: [row.provider],
     }));
-    const authData = read(result.file, harness === "dsh" ? "yaml" : "json").data || {};
+    const authData = harness === 'opencode' && result.status === 'unreadable' ? {} : harness === 'opencode' && result.file.endsWith('.db')
+      ? Object.fromEntries((require('./opencode-version.cjs').credentials(dir) || []).filter(r => r.active && r.value.type === 'key').map(r => [r.integrationID, { type: 'api', key: r.value.key }]))
+      : read(result.file, harness === "dsh" ? "yaml" : "json").data || {};
     const configuredRows = harness === "opencode" && path.resolve(dir).toLowerCase() !== path.resolve(dirs[0]).toLowerCase()
       ? [] : configuredNativeApiProviders(harness, dir, { home, env, authData, workspace });
     const addedConfigured = new Set();

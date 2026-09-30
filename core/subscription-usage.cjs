@@ -31,11 +31,12 @@ function nativeSubscriptionProvider(client, account) {
   if (!kind || !account.sourcePath || !path.isAbsolute(account.sourcePath))
     return null;
   try {
-    if (fs.statSync(account.sourcePath).size > 2 * 1024 * 1024) return null;
-    const text = fs
+    const credentialDB = client.id === 'opencode' && account.credentialId && account.sourcePath.endsWith('.db');
+    if (!credentialDB && fs.statSync(account.sourcePath).size > 2 * 1024 * 1024) return null;
+    const text = credentialDB ? '' : fs
       .readFileSync(account.sourcePath, "utf8")
       .replace(/^\uFEFF/, "");
-    const data =
+    const data = credentialDB ? { [provider]: require('./opencode-version.cjs').selected(account).value } :
       client.id === "dsh"
         ? YAML.parse(text, { maxAliasCount: 20 })
         : JSON.parse(text);

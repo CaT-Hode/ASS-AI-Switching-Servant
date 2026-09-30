@@ -87,11 +87,11 @@ function notExpired(token, seconds) {
     throw Error("OAuth 访问令牌已到期，请先在原生客户端刷新登录");
 }
 function kimiTarget(a, m, env) {
-  const config = read(a.sourcePath, "toml"), p = config.providers?.[m.nativeProvider];
-  const rows = Object.values(config.models || {}).filter((r) => r?.provider === m.nativeProvider && r.model === m.model);
+  const config = require('./kimi-model-config.cjs').normalize(read(a.sourcePath, "toml")), p = config.providers?.[m.nativeProvider];
+  const rows = config.models.filter((r) => r?.provider === m.nativeProvider && r.model === m.model);
   if (!object(p) || (m.model && rows.length !== 1)) throw Error("Kimi 模型配置已变化或有重复声明，请刷新目录");
-  if (["KIMI_BASE_URL", "KIMI_API_KEY", "KIMI_MODEL_NAME", "KIMI_MODEL_PROVIDER"].some((k) => env[k]))
-    throw Error("Kimi 存在运行时模型覆盖，请在原生客户端测试或清除覆盖后重试");
+  const environmentIssue = require('./kimi-model-config.cjs').environmentIssue(env);
+  if (environmentIssue) throw Error(environmentIssue);
   if ([!!secret(p.api_key), !!secret(p.api_key_env), !!p.oauth].filter(Boolean).length > 1)
     throw Error("Kimi 同一供应商声明了多种凭据，无法确定检测账户");
   let key, base = p.base_url;
@@ -159,7 +159,9 @@ function zcodeTarget(client, a, m, env) {
 function dshSettings(dir) { return require("./dsh-config.cjs").readSettings(dir, read); }
 function classicTarget(client, a, m, home, env) {
   const id = a.provider || a.oauthProvider || a.providers?.[0], dir = a.nativeDir || path.dirname(a.sourcePath);
-  const data = read(a.sourcePath, client.id === "dsh" ? "yaml" : "json");
+  const data = client.id === 'opencode' && a.sourcePath.endsWith('.db')
+    ? a.credentialId ? { [id]: { ...require('./opencode-version.cjs').selected(a).value } } : {}
+    : read(a.sourcePath, client.id === "dsh" ? "yaml" : "json");
   const record = data.records?.["llm-pi-ai/" + id];
   const credential = client.id === "dsh" ? record?.payload || record : client.id === "claude" ? data.claudeAiOauth : data[id];
   const subscription = nativeSubscriptionProvider(client, a);
@@ -188,7 +190,7 @@ function classicTarget(client, a, m, home, env) {
     p = opencodeProvider(a, dir, id, home, env, read);
     raw = Object.values(p.models || {}).find((r) => (r?.id || r?.model) === m.model) || p.models?.[m.model] || {};
     if (!p.enabled) throw Error("此原生供应商已停用");
-    key = p.options?.apiKey !== undefined ? value(p.options.apiKey, env) : value(data[id]?.key, env) ||
+    key = a.credentialId ? value(data[id]?.key, env) : p.options?.apiKey !== undefined ? value(p.options.apiKey, env) : value(data[id]?.key, env) ||
       (p.env || [builtin.envKey]).map((name) => secret(env[name])).find(Boolean);
     const npm = raw.provider?.npm || p.npm || p.package;
     const packageProtocol = { "@ai-sdk/openai": "openai-responses", "@ai-sdk/anthropic": "anthropic",

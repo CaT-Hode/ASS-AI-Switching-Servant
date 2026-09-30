@@ -128,7 +128,7 @@ function nativeFile(harness, dir, cwd, id, timestamp) {
 function prepare() {
   const p = project(data.projectId), t = thread(p, data.threadId), harness = data.harness;
   safePath(data.dir); if (!fs.statSync(p.cwd).isDirectory()) throw Error('项目目录不存在');
-  const version = hash(t.refs.join(':')), prior = t.routes.find((r) => r.harness === harness && r.version === version && pathKey(r.dir) === pathKey(data.dir));
+  const version = hash(t.refs.join(':') + (harness === 'opencode' ? ':' + (data.nativeVersion || 1) : '')), prior = t.routes.find((r) => r.harness === harness && r.version === version && pathKey(r.dir) === pathKey(data.dir));
   if (prior && fs.existsSync(prior.nativeFile || prior.file)) {
     safePath(prior.file); safePath(prior.nativeFile || prior.file);
     if (harness !== 'opencode') {
@@ -145,7 +145,7 @@ function prepare() {
   const from = t.home?.harness || t.origins[0]?.harness, labels = { codex: 'Codex', claude: 'CC', dsh: 'DSH', opencode: 'OpenCode', pi: 'pi' };
   const title = `来自 ${labels[from]} 的同步 · ${t.title}`;
   if (messages[0]?.role === 'user') messages[0] = { ...messages[0], text: `[来自 ${labels[from]} 的同步]\n` + messages[0].text };
-  const result = codecs.encode(harness, { id: sessionId, cwd: p.cwd, title, messages, createdAt: timestamp });
+  const result = codecs.encode(harness, { id: sessionId, cwd: p.cwd, title, messages, createdAt: timestamp, nativeVersion: data.nativeVersion });
   const file = path.join(data.vault, 'projections', harness, sessionId + result.suffix); safePath(file); fs.mkdirSync(path.dirname(file), { recursive: true });
   if (!fs.existsSync(file)) fs.writeFileSync(file, result.bytes, { flag: 'wx', mode: 0o600 });
   let target = file, mode = 'import';
@@ -176,10 +176,10 @@ function releasePlan() {
     if (origin.pending) throw Error('初始客户端仍有未完成的对话，请结束后关闭同步');
     const oldRefs = origin.messages.map((m) => hash(JSON.stringify({ role: m.role, text: m.text })));
     if (JSON.stringify(oldRefs) !== JSON.stringify(t.refs)) {
-      const digest = hash('return:' + p.id + ':' + t.id + ':' + t.refs.join(':'));
+      const digest = hash('return:' + p.id + ':' + t.id + ':' + t.refs.join(':') + (home.harness === 'opencode' ? ':' + (origin.nativeVersion || 1) : ''));
       const sessionId = home.harness === 'opencode' ? 'ses_' + digest.slice(0, 26) : `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
       const timestamp = t.updatedAt, result = codecs.encode(home.harness, { id: sessionId, cwd: p.cwd, title: t.title,
-        messages: t.refs.map((ref, i) => ({ ...block(ref), timestamp: t.times[i] })), createdAt: timestamp });
+        messages: t.refs.map((ref, i) => ({ ...block(ref), timestamp: t.times[i] })), createdAt: timestamp, nativeVersion: origin.nativeVersion });
       const file = path.join(data.vault, 'returned', home.harness, sessionId + result.suffix); safePath(file); fs.mkdirSync(path.dirname(file), { recursive: true });
       if (!fs.existsSync(file)) fs.writeFileSync(file, result.bytes, { flag: 'wx', mode: 0o600 });
       if (home.harness === 'opencode') returns.push({ harness: home.harness, dir: home.dir, sessionId, file, cwd: p.cwd });

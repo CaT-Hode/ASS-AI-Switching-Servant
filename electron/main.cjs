@@ -1038,7 +1038,7 @@ else {
             if (item.signature && codecs.hash(JSON.stringify(codecs.openCodeBundle(path.join(item.dir, 'opencode.db'), item.sessionId))) !== item.signature)
               throw Error('OpenCode 会话已改变，请重新关闭同步');
             await new Promise((resolve, reject) => require('node:child_process').execFile(launcher.executable,
-              [...launcher.args, ...(item.signature ? ['session', 'delete', item.sessionId] : ['import', item.file])],
+              [...launcher.args, ...require('../core/opencode-version.cjs').command(require('../core/opencode-version.cjs').version(launcher, item.dir), item.signature ? 'delete' : 'import', item.signature ? item.sessionId : item.file)],
               { cwd: item.cwd, env: current.env, windowsHide: true, timeout: 30000, maxBuffer: 1024 ** 2 },
               (error) => error ? reject(Error('OpenCode 归回或清理失败，原会话与 ASS 备份保留；请重试')) : resolve()));
             if (item.signature) {
@@ -1263,11 +1263,12 @@ else {
       register("project-conversations-resume", (id, thread, harness) => connections.launch(async () => {
         const launcher = harnesses.launcher(harness); if (!launcher.ready) throw Error(launcher.message);
         const project = projectConversations.project(id), initial = harnesses.projectConversationPlan(harness, project.cwd);
-        const prepared = await projectConversations.prepare(id, thread, harness, initial.dir);
+        const prepared = await projectConversations.prepare(id, thread, harness, initial.dir,
+          harness === 'opencode' ? require('../core/opencode-version.cjs').version(harnesses.launcher(harness), initial.dir) : 1);
         if (harness === "opencode") {
           // Use the official importer: never splice rows into a live native DB.
           await new Promise((resolve, reject) => require("node:child_process").execFile(launcher.executable,
-            [...launcher.args, "import", prepared.file], { cwd: project.cwd, env: initial.env, windowsHide: true, timeout: 30000, maxBuffer: 1024 ** 2 },
+            [...launcher.args, ...require('../core/opencode-version.cjs').command(require('../core/opencode-version.cjs').version(launcher, initial.dir), 'import', prepared.file)], { cwd: project.cwd, env: initial.env, windowsHide: true, timeout: 30000, maxBuffer: 1024 ** 2 },
             (error, stdout) => error || !stdout.includes("Imported session:") ? reject(Error("OpenCode 原生导入失败，共享记录已保留；请确认 CLI 版本支持 import")) : resolve()));
         }
         const plan = harnesses.projectConversationPlan(harness, project.cwd, prepared.sessionId, prepared.nativeFile);

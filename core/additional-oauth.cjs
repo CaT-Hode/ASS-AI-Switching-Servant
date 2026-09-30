@@ -49,7 +49,7 @@ function kimiReference(dir, provider) {
 function kimiSources(location, env = {}) {
   const config = part(path.join(location.dir, "config.toml"), "toml");
   const refs = new Map();
-  for (const p of Object.values(object(config.data.providers) ? config.data.providers : {})) {
+  for (const p of Object.values(require('./kimi-model-config.cjs').normalize(config.data).providers)) {
     const ref = kimiReference(location.dir, p);
     if (ref) refs.set(ref.provider, { ...location, ...ref, harness: "kimi", env, native: true });
   }
@@ -136,7 +136,7 @@ function readSource(source, { fresh = false } = {}) {
       row.profile.fields = [{ id: "region", label: "服务区域", value: source.base.includes("api.kimi.ai/") ? "Global" : "中国区" },
         { id: "slot", label: "授权位置", value: source.slot }];
       const env = source.env || {};
-      const official = !env.KIMI_API_KEY && [env.KIMI_CODE_BASE_URL, env.KIMI_BASE_URL].every((v) => !v || endpoint(v) === source.base) &&
+      const official = !require('./kimi-model-config.cjs').environmentIssue(env) && [env.KIMI_CODE_BASE_URL, env.KIMI_BASE_URL].every((v) => !v || endpoint(v) === source.base) &&
         [env.KIMI_CODE_OAUTH_HOST, env.KIMI_OAUTH_HOST].every((v) => !v || endpoint(v) === source.host);
       grants.push({ row, grant, identity: null, grantKey: stamp(["kimi", source.provider, grant.refresh_token || grant.access_token]),
         query: official ? { kind: "kimi-code", baseUrl: source.base } : null });

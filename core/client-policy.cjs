@@ -42,6 +42,7 @@ function modelIssue(harness, provider, model) {
   if (!provider.apiKey) return "供应商缺少 API Key";
   if (!model.enabled) return "模型已停用";
   if (!["openai-chat", "openai-responses", "anthropic"].includes(model.wireApi)) return "不支持的接口协议";
+  if (harness === 'dsh') { try { require('./dsh-config.cjs').reasoning(model); } catch (e) { return e.message; } }
   return "";
 }
 function injectionCatalog(harness, providers, settings = {}) {
@@ -54,6 +55,7 @@ function injectionCatalog(harness, providers, settings = {}) {
       ...(harness === "claude" ? { adapter: require("./provider-transport.cjs").messagesTransport(p, m).adapted
         ? "Messages 转换接入" : "Messages 原生接入" } : {}),
       ...(harness === "codex" && m.wireApi !== "openai-responses" ? { adapter: "Responses 转换接入" } : {}),
+      ...(harness === 'dsh' && m.efforts?.includes('ultra') ? { adapter: 'DSH 原生档位：low / medium / high / xhigh / max；不传递 ultra' } : {}),
       included: !issue && !excludedProviders.has(p.id) && !excluded.has(ref) };
   }));
 }
