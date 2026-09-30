@@ -5,7 +5,7 @@ const { pipeline } = require("node:stream/promises");
 const { safePath } = require("./native-fields.cjs");
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const hash = (v) => crypto.createHash("sha256").update(v).digest("hex");
-const key = (v) => process.platform === "win32" ? path.resolve(v).toLowerCase() : path.resolve(v);
+const { displayPath, pathKey: key } = require('./conversation-paths.cjs');
 const inside = (dir, file) => { const rel = path.relative(dir, file); return !!rel && !path.isAbsolute(rel) && rel !== ".." && !rel.startsWith(".." + path.sep); };
 const signature = (s) => `${s.size}:${s.mtimeMs}:${s.ino}`;
 const clean = (v, n = 250) => typeof v === "string" ? v.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "").slice(0, n) : "";
@@ -30,7 +30,7 @@ function sample(file, size) {
     return [...records(head.toString("utf8")), ...records(tail.toString("utf8").split("\n").slice(1).join("\n"))];
   } finally { fs.closeSync(fd); }
 }
-function enumerate(dir, output, depth = 0) {
+function enumerate(dir, output, depth = 0, allowUnnamed = false) {
   if (depth > 8 || output.length >= 20000) throw Error("会话目录超过扫描范围");
   safePath(dir);
   let names;
@@ -38,8 +38,8 @@ function enumerate(dir, output, depth = 0) {
   for (const item of names) {
     if (item.isSymbolicLink() || item.name === "subagents" || item.name === "memory") continue;
     const file = path.join(dir, item.name);
-    if (item.isDirectory()) enumerate(file, output, depth + 1);
-    else if (item.isFile() && item.name.endsWith(".jsonl") && UUID.test(item.name)) output.push(file);
+    if (item.isDirectory()) enumerate(file, output, depth + 1, allowUnnamed);
+    else if (item.isFile() && item.name.endsWith(".jsonl") && (allowUnnamed || UUID.test(item.name))) output.push(file);
   }
 }
 function codexIndex(dir) {
@@ -54,8 +54,8 @@ function codexIndex(dir) {
       const db = new DatabaseSync(file, { readOnly: true, timeout: 500 });
       try {
         const fields = new Set(db.prepare("PRAGMA table_info(threads)").all().map((r) => r.name));
-        const selected = ["id", "title", "cwd", "model", "model_provider", "archived", "source"].filter((n) => fields.has(n));
-        if (fields.has("id")) for (const row of db.prepare(`SELECT ${selected.join(",")} FROM threads LIMIT 20000`).all()) rows.set(row.id, row);
+        const selected = ["id", "name", "title", "cwd", "model", "model_provider", "archived", "source", "rollout_path", "project_id"].filter((n) => fields.has(n));
+        if (fields.has("id")) for (const row of db.prepare(`SELECT ${selected.join(",")} FROM threads LIMIT 20000`).all()) rows.set(row.id, { ...row, title: row.name?.trim() || row.title });
       } finally { db.close(); }
     }
   } catch { /* Native clients can rebuild indexes from their transcripts. */ }
@@ -63,15 +63,31 @@ function codexIndex(dir) {
     const file = path.join(dir, "session_index.jsonl"); safePath(file);
     if (fs.statSync(file).size <= 16 * 1024 ** 2)
       for (const r of records(fs.readFileSync(file, "utf8"))) if (typeof r.id === "string")
-        rows.set(r.id, { ...rows.get(r.id), title: r.thread_name || rows.get(r.id)?.title });
+        rows.set(r.id, { ...rows.get(r.id), title: rows.get(r.id)?.title || r.thread_name });
+  } catch {}
+  try {
+    const file = path.join(dir, '.codex-global-state.json'); safePath(file);
+    if (fs.statSync(file).size > 16 * 1024 ** 2) throw Error();
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const projects = new Map(Object.entries(state['local-projects'] || {}).map(([id, p]) => [p.id || id, p]));
+    for (const [id, assignment] of Object.entries(state['thread-project-assignments'] || {})) {
+      const p = assignment?.projectKind === 'local' && projects.get(assignment.projectId);
+      const roots = (p?.rootPaths || []).map(displayPath).filter((r) => path.isAbsolute(r));
+      if (!roots.length) continue;
+      const row = rows.get(id) || {}, native = displayPath(row.cwd);
+      const cwd = roots.find((r) => key(r) === key(native || '.') || inside(r, native)) || roots[0];
+      rows.set(id, { ...row, cwd, projectName: p.name, projectExplicit: true, projectless: false });
+    }
+    for (const id of state['projectless-thread-ids'] || []) rows.set(id, { ...rows.get(id), projectless: true, projectExplicit: false });
   } catch {}
   return rows;
 }
 function metadata(file, source, stat, index) {
-  const values = sample(file, stat.size), id = path.basename(file).match(UUID)?.[0]?.toLowerCase();
+  const values = sample(file, stat.size), filenameIds = path.basename(file).match(new RegExp(UUID.source, 'ig')) || [];
   const meta = values.find((r) => r.type === "session_meta")?.payload || {};
+  const id = (source.harness === 'codex' ? meta.id || filenameIds.at(-1) : filenameIds.at(-1) || values.find((r) => r.sessionId)?.sessionId)?.toLowerCase();
   const native = index?.get(id) || {};
-  if (meta.id && meta.id.toLowerCase() !== id) throw Error("会话标识与文件名不一致");
+  if (!id || (meta.id && !filenameIds.some((v) => v.toLowerCase() === id))) throw Error("会话标识与文件名不一致");
   if (source.harness === "claude" && values.some((r) => r.sessionId && r.sessionId.toLowerCase() !== id)) throw Error("CC 会话标识不一致");
   const sidechain = source.harness === "codex" ? !!meta.source?.subagent || native.source === "subagent" : values.some((r) => r.isSidechain);
   if (sidechain) return null;
@@ -79,13 +95,25 @@ function metadata(file, source, stat, index) {
   const prompt = messages.map((r) => source.harness === "codex" ? r.payload : r.message)
     .filter((m) => m?.role === "user").map((m) => contentText(m.content))
     .find((text) => text && !/^\s*(?:# AGENTS\.md|<environment_context>|<INSTRUCTIONS>|<local-command|<command-)/i.test(text));
-  const titleEvent = values.filter((r) => ["custom-title", "summary"].includes(r.type)).at(-1);
-  const cwd = clean(native.cwd || meta.cwd || values.find((r) => r.cwd)?.cwd, 2000);
-  const title = clean(native.title || titleEvent?.customTitle || titleEvent?.summary || prompt?.split("\n")[0] || "未命名对话", 160);
+  let titleEvent = values.filter((r) => r.type === 'custom-title').at(-1) || values.filter((r) => r.type === 'summary').at(-1);
+  if (source.harness === 'claude') {
+    // A rename can sit in the middle of a long CC log, outside head/tail samples.
+    for (const r of require('./conversation-reader.cjs').records(file)) if (r.type === 'custom-title' && (!r.sessionId || r.sessionId.toLowerCase() === id)) titleEvent = r;
+    try {
+      const indexFile = path.join(path.dirname(file), 'sessions-index.json'); safePath(indexFile);
+      if (fs.statSync(indexFile).size <= 16 * 1024 ** 2) {
+        const entry = JSON.parse(fs.readFileSync(indexFile, 'utf8')).entries?.find((r) => r.sessionId?.toLowerCase() === id);
+        if (entry) Object.assign(native, { cwd: entry.projectPath || entry.cwd, title: titleEvent?.customTitle || entry.customTitle || entry.summary });
+      }
+    } catch {}
+  }
+  const cwd = displayPath(clean(native.cwd || values.filter((r) => r.type === 'turn_context').at(-1)?.payload?.cwd || meta.cwd || values.find((r) => r.cwd)?.cwd, 2000));
+  const title = clean(native.title || titleEvent?.customTitle || titleEvent?.summary || prompt?.split("\n")[0] || "未命名对话", 1000);
   const model = clean(native.model || values.filter((r) => r.type === "turn_context" || r.type === "assistant").at(-1)?.payload?.model || values.filter((r) => r.type === "assistant").at(-1)?.message?.model);
   return { id: hash(source.harness + "\0" + key(file)), sessionId: id, harness: source.harness,
     file, dir: source.dir, relative: path.relative(source.dir, file), sourceLabel: source.label || "本机历史",
-    title, cwd, model, archived: file.includes(path.sep + "archived_sessions" + path.sep) || !!native.archived,
+    title, cwd, model, indexedFile: native.rollout_path && key(native.rollout_path) === key(file), projectless: native.projectless, projectExplicit: native.projectExplicit, projectName: native.projectName,
+    archived: file.includes(path.sep + "archived_sessions" + path.sep) || !!native.archived,
     updatedAt: new Date(stat.mtimeMs).toISOString(), createdAt: clean(meta.timestamp || values.find((r) => r.timestamp)?.timestamp, 50),
     size: stat.size, signature: signature(stat), nativePresent: true };
 }
@@ -98,14 +126,15 @@ function scan(sources, previous = []) {
     try {
       const files = [], index = source.harness === "codex" ? codexIndex(source.dir) : null;
       for (const name of source.harness === "codex" ? ["sessions", "archived_sessions"] : ["projects"])
-        enumerate(path.join(source.dir, name), files);
+        enumerate(path.join(source.dir, name), files, 0, source.harness === 'claude');
       for (const file of files) {
+        try {
         if (seen.has(key(file))) continue; seen.add(key(file)); safePath(file);
         const stat = fs.statSync(file), id = hash(source.harness + "\0" + key(file)), old = rows.get(id);
         if (!stat.isFile() || stat.size === 0) continue;
-        let row = old?.signature === signature(stat) ? { ...old, nativePresent: true } : metadata(file, source, stat, index);
-        if (row && index?.get(row.sessionId)?.title) row = { ...row, title: clean(index.get(row.sessionId).title, 160) };
+        let row = metadata(file, source, stat, index);
         if (row) rows.set(id, { ...row, snapshot: old?.snapshot, pinned: pinned.has(row.harness + "\0" + row.sessionId) });
+        } catch (e) { errors.push({ harness: source.harness, file, message: e.message }); }
       }
     } catch { errors.push({ harness: source.harness, dir: source.dir, message: "部分本地会话未能读取，已保留上次结果" }); }
   }
@@ -232,4 +261,4 @@ async function stage(row, target, vault, secret) {
     return { file, copied: true };
   } finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
 }
-module.exports = { scan, preview, preserve, stage, snapshotFile, signature, inside };
+module.exports = { scan, preview, preserve, stage, snapshotFile, signature, inside, codexIndex, metadata, sample };

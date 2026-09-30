@@ -4,7 +4,8 @@ const fs = require('node:fs'), path = require('node:path'), crypto = require('no
 const { safePath } = require('./native-fields.cjs');
 const HARNESSES = ['codex', 'claude', 'dsh', 'opencode', 'pi'];
 const hash = (x) => crypto.createHash('sha256').update(x).digest('hex');
-const pathKey = (x) => { let p = path.resolve(x); try { p = fs.realpathSync.native(p); } catch {} return process.platform === 'win32' ? p.toLowerCase() : p; };
+const { displayPath, pathKey } = require('./conversation-paths.cjs');
+const libraryFiles = require('./conversation-files.cjs');
 const NO_PROJECT = 'unassigned';
 function projectPath(cwd, sources = []) {
   if (!cwd || !path.isAbsolute(cwd)) return '';
@@ -20,19 +21,7 @@ const stamp = (s) => `${s.size}:${s.mtimeMs}:${s.ino}`;
 const slug = (cwd) => '--' + cwd.replace(/^[/\\]+/, '').replace(/[/\\:]/g, '-') + '--';
 const dshSlug = (cwd) => '--' + (cwd.replace(/[/\\:]+/g, '-').split('').map((c) => /^[A-Za-z0-9._-]$/.test(c) ? c : '~' + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')).join('').replace(/^-+/, '') || 'root').slice(0, 251) + '--';
 const jsonl = (rows) => rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
-function lines(file) {
-  safePath(file); const stat = fs.statSync(file);
-  if (stat.size > 128 * 1024 ** 2) throw Error('会话超过 128 MiB，未截断同步');
-  let raw = fs.readFileSync(file);
-  if (file.endsWith('.zstd')) {
-    if (!zlib.zstdDecompressSync) throw Error('当前运行时不支持 DSH Zstandard 会话');
-    raw = zlib.zstdDecompressSync(raw, { maxOutputLength: 128 * 1024 ** 2 });
-  }
-  // A partial last JSON line is not yet committed by the native writer.
-  const text = raw.toString('utf8').replace(/^\uFEFF/, ''), chunks = text.split('\n');
-  if (!text.endsWith('\n')) chunks.pop();
-  return chunks.filter((l) => l.trim()).map((l) => JSON.parse(l));
-}
+const lines = require('./conversation-reader.cjs').lines;
 function blockText(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -123,7 +112,8 @@ function decode(harness, rows, { completed = true } = {}) {
     title = rows.filter((r) => r.type === 'session_info').at(-1)?.name || '';
   } else if (harness === 'dsh') {
     header = rows[0] || {};
-    if (header.type !== 'session' || ![0, 1, 2, 3].includes(header.version)) throw Error('DSH 会话版本尚未支持，未改写');
+    if (header.type !== 'session' || ![0, 1, 2, 3, 4].includes(header.version)) throw Error('DSH 会话版本尚未支持，未改写');
+    title = rows.filter((r) => r.type === 'session/title').at(-1)?.data?.title || '';
     // DSH commits at turn/end. An unfinished suffix must never become a shared turn.
     const lastEnd = rows.findLastIndex((r) => r.type === 'turn/end');
     pending = rows.slice(lastEnd + 1).some((r) => r.type === 'turn/start');
@@ -152,7 +142,7 @@ function decode(harness, rows, { completed = true } = {}) {
   const syncPrefix = /^\[来自 (Codex|CC|DSH|OpenCode|pi) 的同步\]\n/;
   if (filtered[0]?.role === 'user') filtered[0].text = filtered[0].text.replace(syncPrefix, '');
   return { sessionId: String(header.id || ''), cwd: header.cwd || '', createdAt: header.timestamp || new Date(Number(header.createdAt) || 0).toISOString(),
-    title: title || filtered.find((m) => m.role === 'user')?.text.split('\n')[0].slice(0, 160) || '未命名对话', model, messages: filtered, pending,
+    title: title || header.title || filtered.find((m) => m.role === 'user' && !/^\s*(?:# AGENTS\.md|<environment_context>|<INSTRUCTIONS>|<local-command|<command-)/i.test(m.text))?.text.split('\n')[0].slice(0, 160) || '未命名对话', model, messages: filtered, pending,
     sidechain: header.origin === 'subagent' || !!header.source?.subagent || Number(header.delegationDepth) > 0 };
 }
 function database(file, fn) {
@@ -209,6 +199,24 @@ function discover(sources, { cwd, includeMessages = false, cache = {}, processed
         }
         continue;
       }
+      if (['codex', 'claude'].includes(source.harness)) {
+        const found = libraryFiles.scan([source]); errors.push(...found.errors);
+        for (const meta of found.entries.filter((r) => r.nativePresent)) {
+          const effective = meta.projectless ? '' : meta.cwd;
+          if (cwd && pathKey(cwd) !== pathKey(effective || '.')) continue;
+          if (seen.has(meta.id)) continue; seen.add(meta.id);
+          let row = meta;
+          if (includeMessages && processed[source.harness + '\0' + meta.sessionId] !== meta.signature) {
+            try {
+              const decoded = decode(source.harness, lines(meta.file, source.harness));
+              row = { ...decoded, ...meta, messages: decoded.messages, pending: decoded.pending };
+              if (stamp(fs.statSync(meta.file)) !== meta.signature) delete row.messages;
+            } catch (e) { errors.push({ harness: source.harness, file: meta.file, message: e.message }); }
+          }
+          cache[meta.id] = meta; rows.push(row);
+        }
+        continue;
+      }
       const files = [];
       for (const name of source.harness === 'codex' ? ['sessions', 'archived_sessions'] : source.harness === 'claude' ? ['projects'] : ['sessions']) walk(path.join(source.dir, name), files);
       for (const dir of source.sessionDirs || []) if (path.isAbsolute(dir)) walk(dir, files);
@@ -240,13 +248,21 @@ function discover(sources, { cwd, includeMessages = false, cache = {}, processed
           const stable = stamp(fs.statSync(file)) === sig;
           if (stable) cache[id] = row;
           rows.push({ ...row, ...(includeMessages && stable ? { messages } : {}) });
-        } catch { errors.push({ harness: source.harness, file, message: '记录未完成、版本未知或无法读取，未改写来源' }); }
+        } catch (e) { errors.push({ harness: source.harness, file, message: e.message || '记录未完成、版本未知或无法读取，未改写来源' }); }
       }
     } catch { errors.push({ harness: source.harness, dir: source.dir, message: '会话目录暂时无法读取' }); }
   }
   return { rows, errors };
 }
-function readConversation(row, options) { return row.harness === 'opencode' ? decodeOpenCode(openCodeBundle(row.file, row.sessionId)) : decode(row.harness, lines(row.file), options); }
+function readConversation(row, options) {
+  const value = row.harness === 'opencode' ? decodeOpenCode(openCodeBundle(row.file, row.sessionId)) : decode(row.harness, lines(row.file, row.harness), options);
+  if (row.harness === 'codex') {
+    const dir = row.dir || row.file.split(/[\\/]sessions[\\/]|[\\/]archived_sessions[\\/]/)[0];
+    const index = libraryFiles.codexIndex(dir).get(value.sessionId);
+    if (index) Object.assign(value, { cwd: displayPath(index.cwd || value.cwd), title: index.title || value.title, projectless: index.projectless });
+  }
+  return value;
+}
 function encode(harness, { id, cwd, title, messages, createdAt = new Date().toISOString(), model = '' }) {
   const rows = [], emptyUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
   if (harness === 'codex') {

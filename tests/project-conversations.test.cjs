@@ -4,6 +4,7 @@ const { ProjectConversations } = require('../core/project-conversations.cjs');
 const codecs = require('../core/project-codecs.cjs');
 const ID = '123e4567-e89b-42d3-a456-426614174000', timestamp = '2026-09-30T02:00:00.000Z';
 const messages = [{ role: 'user', text: 'Shared project discussion', timestamp }, { role: 'assistant', text: 'Existing answer', timestamp }];
+const { DatabaseSync } = require('node:sqlite');
 function write(file, bytes) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes); }
 function fixture(t, all = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ass-project-sync-')); t.after(() => fs.rmSync(root, { force: true, recursive: true }));
@@ -43,6 +44,139 @@ function appendPi(route, user, answer) {
   fs.appendFileSync(route.nativeFile, codecs.jsonl([{ type: 'message', id, parentId, timestamp, message: { role: 'user', content: [{ type: 'text', text: user }] } },
     { type: 'message', id: aid, parentId: id, timestamp, message: { role: 'assistant', content: [{ type: 'text', text: answer }], stopReason: 'stop' } }]));
 }
+
+test('Codex current project assignment and title override the original session header, even without a log change', async (t) => {
+  const f = fixture(t), global = path.join(f.dirs.codex, '.codex-global-state.json');
+  const db = new DatabaseSync(path.join(f.dirs.codex, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,title TEXT,cwd TEXT,rollout_path TEXT,archived INTEGER,name TEXT)');
+  db.prepare('INSERT INTO threads VALUES(?,?,?,?,0,?)').run(ID, '# AGENTS.md instructions', f.other, f.file, '客户端已命名');
+  write(global, JSON.stringify({ 'local-projects': { project: { id: 'project', name: '实际项目', rootPaths: [f.cwd] } }, 'thread-project-assignments': { [ID]: { projectKind: 'local', projectId: 'project' } } }));
+  let list = await f.library.list(); assert.equal(list.items[0].cwd, f.cwd); assert.equal(list.items[0].name, '实际项目');
+  const records = await f.library.records(list.items[0].id); assert.equal(records.items[0].title, '客户端已命名');
+  const id = list.items[0].id; await f.library.configure(id, { enabled: true });
+  db.prepare('UPDATE threads SET name=? WHERE id=?').run('客户端重新命名', ID);
+  await f.library.sync(id); assert.equal((await f.library.threads(id)).items[0].title, '客户端重新命名');
+  db.close();
+  write(global, JSON.stringify({ 'projectless-thread-ids': [ID] }));
+  const raw = codecs.discover(f.sources).rows.find((r) => r.sessionId === ID); assert.equal(raw.projectless, true);
+});
+
+test('large Codex logs are listed and synchronized without a full-file buffer or 128 MiB exclusion', async (t) => {
+  const f = fixture(t), fd = fs.openSync(f.file, 'a');
+  const noise = JSON.stringify({ type: 'debug_only', payload: 'x'.repeat(128 * 1024) }) + '\n';
+  try { for (let i = 0; i < 1030; i++) fs.writeSync(fd, noise); } finally { fs.closeSync(fd); }
+  assert.ok(fs.statSync(f.file).size > 128 * 1024 ** 2);
+  const listed = codecs.discover(f.sources); assert.equal(listed.errors.length, 0); assert.equal(listed.rows.length, 1);
+  const synced = codecs.discover(f.sources, { includeMessages: true, cwd: f.cwd });
+  assert.equal(synced.errors.length, 0); assert.equal(synced.rows[0].messages.length, 2);
+});
+
+test('DSH v4 concatenated checked frames include all messages, native title, and final row without newline', (t) => {
+  const f = fixture(t), z = require('node:zlib');
+  const rows = [{ type: 'session', version: 4, id: ID, cwd: f.cwd, createdAt: Date.parse(timestamp) },
+    { type: 'turn/start', seq: 0 }, { type: 'user/message', seq: 1, data: { content: 'DSH 问题' } },
+    { type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'DSH 回答' }] } } },
+    { type: 'session/title', seq: 3, data: { title: 'DSH 原生名称' } }, { type: 'turn/end', seq: 4 }];
+  const file = path.join(f.dirs.dsh, 'sessions', 'project', ID, 'session.v4.jsonl.zstd');
+  const frames = rows.map((r, i) => z.zstdCompressSync(Buffer.from(JSON.stringify(r) + (i < rows.length - 1 ? '\n' : '')), { params: { [z.constants.ZSTD_c_checksumFlag]: 1 } }));
+  write(file, Buffer.concat(frames)); const before = fs.readFileSync(file);
+  const found = codecs.discover(f.sources, { includeMessages: true }).rows.find((r) => r.harness === 'dsh');
+  assert.equal(found.title, 'DSH 原生名称'); assert.equal(found.pending, false); assert.deepEqual(found.messages.map((m) => m.text), ['DSH 问题', 'DSH 回答']);
+  fs.appendFileSync(file, frames[1].subarray(0, 9)); assert.equal(codecs.readConversation(found).messages.length, 2);
+  assert.deepEqual(fs.readFileSync(file).subarray(0, before.length), before);
+});
+
+test('CC rename in the middle of a long file overrides sampled summary and first prompt', (t) => {
+  const f = fixture(t), encoded = codecs.encode('claude', { id: ID, cwd: f.cwd, title: '准确标题', messages });
+  const file = path.join(f.dirs.claude, 'projects', 'project', ID + '.jsonl');
+  write(file, Buffer.concat([encoded.bytes, Buffer.from(codecs.jsonl(Array.from({ length: 30 }, () => ({ type: 'progress', padding: 'x'.repeat(100000) }))))]));
+  const row = codecs.discover(f.sources).rows.find((r) => r.harness === 'claude'); assert.equal(row.title, '准确标题');
+});
+
+test('deleting a native conversation requires confirmation and preserves encrypted, restart-recoverable backup', async (t) => {
+  const f = fixture(t), original = fs.readFileSync(f.file), list = await f.library.list(), projectId = list.items[0].id;
+  const recordId = (await f.library.records(projectId)).items[0].id;
+  await assert.rejects(f.library.remove({ projectId, recordId }), /确认/); assert.ok(fs.existsSync(f.file));
+  const r = await f.library.remove({ projectId, recordId, confirmed: true }); assert.ok(!fs.existsSync(f.file));
+  assert.equal((await f.library.list()).items.length, 0); assert.equal(f.library.trashList().items.length, 1);
+  const again = new ProjectConversations(f.options); await again.restoreTrash(r.id);
+  assert.deepEqual(fs.readFileSync(f.file), original); assert.equal((await again.list()).items[0].count, 1);
+  assert.equal(again.trashList().items.length, 0);
+  assert.ok(!fs.readFileSync(again.file, 'utf8').includes(messages[0].text));
+});
+
+test('Codex native deletion removes just its index row and name entry; restoration keeps unrelated threads intact', async (t) => {
+  const f = fixture(t), dbfile = path.join(f.dirs.codex, 'state_5.sqlite'), db = new DatabaseSync(dbfile);
+  db.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,title TEXT,cwd TEXT,rollout_path TEXT,archived INTEGER)');
+  db.prepare('INSERT INTO threads VALUES(?,?,?,?,0)').run(ID, 'Native title', f.cwd, f.file);
+  db.prepare('INSERT INTO threads VALUES(?,?,?,?,0)').run('other', 'Keep', f.other, 'other-file');
+  const names = path.join(f.dirs.codex, 'session_index.jsonl'); write(names, codecs.jsonl([{ id: ID, thread_name: 'Old name' }, { id: 'other', thread_name: 'Keep' }]));
+  const p = (await f.library.list()).items[0], row = (await f.library.records(p.id)).items[0];
+  const deleted = await f.library.remove({ projectId: p.id, recordId: row.id, confirmed: true });
+  assert.equal(db.prepare('SELECT count(*) AS n FROM threads').get().n, 1); assert.ok(!fs.readFileSync(names, 'utf8').includes(ID));
+  await f.library.restoreTrash(deleted.id); assert.equal(db.prepare('SELECT count(*) AS n FROM threads').get().n, 2); assert.ok(fs.readFileSync(names, 'utf8').includes(ID)); db.close();
+});
+
+test('project deletion covers CC/pi/DSH, including DSH old generations; code and auth are never removed', async (t) => {
+  const f = fixture(t, true); const sources = f.sources.filter((s) => s.harness !== 'opencode');
+  const library = new ProjectConversations({ ...f.options, sources: () => sources });
+  const old = codecs.discover(sources).rows.find((r) => r.harness === 'dsh').file;
+  const v4 = old.replace('v3.', 'v4.'); const z = require('node:zlib'), body = codecs.lines(old); body[0].version = 4; write(v4, z.zstdCompressSync(Buffer.from(codecs.jsonl(body))));
+  const code = path.join(f.cwd, 'keep.txt'), auth = path.join(f.dirs.codex, 'auth.json'); write(code, 'PROJECT'); write(auth, 'AUTH');
+  const p = (await library.list()).items[0], result = await library.remove({ projectId: p.id, confirmed: true });
+  assert.equal((await library.list()).items.length, 0); assert.ok(!fs.existsSync(v4)); assert.ok(!fs.existsSync(old));
+  assert.equal(fs.readFileSync(code, 'utf8'), 'PROJECT'); assert.equal(fs.readFileSync(auth, 'utf8'), 'AUTH');
+  await library.restoreTrash(result.id); assert.equal((await library.list()).items[0].count, 4); assert.ok(fs.existsSync(v4) && fs.existsSync(old));
+});
+
+test('deletion refuses a running harness and restoration never overwrites a replacement log', async (t) => {
+  const f = fixture(t), library = new ProjectConversations({ ...f.options, assertDeletionIdle: async () => { throw Error('运行中'); } });
+  const p = (await library.list()).items[0]; await assert.rejects(library.remove({ projectId: p.id, confirmed: true }), /运行中/); assert.ok(fs.existsSync(f.file));
+  const own = (await f.library.list()).items[0], deleted = await f.library.remove({ projectId: own.id, confirmed: true });
+  write(f.file, 'REPLACEMENT'); await assert.rejects(f.library.restoreTrash(deleted.id), /同名/); assert.equal(fs.readFileSync(f.file, 'utf8'), 'REPLACEMENT');
+});
+
+test('OpenCode deletion and encrypted recovery go through the native import/delete adapter, not whole DB replacement', async (t) => {
+  const f = fixture(t, true), calls = [], database = path.join(f.dirs.opencode, 'opencode.db');
+  const adapter = async ({ imports, returns }) => {
+    const db = new DatabaseSync(database);
+    try {
+      for (const item of imports) {
+        calls.push('delete:' + item.sessionId);
+        db.prepare('DELETE FROM part WHERE session_id=?').run(item.sessionId); db.prepare('DELETE FROM message WHERE session_id=?').run(item.sessionId); db.prepare('DELETE FROM session WHERE id=?').run(item.sessionId);
+      }
+      for (const item of returns) {
+        calls.push('import:' + item.sessionId); const b = JSON.parse(fs.readFileSync(item.file));
+        db.prepare('INSERT INTO session VALUES(?,?,?,?,?,NULL,?,?,?)').run(b.info.id, b.info.title, b.info.directory, b.info.time.created, b.info.time.updated, b.info.version, b.info.projectID, b.info.slug);
+        for (const m of b.messages) {
+          db.prepare('INSERT INTO message VALUES(?,?,?,?,?)').run(m.info.id, b.info.id, m.info.time.created, m.info.time.created, JSON.stringify(m.info));
+          for (const p of m.parts) db.prepare('INSERT INTO part VALUES(?,?,?,?,?,?)').run(p.id, m.info.id, b.info.id, m.info.time.created, m.info.time.created, JSON.stringify(p));
+        }
+      }
+    } finally { db.close(); }
+  };
+  const library = new ProjectConversations({ ...f.options, sources: () => f.sources.filter((r) => r.harness === 'opencode'), releaseImports: adapter });
+  const before = codecs.openCodeBundle(database, 'ses_test'), p = (await library.list()).items[0];
+  const result = await library.remove({ projectId: p.id, confirmed: true });
+  assert.throws(() => codecs.openCodeBundle(database, 'ses_test'), /不存在/);
+  const entry = library.state.trash[0]; assert.ok(entry.imports[0].backup.endsWith('.enc')); assert.ok(!JSON.stringify(entry).includes('Existing answer'));
+  await library.restoreTrash(result.id); assert.deepEqual(codecs.openCodeBundle(database, 'ses_test'), before);
+  assert.deepEqual(calls, ['delete:ses_test', 'import:ses_test']);
+});
+
+test('Windows extended and UNC paths keep one project identity', () => {
+  const { displayPath } = require('../core/conversation-paths.cjs');
+  assert.equal(displayPath('\\\\?\\D:\\CodexProj\\ASS'), 'D:\\CodexProj\\ASS');
+  assert.equal(displayPath('\\\\?\\UNC\\server\\project'), '\\\\server\\project');
+  if (process.platform === 'win32') assert.equal(codecs.pathKey('\\\\?\\D:\\CodexProj\\ASS'), codecs.pathKey('D:\\CodexProj\\ASS'));
+});
+
+test('delete process guard is read-only, rejects busy or unverifiable clients', async () => {
+  const { assertDeletionIdle } = require('../core/conversation-delete-guard.cjs');
+  await assertDeletionIdle([{ harness: 'codex' }], async (script, input) => { assert.ok(!/Stop-Process|taskkill|[.]Kill\(/i.test(script)); assert.deepEqual(input.harnesses, ['codex']); return { running: [] }; });
+  await assert.rejects(assertDeletionIdle([{ harness: 'codex' }], async () => ({ running: ['codex'] })), /先关闭 Codex/);
+  await assert.rejects(assertDeletionIdle([{ harness: 'codex' }], async () => ({})), /未能确认/);
+});
 for (const h of codecs.HARNESSES) test(`${h} native projection preserves ordered shared context`, () => {
   const out = codecs.encode(h, { id: h === 'opencode' ? 'ses_test' : ID, cwd: process.cwd(), title: 'Shared', messages, createdAt: timestamp });
   const rows = h === 'dsh' ? require('node:zlib').zstdDecompressSync(out.bytes).toString() : out.bytes.toString();
@@ -179,7 +313,7 @@ test('DSH current replacement surface and nested tool results preserve the final
     { type: 'assistant/message', seq: 3, surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 }, data: { message: { content: [{ type: 'text', text: 'Final output' }] } } },
     { type: 'tool/result', seq: 4, data: { message: { content: [{ type: 'tool-result', content: [{ type: 'text', text: 'Nested output' }] }] } } }, { type: 'turn/end', seq: 5 }];
   const parsed = codecs.decode('dsh', rows); assert.ok(!parsed.messages.some((m) => m.text.includes('Old output'))); assert.ok(parsed.messages.some((m) => m.text.includes('Nested output')));
-  assert.throws(() => codecs.decode('dsh', [{ ...header, version: 4 }]), /尚未支持/);
+  assert.throws(() => codecs.decode('dsh', [{ ...header, version: 5 }]), /尚未支持/);
 });
 test('pi custom session root is discovered and current model defaults override historical metadata on resume', (t) => {
   const f = fixture(t), custom = path.join(f.root, 'custom-sessions');

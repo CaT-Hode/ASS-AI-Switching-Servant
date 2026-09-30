@@ -37,6 +37,7 @@ function merge(p, row) {
     p.threads.push(t); p.origins[key] = { threadId: id, refs, signature: row.signature, file: row.file }; return 1;
   }
   t = thread(p, origin.threadId);
+  if (t.home?.harness === row.harness && t.home?.sessionId === row.sessionId && row.title) t.title = row.title;
   if (prefix(refs, origin.refs)) return 0; // Shrunk/truncated/unfinished source never deletes the shared past.
   if (prefix(t.refs, refs)) { t.refs = refs; t.times = row.messages.map((m) => m.timestamp); t.updatedAt = row.updatedAt; }
   else if (prefix(refs, t.refs)) { origin.refs = refs; origin.signature = row.signature; return 0; }
@@ -55,20 +56,25 @@ function merge(p, row) {
 function discover() {
   data.state.catalog ||= {};
   const result = codecs.discover(data.sources, { cache: data.state.catalog }), grouped = new Map();
-  const records = new Map(result.rows.map((row) => [identity(row), row]));
+  const records = new Map();
+  const prefer = (old, row) => !old || Number(!!row.nativePresent) > Number(!!old.nativePresent) ||
+    (row.nativePresent === old.nativePresent && (Number(!!row.indexedFile) > Number(!!old.indexedFile) ||
+      (row.indexedFile === old.indexedFile && row.updatedAt > old.updatedAt)));
+  for (const row of result.rows) if (prefer(records.get(identity(row)), row)) records.set(identity(row), row);
   for (const history of data.history || []) {
     const old = records.get(identity(history));
-    records.set(identity(history), old ? { ...old, libraryId: history.id, pinned: history.pinned, retained: history.retained }
-      : { ...history, libraryId: history.id, dir: path.dirname(history.file) });
+    const same = old?.file === history.file;
+    if (same || prefer(old, history)) records.set(identity(history), { ...old, ...history, libraryId: history.id, dir: history.dir || old?.dir || path.dirname(history.file) });
   }
   const retired = new Set(data.state.projects.flatMap((p) => p.retired || []));
+  for (const entry of data.state.trash || []) if (entry.phase === 'deleted') for (const row of entry.rows || []) retired.add(identity(row));
   for (const [key] of records) if (retired.has(key)) records.delete(key);
   for (const row of records.values()) {
-    const cwd = codecs.projectPath(row.cwd, data.sources), id = cwd ? hash(pathKey(cwd)) : codecs.NO_PROJECT; row.projectId = id;
+    const cwd = row.projectless ? '' : row.projectExplicit ? row.cwd : codecs.projectPath(row.cwd, data.sources), id = cwd ? hash(pathKey(cwd)) : codecs.NO_PROJECT; row.projectId = id;
     const route = data.state.projects.flatMap((p) => p.threads.flatMap((t) => t.routes.map((r) => ({ p, t, r })))).find(({ r }) => identity(r) === identity(row));
     if (route) row.syncedFrom = route.t.home?.harness || route.t.origins[0]?.harness;
     let p = grouped.get(id);
-    if (!p) { p = { id, cwd, name: cwd ? path.basename(cwd) : '无项目会话', nonProject: !cwd, count: 0, counts: {}, harnesses: [], keys: new Set() }; grouped.set(id, p); }
+    if (!p) { p = { id, cwd, name: row.projectName || (cwd ? path.basename(cwd) : '无项目会话'), nonProject: !cwd, count: 0, counts: {}, harnesses: [], keys: new Set() }; grouped.set(id, p); }
     if (!p.keys.has(identity(row))) { p.count++; p.counts[row.harness] = (p.counts[row.harness] || 0) + 1; p.keys.add(identity(row)); }
     if (!p.harnesses.includes(row.harness)) p.harnesses.push(row.harness);
   }
@@ -81,8 +87,10 @@ function sync() {
     const processed = Object.fromEntries(Object.entries(data.state.observed).filter(([key]) => key.startsWith(p.id + ':')).map(([key, sig]) => [key.slice(p.id.length + 1), sig]));
     const r = codecs.discover(data.sources, { cwd: p.cwd, includeMessages: true, cache: data.state.catalog, processed }); p.errors = r.errors;
     const unique = new Map();
-    for (const row of r.rows) { const old = unique.get(identity(row)); if (!old || row.updatedAt > old.updatedAt) unique.set(identity(row), row); }
+    for (const row of r.rows) { const old = unique.get(identity(row)); if (!old || Number(!!row.indexedFile) > Number(!!old.indexedFile) || (row.indexedFile === old.indexedFile && row.updatedAt > old.updatedAt)) unique.set(identity(row), row); }
     for (const row of unique.values()) {
+      const origin = p.origins[identity(row)], shared = origin && p.threads.find((t) => t.id === origin.threadId);
+      if (shared?.home?.harness === row.harness && shared.home.sessionId === row.sessionId && row.title) shared.title = row.title;
       const k = p.id + ':' + identity(row); if (data.state.observed[k] === row.signature) continue;
       updated += merge(p, row); if (!row.pending) data.state.observed[k] = row.signature;
     }
@@ -208,6 +216,9 @@ function releaseCommit() {
   return { state: data.state, removed: data.plan.files.length + data.plan.imports.length };
 }
 (async () => {
+  if (data.action === 'trash-plan') return require('./conversation-trash.cjs').plan({ vault: data.vault, secret: data.state.secret, rows: data.rows, sources: data.sources, label: data.label });
+  if (data.action === 'trash-commit') return require('./conversation-trash.cjs').commit(data.entry);
+  if (data.action === 'trash-restore') return require('./conversation-trash.cjs').restore({ vault: data.vault, secret: data.state.secret, entry: data.entry });
   if (data.action === 'discover') return discover();
   if (data.action === 'sync') return sync();
   if (data.action === 'prepare') return prepare();

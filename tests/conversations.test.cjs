@@ -186,5 +186,5 @@ test("OAuth retention: an active-home copy inherits logical pins but different-p
 });
 test("OAuth retention: desktop preferences persist client selection and pin filter", (t) => {
   const f = fixture(t), prefs = new Preferences(f.root); prefs.update({ view: "conversations", conversations: { harness: "claude", pinned: true } });
-  assert.equal(new Preferences(f.root).state.view, "conversations"); assert.deepEqual(new Preferences(f.root).state.conversations, { harness: "claude", pinned: true, scope: "projects", project: "" });
+  assert.equal(new Preferences(f.root).state.view, "conversations"); assert.deepEqual(new Preferences(f.root).state.conversations, { harness: "claude", pinned: true, scope: "projects", project: "", columns: { projects: 235, threads: 205 } });
 });

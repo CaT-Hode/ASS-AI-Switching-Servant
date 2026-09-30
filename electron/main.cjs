@@ -1021,6 +1021,7 @@ else {
       conversations = new ConversationLibrary({ dataDir, crypto: safeStorage,
         sources: () => harnesses.conversationSources() });
       projectConversations = new ProjectConversations({ dataDir, crypto: safeStorage,
+        assertDeletionIdle: testMode ? undefined : require('../core/conversation-delete-guard.cjs').assertDeletionIdle,
         sources: () => harnesses.conversationSources(), history: async () => {
           await conversations.refresh(true);
           return conversations.entries.filter((r) => r.nativePresent || r.snapshot).map((r) => conversations.publicRow(r));
@@ -1229,6 +1230,9 @@ else {
           extraActive: () => probeControllers.size + diagnosticControllers.size })));
       register("conversations-list", (input) => conversations.list(input));
       register("project-conversations-list", () => projectConversations.list());
+      register("project-conversations-delete", (input) => projectConversations.remove(input));
+      register("project-conversations-trash", () => projectConversations.trashList());
+      register("project-conversations-restore", (id) => projectConversations.restoreTrash(id));
       register("project-conversations-configure", (id, options) => projectConversations.configure(id, options));
       register("project-conversations-sync", (id) => projectConversations.sync(id));
       register("project-conversations-threads", (id, input) => projectConversations.threads(id, input));

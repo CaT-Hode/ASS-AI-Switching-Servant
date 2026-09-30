@@ -52,9 +52,9 @@ class ConversationLibrary {
     const row = this.entries.find((r) => r.id === id); if (!row) throw Error("会话不存在，请刷新列表"); return row;
   }
   publicRow(row) {
-    const { id, sessionId, harness, title, cwd, model, archived, updatedAt, createdAt, size, pinned, sourceLabel } = row;
+    const { id, sessionId, harness, title, cwd, model, archived, updatedAt, createdAt, size, pinned, sourceLabel, projectless, projectExplicit, projectName } = row;
     return { id, sessionId, harness, title, cwd, model, archived, updatedAt, createdAt, size, pinned, sourceLabel,
-      nativePresent: row.nativePresent, retained: !!row.snapshot, capturedAt: row.snapshot?.capturedAt, file: row.file };
+      nativePresent: row.nativePresent, retained: !!row.snapshot, capturedAt: row.snapshot?.capturedAt, file: row.file, dir: row.dir, indexedFile: row.indexedFile, projectless, projectExplicit, projectName };
   }
   async list({ harness = "codex", query = "", offset = 0, pinned = false, refresh = false } = {}) {
     this.validateHarness(harness);

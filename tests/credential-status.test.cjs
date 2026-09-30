@@ -287,7 +287,7 @@ test("UI preferences persist with an allowlist and do not accept secrets or inva
     officialService: "deepseek",
     providerOrder: [],
     quotaAccounts: {},
-    conversations: { harness: "codex", pinned: false, scope: "projects", project: "" },
+    conversations: { harness: "codex", pinned: false, scope: "projects", project: "", columns: { projects: 235, threads: 205 } },
     usage: { client: "all", range: "month", tab: "activity", group: "client" },
   });
   preferences.update({ view: "<script>", client: "unknown" });

@@ -3,9 +3,10 @@ const { Worker } = require('node:worker_threads');
 const { atomic, safePath } = require('./native-fields.cjs');
 const { HARNESSES } = require('./project-codecs.cjs');
 class ProjectConversations {
-  constructor({ dataDir, crypto: encryption, sources, history, releaseImports, assertIdle, now = Date.now }) {
+  constructor({ dataDir, crypto: encryption, sources, history, releaseImports, assertIdle, assertDeletionIdle, now = Date.now }) {
     this.vault = path.join(dataDir, 'project-conversations'); this.file = path.join(this.vault, 'index.enc.json');
     this.encryption = encryption; this.sources = sources; this.history = history; this.releaseImports = releaseImports; this.assertIdle = assertIdle;
+    this.assertDeletionIdle = assertDeletionIdle;
     this.now = now; this.queue = Promise.resolve(); this.candidates = []; this.recordsCache = [];
     this.state = { version: 1, secret: '', projects: [], observed: {} }; this.error = ''; this.job = null;
     try { safePath(this.file); const raw = fs.existsSync(this.file) ? (() => {
@@ -42,7 +43,7 @@ class ProjectConversations {
       const r = await this.run('discover', { history: await this.history?.() || [] }); this.candidates = r.projects; this.recordsCache = r.records;
       if (!this.error) { this.state.observed = r.observed; this.state.catalog = r.catalog; this.persist(); }
       const map = new Map(r.projects.map((p) => [p.id, { ...p, enabled: false, targets: HARNESSES, lastSync: '', branches: 0 }]));
-      for (const p of this.state.projects) map.set(p.id, { ...map.get(p.id), ...this.summary(p) });
+      for (const p of this.state.projects) if (p.enabled || map.has(p.id)) map.set(p.id, { ...map.get(p.id), ...this.summary(p) });
       return { items: [...map.values()].sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name)),
         retained: Object.fromEntries(HARNESSES.map((h) => [h, r.records.filter((r) => r.harness === h && r.retained).length])), errors: r.errors, error: this.error || this.lastError || '' };
     });
@@ -104,6 +105,56 @@ class ProjectConversations {
     return { total: filtered.length, offset, items: filtered.slice(offset, offset + 40).map((r) => ({ ...r, kind: 'native' })) };
   }
   record(id) { const r = this.recordsCache.find((r) => r.id === id); if (!r) throw Error('会话不存在，请刷新'); return r; }
+  trashList() { return { items: (this.state.trash || []).filter((r) => r.phase !== 'restored').map((r) => ({ id: r.id, label: r.label, createdAt: r.createdAt, count: r.rows.length, phase: r.phase })) }; }
+  async remove({ projectId, recordId, threadId, confirmed } = {}) {
+    if (confirmed !== true) throw Error('请确认删除本地记录');
+    if (!projectId || (recordId && threadId)) throw Error('删除选项无效');
+    const active = this.state.projects.find((p) => p.id === projectId && p.enabled);
+    if (active) throw Error('请先关闭项目同步，再删除原生对话');
+    await this.list();
+    const selected = this.recordsCache.filter((r) => r.projectId === projectId && (!recordId || r.id === recordId));
+    if (threadId) throw Error('请先关闭项目同步，再删除原生对话');
+    if (!selected.length) throw Error('没有可删除的本地对话');
+    await this.assertDeletionIdle?.(selected);
+    return this.serial(async () => {
+      this.persist();
+      const label = recordId ? selected[0].title : this.candidates.find((p) => p.id === projectId)?.name || '项目对话';
+      const entry = await this.run('trash-plan', { rows: selected, label });
+      (this.state.trash ||= []).push(entry); this.persist(); // Backups + journal durable before removal.
+      await this.assertDeletionIdle?.(selected);
+      if (entry.imports.length) {
+        if (!this.releaseImports) throw Error('OpenCode CLI 不可用，备份保留，未删除');
+        await this.releaseImports({ imports: entry.imports, returns: [] });
+      }
+      const updated = await this.run('trash-commit', { entry });
+      Object.assign(entry, updated); this.recordsCache = []; this.persist();
+      return { id: entry.id, message: `已删除 ${entry.rows.length} 个本地对话，可从“已删除记录”恢复。` };
+    });
+  }
+  async restoreTrash(id) {
+    const entry = this.state.trash?.find((r) => r.id === id && r.phase !== 'restored');
+    if (!entry) throw Error('备份不存在');
+    await this.assertDeletionIdle?.(entry.rows);
+    return this.serial(async () => {
+      if (entry.imports.length) {
+        if (!this.releaseImports) throw Error('OpenCode CLI 不可用，未恢复');
+        const returns = [];
+        try {
+          for (const item of entry.imports) {
+            const bundle = require('./conversation-trash.cjs').importBundle(this.vault, this.state.secret, entry, item);
+            try { const current = require('./project-codecs.cjs').openCodeBundle(item.file, item.sessionId);
+              if (JSON.stringify(current) !== JSON.stringify(bundle)) throw Error('OpenCode 已有同 ID 的记录，未覆盖'); continue;
+            } catch (e) { if (!/会话不存在/.test(e.message)) throw e; }
+            const file = path.join(this.vault, 'trash', entry.id, item.sessionId + '.restore.json');
+            atomic(file, JSON.stringify(bundle)); returns.push({ ...item, file, signature: undefined });
+          }
+          await this.releaseImports({ returns, imports: [] });
+        } finally { for (const item of returns) if (fs.existsSync(item.file)) fs.unlinkSync(item.file); }
+      }
+      const updated = await this.run('trash-restore', { entry }); Object.assign(entry, updated); this.persist();
+      return { message: '本地对话已恢复，项目文件未改动。' };
+    });
+  }
   async nativePreview(id, before = 0) {
     if (!Number.isInteger(before) || before < 0) throw Error('会话页码无效');
     return this.run('native-preview', { row: this.record(id), before });

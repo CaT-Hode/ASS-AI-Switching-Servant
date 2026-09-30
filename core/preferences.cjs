@@ -9,7 +9,7 @@ const defaults = {
   officialService: "openai",
   providerOrder: [],
   quotaAccounts: {},
-  conversations: { harness: "codex", pinned: false, scope: "projects", project: "" },
+  conversations: { harness: "codex", pinned: false, scope: "projects", project: "", columns: { projects: 235, threads: 205 } },
   usage: { client: "all", range: "month", tab: "activity", group: "client" },
 };
 class Preferences {
@@ -31,6 +31,11 @@ class Preferences {
       if (typeof input.conversations.pinned === "boolean") next.conversations.pinned = input.conversations.pinned;
       if (["native", "projects"].includes(input.conversations.scope)) next.conversations.scope = input.conversations.scope;
       if (typeof input.conversations.project === "string" && (/^[a-f0-9]{64}$/.test(input.conversations.project) || input.conversations.project === 'unassigned')) next.conversations.project = input.conversations.project;
+      if (input.conversations.columns && typeof input.conversations.columns === 'object') {
+        next.conversations.columns = { ...defaults.conversations.columns, ...next.conversations.columns };
+        for (const key of ['projects', 'threads']) if (Number.isInteger(input.conversations.columns[key]) && input.conversations.columns[key] >= 170 && input.conversations.columns[key] <= 520)
+          next.conversations.columns[key] = input.conversations.columns[key];
+      }
     }
     if (input.usage && typeof input.usage === "object") {
       next.usage = { ...defaults.usage, ...next.usage };

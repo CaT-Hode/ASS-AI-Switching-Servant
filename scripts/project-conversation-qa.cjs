@@ -20,6 +20,7 @@ const jwt = (v) => 'header.' + Buffer.from(JSON.stringify(v)).toString('base64ur
 write(path.join(dirs.codex, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: jwt({ exp: 2100000000, sub: 'fixture' }), id_token: jwt({ email: 'fixture@example.test' }), refresh_token: 'synthetic-current', account_id: 'fixture' } }));
 write(path.join(dirs.claude, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'synthetic-current', refreshToken: 'synthetic-current-refresh', expiresAt: 2100000000000 } }));
 let app, page; const errors = [];
+let savedColumns;
 const call = (name, ...args) => page.evaluate(([name, args]) => window.ass.call(name, ...args), [name, args]);
 async function start() {
   const env = { ...process.env, ASS_TEST_DATA: data, ASS_TEST_CODEX: dirs.codex, ASS_TEST_PORT: '25849' }; delete env.ELECTRON_RUN_AS_NODE;
@@ -47,6 +48,18 @@ async function launch(target) {
     await page.getByRole('switch', { name: '项目同步', exact: true }).waitFor();
     assert.equal(await page.getByRole('switch', { name: '项目同步' }).getAttribute('aria-checked'), 'false');
     const discovered = await call('project-conversations-list'); assert.deepEqual(new Set(discovered.items[0].harnesses), new Set(codecs.HARNESSES));
+    for (const [label, delta] of [['调整项目栏宽度', 65], ['调整对话栏宽度', 55]]) {
+      const separator = page.getByRole('separator', { name: label }), box = await separator.boundingBox();
+      const original = Number(await separator.getAttribute('aria-valuenow'));
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + delta, box.y + box.height / 2, { steps: 12 });
+      assert.equal(Number(await separator.getAttribute('aria-valuenow')), original + delta); await page.mouse.up();
+    }
+    await page.getByRole('separator', { name: '调整对话栏宽度' }).press('ArrowRight');
+    await page.waitForFunction(() => document.querySelector('[data-column="threads"]').getAttribute('aria-valuenow') === '270');
+    savedColumns = (await call('snapshot')).preferences.conversations.columns; assert.deepEqual(savedColumns, { projects: 300, threads: 270 });
+    await call('ui-preferences', { theme: 'dark' });
+    await page.screenshot({ path: path.join(out, 'conversation-columns-dark.png'), animations: 'disabled' });
     await page.getByRole('switch', { name: '项目同步', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="项目同步"]').getAttribute('aria-checked') === 'true');
     await page.locator('.project-shared-threads button').filter({ hasText: 'Codex' }).click(); await page.getByText('实现方向、已有结论和项目上下文会随客户端切换保留。', { exact: true }).waitFor();
@@ -84,6 +97,7 @@ async function launch(target) {
     await page.screenshot({ path: path.join(out, 'project-sync-compact.png'), animations: 'disabled' });
     assert.equal(await page.locator('vite-error-overlay').count(), 0);
     assert.equal((await call('project-conversations-threads', project.id)).branches, 1);
+    assert.deepEqual((await call('snapshot')).preferences.conversations.columns, savedColumns);
     assert.deepEqual(errors, []); await close(); await start(); await page.getByRole('switch', { name: '项目同步', exact: true }).waitFor();
     assert.equal((await call('project-conversations-threads', project.id)).branches, 1);
     await page.getByRole('switch', { name: '项目同步' }).click();
@@ -102,6 +116,24 @@ async function launch(target) {
     await call('snapshot');
     await page.waitForFunction(() => document.querySelectorAll('.conversation-tabs button').length === 2);
     assert.deepEqual(await page.locator('.conversation-tabs button').allTextContents(), ['Codex', 'Claude Code']);
-    console.log(JSON.stringify({ ok: true, data, browser: 'Browser plugin not available; Electron Playwright', viewport: '1520x980, 1280x900, 1100x900 desktop', checks: ['five native sources', 'opt-in project sync', 'current credential targets', 'hardlink handoff', 'CC + pi divergent branches', 'cancel resume', 'persistent project settings and history', 'light/dark rendered UI', 'no clipping or horizontal overflow', 'no renderer/console errors or framework overlay'], nativeInference: false }));
+    await page.locator('.conversation-tabs').getByRole('button', { name: 'Codex', exact: true }).click();
+    const native = (await call('project-conversations-records', project.id, { harness: 'codex' })).items[0];
+    const original = fs.readFileSync(native.file), row = page.locator(`[data-record-id="${native.id}"]`);
+    const trashStyle = await row.locator('.conversation-delete').evaluate((el) => { const s = getComputedStyle(el); return { width: s.width, border: s.borderWidth, fill: s.backgroundColor }; });
+    assert.deepEqual(trashStyle, { width: '22px', border: '0px', fill: 'rgba(0, 0, 0, 0)' });
+    await row.hover(); await row.getByRole('button', { name: '删除对话 ' + native.title, exact: true }).click();
+    await page.getByRole('dialog', { name: '删除本地记录确认' }).getByRole('button', { name: '取消', exact: true }).click(); assert.deepEqual(fs.readFileSync(native.file), original);
+    await row.getByRole('button', { name: '删除对话 ' + native.title, exact: true }).click();
+    await page.screenshot({ path: path.join(out, 'conversation-delete-confirm.png'), animations: 'disabled' });
+    await page.getByRole('dialog', { name: '删除本地记录确认' }).getByRole('button', { name: '删除', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: '已删除' }).waitFor(); assert.ok(!fs.existsSync(native.file));
+    await page.getByRole('button', { name: '已删除记录', exact: true }).click();
+    await page.getByRole('dialog', { name: '已删除记录' }).getByRole('button', { name: '恢复', exact: true }).click();
+    await page.getByRole('dialog', { name: '已删除记录' }).getByText('暂无已删除记录').waitFor(); assert.deepEqual(fs.readFileSync(native.file), original);
+    await page.getByRole('button', { name: '关闭已删除记录' }).click();
+    await call('ui-preferences', { theme: 'light' });
+    await page.screenshot({ path: path.join(out, 'conversation-columns-light.png'), animations: 'disabled' });
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ ok: true, data, browser: 'Browser plugin not available; Electron Playwright', viewport: '1520x980, 1280x900, 1100x900 desktop', checks: ['five native sources', 'opt-in project sync', 'current credential targets', 'hardlink handoff', 'CC + pi divergent branches', 'cancel resume', 'drag + keyboard resize with restart persistence', '22px borderless delete control', 'native delete cancel/confirm + encrypted recovery', 'persistent project settings and history', 'light/dark rendered UI', 'no clipping or horizontal overflow', 'no renderer/console errors or framework overlay'], nativeInference: false }));
   } finally { await close(); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });
