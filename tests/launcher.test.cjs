@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { archiveBuffer } = require("../scripts/desktop-metadata-qa.cjs");
 const {
   resolveLauncher,
   discoverLaunchers,
@@ -182,14 +183,14 @@ test("OpenCode desktop detection skips stale paths and does not confuse standalo
   assert.equal(discoverLaunchers("opencode", env).length, 1);
 });
 
-test("OpenCode ASAR virtual-directory metadata is recognized in Electron as well as Node", (t) => {
+test("OpenCode loose app.asar directory metadata is recognized", (t) => {
   const { root, write, env } = fixture(t);
   write("desktop/OpenCode.exe");
   write("desktop/resources/app.asar/package.json", JSON.stringify({name:"@opencode-ai/desktop"}));
   assert.equal(resolveLauncher("opencode", path.join(root,"desktop/OpenCode.exe"),env).kind,"desktop");
 });
 
-test("Electron virtual ASAR keeps opaque Claude product names out of CLI discovery", (t) => {
+test("loose app.asar keeps opaque Claude product names out of CLI discovery", (t) => {
   const { root, write, env } = fixture(t);
   write("runtime/claude.cmd");
   const relative = "programs/WindowsApps/Claude_2.9939.2.0_x64__pzs8sxrjxfjjc/app";
@@ -228,4 +229,43 @@ test("a renamed or metadata-less Antigravity EXE is not treated as a desktop or 
   write("other/resources/app/package.json", "null");
   write("other/resources/app/product.json", "null");
   assert.equal(resolveLauncher("antigravity", path.join(root, "other/Antigravity.exe"), env).kind, "missing");
+});
+
+test("packed desktop archives retain launcher recognition in plain Node", (t) => {
+  const { root, write, env } = fixture(t);
+  for (const [harness, executable, manifest] of [
+    ["opencode", "OpenCode.exe", { name: "@opencode-ai/desktop" }],
+    ["claude", "claude.exe", { name: "opaque-desktop-shell" }],
+    ["zcode", "ZCode Preview.exe", { name: "@zcode/desktop" }],
+    ["antigravity", "Antigravity.exe", { name: "antigravity", productName: "Antigravity", version: "2.16.0" }],
+  ]) {
+    const pkg = Buffer.from(JSON.stringify(manifest));
+    write(harness + "/" + executable);
+    write(harness + "/resources/app.asar", archiveBuffer({ files: { "package.json": { size: pkg.length, offset: "0" } } }, pkg));
+    const selected = path.join(root, harness, executable);
+    assert.equal(resolveLauncher(harness, selected, env).kind, "desktop");
+    assert.equal(resolveLauncher(harness, path.dirname(selected), env).kind, "desktop");
+    assert.equal(discoverLaunchers(harness, env, [selected, selected]).length, 1);
+    if (harness === "antigravity") assert.equal(resolveLauncher(harness, selected, env).version, "2.16.0");
+  }
+});
+
+test("packed metadata must identify Antigravity; unpackaged OpenCode still resolves", (t) => {
+  const { root, write, env } = fixture(t);
+  write("wrong/Antigravity.exe");
+  const pkg = Buffer.from('{"name":"another-app","productName":"Antigravity"}');
+  write("wrong/resources/app.asar", archiveBuffer({ files: { "package.json": { size: pkg.length, offset: "0" } } }, pkg));
+  assert.equal(resolveLauncher("antigravity", path.join(root, "wrong/Antigravity.exe"), env).kind, "missing");
+  write("loose/OpenCode.exe");
+  write("loose/resources/app/package.json", '{"name":"@opencode-ai/desktop"}');
+  assert.equal(resolveLauncher("opencode", path.join(root, "loose/OpenCode.exe"), env).kind, "desktop");
+});
+
+test("CLI package detection retains support for linked package directories", (t) => {
+  const { root, write, env } = fixture(t);
+  write("actual/package.json", '{"name":"@deepseek-ai/dsh","bin":{"dsh":"bin.js"}}');
+  write("actual/bin.js");
+  const linked = path.join(root, "linked");
+  fs.symlinkSync(path.join(root, "actual"), linked, process.platform === "win32" ? "junction" : "dir");
+  assert.equal(resolveLauncher("dsh", linked, env).kind, "npm-package");
 });

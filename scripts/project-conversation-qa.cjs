@@ -13,7 +13,7 @@ for (const h of ['codex', 'claude', 'pi', 'dsh']) {
 fs.mkdirSync(dirs.opencode, { recursive: true });
 const { DatabaseSync } = require('node:sqlite'), db = new DatabaseSync(path.join(dirs.opencode, 'opencode.db'));
 db.exec('CREATE TABLE session(id TEXT PRIMARY KEY,title TEXT,directory TEXT,time_created INTEGER,time_updated INTEGER,parent_id TEXT,version TEXT,project_id TEXT,slug TEXT); CREATE TABLE message(id TEXT PRIMARY KEY,session_id TEXT,time_created INTEGER,time_updated INTEGER,data TEXT); CREATE TABLE part(id TEXT PRIMARY KEY,message_id TEXT,session_id TEXT,time_created INTEGER,time_updated INTEGER,data TEXT)');
-const bundle = JSON.parse(codecs.encode('opencode', { id: 'ses_fixture', cwd, title: 'OpenCode 历史', messages, createdAt: timestamp }).bytes);
+const bundle = JSON.parse(codecs.encode('opencode', { id: 'ses_fixture', cwd, title: 'New session - 2026-08-21T08:55:24.752Z', messages, createdAt: timestamp }).bytes);
 db.prepare('INSERT INTO session VALUES(?,?,?,?,?,NULL,?,?,?)').run(bundle.info.id, bundle.info.title, cwd, Date.parse(timestamp), Date.parse(timestamp), '1.0', 'global', 'test');
 for (const m of bundle.messages) { db.prepare('INSERT INTO message VALUES(?,?,?,?,?)').run(m.info.id, bundle.info.id, m.info.time.created, m.info.time.created, JSON.stringify(m.info)); for (const p of m.parts) db.prepare('INSERT INTO part VALUES(?,?,?,?,?,?)').run(p.id, m.info.id, bundle.info.id, m.info.time.created, m.info.time.created, JSON.stringify(p)); } db.close();
 const jwt = (v) => 'header.' + Buffer.from(JSON.stringify(v)).toString('base64url') + '.signature';
@@ -25,7 +25,7 @@ const call = (name, ...args) => page.evaluate(([name, args]) => window.ass.call(
 async function start() {
   const env = { ...process.env, ASS_TEST_DATA: data, ASS_TEST_CODEX: dirs.codex, ASS_TEST_PORT: '25849' }; delete env.ELECTRON_RUN_AS_NODE;
   app = await electron.launch({ ...(process.env.ASS_QA_EXE ? { executablePath: process.env.ASS_QA_EXE } : {}), args: process.env.ASS_QA_EXE ? ['--qa'] : [root, '--qa'], env });
-  page = await app.firstWindow(); page.setDefaultTimeout(20000); page.on('pageerror', (e) => errors.push(e.message));
+  page = await app.firstWindow(); page.setDefaultTimeout(20000); await page.emulateMedia({ reducedMotion: 'no-preference' }); page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) errors.push(m.text()); });
   await page.waitForSelector('h1'); await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0].setSize(1520, 980); global.assTest.setFetch(async () => new Response('{}', { status: 403 }));
@@ -48,6 +48,46 @@ async function launch(target) {
     await page.getByRole('switch', { name: '项目同步', exact: true }).waitFor();
     assert.equal(await page.getByRole('switch', { name: '项目同步' }).getAttribute('aria-checked'), 'false');
     const discovered = await call('project-conversations-list'); assert.deepEqual(new Set(discovered.items[0].harnesses), new Set(codecs.HARNESSES));
+    // The former absolute top:34px and inherited nav SVG size displaced the
+    // trash control on wrapped titles. Test the same two-line OpenCode title.
+    await page.locator('.conversation-tabs').getByRole('button', { name: 'OpenCode', exact: true }).click();
+    const oc = (await call('project-conversations-records', discovered.items[0].id, { harness: 'opencode' })).items[0];
+    const ocRow = page.locator(`[data-record-id="${oc.id}"]`), ocTrash = ocRow.locator('.conversation-delete');
+    await ocTrash.waitFor();
+    const geometry = await ocRow.evaluate((row) => {
+      const button = row.querySelector('.conversation-delete'), icon = button.querySelector('svg'), main = row.querySelector('.project-thread-main');
+      const r = row.getBoundingClientRect(), b = button.getBoundingClientRect(), s = icon.getBoundingClientRect(), m = main.getBoundingClientRect();
+      return { width: b.width, height: b.height, iconWidth: s.width, iconHeight: s.height,
+        centerDifference: Math.abs((b.top + b.bottom - r.top - r.bottom) / 2), horizontalDifference: Math.abs((s.left + s.right - b.left - b.right) / 2),
+        verticalDifference: Math.abs((s.top + s.bottom - b.top - b.bottom) / 2), reserved: m.right <= b.left };
+    });
+    assert.deepEqual({ ...geometry, centerDifference: Math.round(geometry.centerDifference), horizontalDifference: Math.round(geometry.horizontalDifference), verticalDifference: Math.round(geometry.verticalDifference) },
+      { width: 22, height: 22, iconWidth: 14, iconHeight: 14, centerDifference: 0, horizontalDifference: 0, verticalDifference: 0, reserved: true });
+    await ocTrash.hover();
+    await page.waitForFunction(() => document.querySelector('.conversation-delete svg[data-icon-phase="hover"]'));
+    const hoverFrames = await ocTrash.locator('[data-part="lid"]').evaluate(async (node) => {
+      const frames = []; for (let i = 0; i < 14; i++) { await new Promise(requestAnimationFrame); frames.push(getComputedStyle(node).transform); }
+      return new Set(frames).size;
+    });
+    assert.ok(hoverFrames > 1, 'trash lid animates without moving its button');
+    await page.screenshot({ path: path.join(out, 'conversation-trash-hover.png') });
+    await page.mouse.down();
+    assert.equal(await ocTrash.locator('svg').getAttribute('data-icon-phase'), 'press');
+    await page.mouse.up(); await page.getByRole('dialog', { name: '删除本地记录确认' }).waitFor();
+    await page.getByRole('dialog', { name: '删除本地记录确认' }).getByRole('button', { name: '取消', exact: true }).click();
+    // Inject only a synthetic guard failure; no native record is removed.
+    await app.evaluate(() => { const p = global.assTest.projectConversations; global.assTest.previousDeleteGuard = p.assertDeletionIdle; p.assertDeletionIdle = async () => { throw Error('测试：请先关闭 OpenCode，再删除本地记录。'); }; });
+    await ocTrash.click(); await page.getByRole('dialog', { name: '删除本地记录确认' }).getByRole('button', { name: '删除', exact: true }).click();
+    const failedToast = page.locator('.toast.error'); await failedToast.getByText('测试：请先关闭 OpenCode，再删除本地记录。', { exact: true }).waitFor();
+    assert.equal(await page.locator('.project-conversation-page .error-box').count(), 0);
+    assert.equal(await ocRow.count(), 1);
+    await page.screenshot({ path: path.join(out, 'conversation-delete-failure-toast.png'), animations: 'disabled' });
+    const toastPosition = await failedToast.evaluate((el) => { const r = el.getBoundingClientRect(), s = getComputedStyle(el); return { right: document.documentElement.clientWidth - r.right, bottom: document.documentElement.clientHeight - r.bottom, cssRight: s.right, transform: s.transform, margin: s.margin, translate: s.translate, position: s.position }; });
+    assert.equal(toastPosition.position, 'fixed'); assert.equal(toastPosition.cssRight, '25px');
+    assert.ok(toastPosition.right >= 20 && toastPosition.right < 50 && toastPosition.bottom < 35, 'failed deletion uses the bottom-right notification: ' + JSON.stringify(toastPosition));
+    await page.getByRole('button', { name: '关闭通知', exact: true }).click();
+    await app.evaluate(() => { const p = global.assTest.projectConversations; p.assertDeletionIdle = global.assTest.previousDeleteGuard; delete global.assTest.previousDeleteGuard; });
+    await page.locator('.conversation-tabs').getByRole('button', { name: 'Codex', exact: true }).click();
     for (const [label, delta] of [['调整项目栏宽度', 65], ['调整对话栏宽度', 55]]) {
       const separator = page.getByRole('separator', { name: label }), box = await separator.boundingBox();
       const original = Number(await separator.getAttribute('aria-valuenow'));
@@ -59,6 +99,7 @@ async function launch(target) {
     await page.waitForFunction(() => document.querySelector('[data-column="threads"]').getAttribute('aria-valuenow') === '270');
     savedColumns = (await call('snapshot')).preferences.conversations.columns; assert.deepEqual(savedColumns, { projects: 300, threads: 270 });
     await call('ui-preferences', { theme: 'dark' });
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await page.screenshot({ path: path.join(out, 'conversation-columns-dark.png'), animations: 'disabled' });
     await page.getByRole('switch', { name: '项目同步', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="项目同步"]').getAttribute('aria-checked') === 'true');
@@ -119,6 +160,11 @@ async function launch(target) {
     await page.locator('.conversation-tabs').getByRole('button', { name: 'Codex', exact: true }).click();
     const native = (await call('project-conversations-records', project.id, { harness: 'codex' })).items[0];
     const original = fs.readFileSync(native.file), row = page.locator(`[data-record-id="${native.id}"]`);
+    await row.waitFor();
+    assert.equal(await row.locator('.conversation-row-actions').evaluate((node) => {
+      const r = node.getBoundingClientRect(), card = node.parentElement.getBoundingClientRect();
+      return Math.abs((r.top + r.bottom - card.top - card.bottom) / 2) <= 1;
+    }), true, 'pin and trash share a centered fixed-width rail');
     const trashStyle = await row.locator('.conversation-delete').evaluate((el) => { const s = getComputedStyle(el); return { width: s.width, border: s.borderWidth, fill: s.backgroundColor }; });
     assert.deepEqual(trashStyle, { width: '22px', border: '0px', fill: 'rgba(0, 0, 0, 0)' });
     await row.hover(); await row.getByRole('button', { name: '删除对话 ' + native.title, exact: true }).click();
@@ -132,8 +178,9 @@ async function launch(target) {
     await page.getByRole('dialog', { name: '已删除记录' }).getByText('暂无已删除记录').waitFor(); assert.deepEqual(fs.readFileSync(native.file), original);
     await page.getByRole('button', { name: '关闭已删除记录' }).click();
     await call('ui-preferences', { theme: 'light' });
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
     await page.screenshot({ path: path.join(out, 'conversation-columns-light.png'), animations: 'disabled' });
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, data, browser: 'Browser plugin not available; Electron Playwright', viewport: '1520x980, 1280x900, 1100x900 desktop', checks: ['five native sources', 'opt-in project sync', 'current credential targets', 'hardlink handoff', 'CC + pi divergent branches', 'cancel resume', 'drag + keyboard resize with restart persistence', '22px borderless delete control', 'native delete cancel/confirm + encrypted recovery', 'persistent project settings and history', 'light/dark rendered UI', 'no clipping or horizontal overflow', 'no renderer/console errors or framework overlay'], nativeInference: false }));
+    console.log(JSON.stringify({ ok: true, data, browser: 'Browser plugin not available; Electron Playwright', viewport: '1520x980, 1280x900, 1100x900 desktop', checks: ['five native sources', 'opt-in project sync', 'current credential targets', 'hardlink handoff', 'CC + pi divergent branches', 'cancel resume', 'drag + keyboard resize with restart persistence', '22px borderless delete control + 14px centered SVG', 'trash hover/press animation on wrapped titles', 'bottom-right failed deletion toast without inline error', 'native delete cancel/confirm + encrypted recovery', 'persistent project settings and history', 'light/dark rendered UI', 'no clipping or horizontal overflow', 'no renderer/console errors or framework overlay'], nativeInference: false }));
   } finally { await close(); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });

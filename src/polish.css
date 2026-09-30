@@ -823,6 +823,7 @@ input[readonly]:not([type="range"]) {
 }
 .toast {
   left: auto;
+  z-index: 1100;
   right: 25px;
   bottom: 24px;
   transform: none;

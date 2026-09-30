@@ -1,6 +1,15 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path");
+test('conversation trash controls retain semantic animation and use a centered action rail', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/project-conversations.jsx'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '../src/conversations.css'), 'utf8');
+  assert.ok(!source.includes('data-motion-icon={null}'), 'trash hover and press must not be disabled');
+  assert.match(source, /conversation-row-actions/);
+  assert.ok(!css.includes('top: 34px'));
+  assert.match(css, /conversation-row-actions \.icon-button > svg[^}]*width: 14px; height: 14px/);
+  assert.match(source, /destructive && onNotify\) onNotify\(errorText\(e\), true\)/);
+});
 test("all app icons have semantic motion tracks targeting existing named SVG parts", async () => {
   const { iconArt } = await import("../src/icon-art.mjs");
   const { iconMotion } = await import("../src/icon-motion-recipes.mjs");

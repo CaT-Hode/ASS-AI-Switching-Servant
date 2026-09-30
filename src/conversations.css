@@ -123,17 +123,21 @@
 .conversation-column-resizer::after { content: ''; position: absolute; top: 16px; bottom: 16px; left: 4px; width: 2px; border-radius: 4px; background: transparent; transition: background-color 140ms; }
 .conversation-column-resizer:hover::after, .conversation-column-resizer:focus-visible::after, [data-resizing] .conversation-column-resizer::after { background: var(--accent); }
 .project-conversation-page[data-resizing] { user-select: none; cursor: col-resize; }
-.conversation-delete.icon-button { position: absolute; right: 5px; top: 7px; width: 22px; height: 22px; min-width: 22px; min-height: 22px; padding: 4px; border: 0; border-radius: 5px; box-shadow: none; background: transparent; opacity: 0; color: var(--muted); }
-.project-thread-row .conversation-delete { top: 34px; }
+.project-sync-layout :is(.conversation-row, .project-thread-row) { display: grid; grid-template-columns: minmax(0, 1fr) 22px; column-gap: 4px; align-items: center; padding-right: 8px; }
+.project-sync-layout .conversation-row-main { min-width: 0; padding-right: 0; }
+.project-sync-layout .project-thread-main { min-width: 0; padding-right: 0; }
+.conversation-row-actions { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding-block: 8px; }
+.project-sync-layout .conversation-row-actions .icon-button { position: static; box-sizing: border-box; display: grid; place-items: center; width: 22px; height: 22px; min-width: 22px; min-height: 22px; padding: 4px; border: 0; border-radius: 5px; box-shadow: none; background: transparent; opacity: 0; color: var(--muted); transition: color 140ms, opacity 140ms; }
+.project-sync-layout .conversation-row-actions .icon-button > svg { display: block; width: 14px; height: 14px; stroke-width: 2; }
 .project-conversation-page .icon-button { flex-shrink: 0; }
-.project-thread-row .conversation-pin { width: 22px; height: 22px; min-width: 22px; min-height: 22px; border: 0; padding: 4px; background: transparent; box-shadow: none; right: 5px; top: 7px; }
+.project-sync-layout :is(.conversation-row, .project-thread-row):is(:hover, :focus-within, .selected) .conversation-row-actions .icon-button, .project-sync-layout .conversation-row-actions .conversation-pin.pinned { opacity: 1; }
+.project-sync-layout .conversation-row-actions .conversation-pin.pinned { color: var(--accent); }
+.project-sync-layout .conversation-row-actions .conversation-delete:hover:not(:disabled) { color: light-dark(#be3c42, #ff9298); }
 .project-conversation-page :is(.project-sync-toolbar, .project-resume, .conversation-detail-heading, .project-thread-pages) button { flex-shrink: 0; white-space: nowrap; }
 .project-conversation-page .conversation-tabs button { white-space: nowrap; flex-shrink: 0; }
 .project-resume .conversation-current-account { max-width: 100%; }
 .project-resume .conversation-resume-control { max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }
 .project-resume .conversation-current-account strong { max-width: min(290px, 100%); }
-:is(.conversation-row, .project-thread-row):is(:hover, :focus-within, .selected) .conversation-delete { opacity: 1; }
-.conversation-delete:hover { color: light-dark(#be3c42, #ff9298); background: light-dark(#fff0f1, #4c303b); }
 .conversation-delete-confirm { position: fixed; z-index: 1000; width: 290px; padding: 15px; border: 1px solid var(--border); border-radius: 13px; background: light-dark(#fff, #293647); color: var(--ink); box-shadow: 0 12px 45px #0003; }
 .conversation-delete-confirm strong { display: block; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .conversation-delete-confirm p { font-size: 12px; line-height: 1.7; padding: 9px 0 13px; color: var(--muted); }

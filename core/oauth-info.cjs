@@ -1,7 +1,7 @@
 // Official read-only account endpoints. This module never refreshes/replaces a
 // grant, redeems credits, creates API keys, or changes the selected native user.
-const fs = require("node:fs"), path = require("node:path");
-const { safePath } = require("./native-fields.cjs");
+const path = require("node:path");
+const { readDesktopJson } = require("./desktop-metadata.cjs");
 const { subscriptionProvider } = require("./subscription-usage.cjs");
 const zcodeInfo = require("./zcode-account-info.cjs");
 const KIMI_BASES = new Set(["https://api.kimi.com/coding/v1", "https://api.kimi.ai/coding/v1"]);
@@ -75,30 +75,21 @@ function startPlanEntitlement(payload, { now = Date.now(), responseTime } = {}) 
   return models.length ? { status: "available", models } : { status: "available" };
 }
 function zcodeVersion(manager) {
-  // Electron transparently reads ASAR paths. Do not run an executable to obtain
-  // its version or invent an app_version to change the server's entitlement path.
+  // Bypass Electron's cached ASAR handles, including during path checks. Do not
+  // run an executable or invent an app_version for the entitlement request.
   const launcher = manager.launcher("zcode") || {};
   if (version(launcher.version)) return launcher.version;
   const exe = launcher.desktopExecutable;
   if (!exe) return null;
   for (const relative of ["resources/app.asar/out/metadata/build-meta.json", "resources/app/out/metadata/build-meta.json"]) {
     const file = path.join(path.dirname(exe), relative);
-    try {
-      safePath(file);
-      if (fs.statSync(file).size <= 128 * 1024) {
-        const v = JSON.parse(fs.readFileSync(file, "utf8")).appVersion;
-        if (version(v)) return v;
-      }
-    } catch {}
+    const v = readDesktopJson(file, 128 * 1024).appVersion;
+    if (version(v)) return v;
   }
   for (const relative of ["resources/app.asar/package.json", "resources/app/package.json"]) {
     const file = path.join(path.dirname(exe), relative);
-    try {
-      safePath(file);
-      if (fs.statSync(file).size > 128 * 1024) continue;
-      const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
-      if (manifest.name === "@zcode/desktop" && version(manifest.version)) return manifest.version;
-    } catch {}
+    const manifest = readDesktopJson(file, 128 * 1024);
+    if (manifest.name === "@zcode/desktop" && version(manifest.version)) return manifest.version;
   }
   return null;
 }

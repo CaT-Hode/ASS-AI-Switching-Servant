@@ -654,13 +654,13 @@ export function Clients({
                     <div>
                       <strong>{s.label}</strong>
                       <small>
-                        {s.provider} ·{" "}
-                        {s.expired ? "需客户端刷新" : "本地授权快照"}
+                        {!s.compatible && s.reason ? s.reason : s.provider + (s.expired ? ' · 需客户端刷新' : '')}
                       </small>
                     </div>
                     <button
                       className="button"
                       disabled={!s.compatible || !!busy}
+                      title={!s.compatible ? s.reason : s.warning}
                       onClick={() =>
                         act("pi-import", () =>
                           api.call("pi-import-oauth", s.id, s.label + " → pi"),

@@ -514,6 +514,7 @@ function App() {
         ) : view === "conversations" ? (
           <Suspense fallback={<div className="empty"><Loader2 className="spin" /><p>读取对话管理…</p></div>}>
             <Conversations state={state} initialHarness={conversationTarget}
+              onNotify={(message, error = false) => setToast({ message, error })}
               onClient={(id) => { setClientTarget(id); setView("clients"); }} />
           </Suspense>
         ) : view === "updates" ? (
@@ -537,7 +538,7 @@ function App() {
         />
       )}
       {toast && (
-        <div role="status" className={"toast " + (toast.error ? "error" : "")}>
+        <div role="status" aria-live={toast.error ? "assertive" : "polite"} aria-atomic="true" className={"toast " + (toast.error ? "error" : "")}>
           {toast.error ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
           <span>{toast.message}</span>
           <button onClick={() => setToast(null)} aria-label="关闭通知">

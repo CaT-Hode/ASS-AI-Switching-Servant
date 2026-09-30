@@ -1,9 +1,12 @@
-const fs = require("node:fs");
+// Detection probes external installations; even stat(app.asar) must bypass
+// Electron's native ASAR cache so ASS cannot hold an updater's archive open.
+const fs = process.versions.electron ? require("original-fs") : require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { execFileSync } = require("node:child_process");
 const { createRequire } = require("node:module");
 const { pathToFileURL } = require("node:url");
+const { readDesktopJson } = require("./desktop-metadata.cjs");
 
 const PACKAGES = {
   codex: ["@openai/codex"],
@@ -48,8 +51,8 @@ function json(file) {
 function hasElectronArchive(directory) {
   const archive = path.join(directory, "resources", "app.asar");
   const info = stat(archive);
-  // Electron exposes ASAR as a virtual directory. Product package names are
-  // private implementation details (Claude's is not necessarily "claude").
+  // original-fs sees a real archive file (or a real development directory).
+  // Product package names are private details (Claude's need not be "claude").
   return !!(info?.isFile() || (info?.isDirectory() && stat(path.join(archive, "package.json"))?.isFile()));
 }
 function findExecutable(name, env = process.env) {
@@ -115,8 +118,8 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
     const desktop = info.isDirectory() ? path.join(location, "claude.exe") : location;
     if (/^claude\.exe$/i.test(path.basename(desktop)) && stat(desktop)?.isFile() &&
         (hasElectronArchive(path.dirname(desktop)) ||
-          /claude/i.test(json(path.join(path.dirname(desktop), "resources/app.asar/package.json")).name || "") ||
-          /claude/i.test(json(path.join(path.dirname(desktop), "resources/app/package.json")).name || "")))
+          /claude/i.test(readDesktopJson(path.join(path.dirname(desktop), "resources/app.asar/package.json")).name || "") ||
+          /claude/i.test(readDesktopJson(path.join(path.dirname(desktop), "resources/app/package.json")).name || "")))
       return { ...fail("Claude 桌面版 · 通过 Gateway 接入；终端启动请使用 Claude Code CLI"), installed: true,
         kind: "desktop", desktopExecutable: desktop };
   }
@@ -126,15 +129,15 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
       if (!stat(desktop)?.isFile() || !/^antigravity(?: ide)?\.exe$/i.test(path.basename(desktop))) continue;
       const root = path.dirname(desktop);
       // A renamed EXE or an arbitrary Electron app is not evidence of an
-      // Antigravity install. Electron reads ASAR paths without extracting them.
-      const manifest = ["resources/app.asar/package.json", "resources/app/package.json"].map((f) => json(path.join(root, f)))
+      // Antigravity install. Read bounded metadata without Electron's ASAR cache.
+      const manifest = ["resources/app.asar/package.json", "resources/app/package.json"].map((f) => readDesktopJson(path.join(root, f)))
         .find((p) => p.name === "antigravity" && p.productName === "Antigravity");
-      const product = json(path.join(root, "resources/app/product.json"));
+      const product = readDesktopJson(path.join(root, "resources/app/product.json"));
       const ide = [product.nameShort, product.nameLong].some((name) => ["Antigravity", "Antigravity IDE"].includes(name)) &&
         ["antigravity", "antigravity-ide"].includes(product.applicationName);
       if (!manifest && !ide) return fail("未找到 Antigravity 产品元数据，请选择实际安装目录");
       const variant = manifest ? "desktop" : "ide";
-      const version = manifest?.version || json(path.join(root, "resources/app/package.json")).version;
+      const version = manifest?.version || readDesktopJson(path.join(root, "resources/app/package.json")).version;
       return { ...fail(variant === "ide" ? "Antigravity IDE · 原生账户" : "Antigravity 2.0 · 原生账户"),
         installed: true, kind: "desktop", desktopExecutable: desktop, nativeVariant: variant,
         ...(typeof version === "string" && /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version) ? { version } : {}) };
@@ -145,8 +148,8 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
       .find((file) => stat(file)?.isFile()) : location;
     if (desktop && /^zcode(?: preview)?\.exe$/i.test(path.basename(desktop)) &&
         (hasElectronArchive(path.dirname(desktop)) ||
-          json(path.join(path.dirname(desktop), "resources/app.asar/package.json")).name === "@zcode/desktop" ||
-          json(path.join(path.dirname(desktop), "resources/app/package.json")).name === "@zcode/desktop"))
+          readDesktopJson(path.join(path.dirname(desktop), "resources/app.asar/package.json")).name === "@zcode/desktop" ||
+          readDesktopJson(path.join(path.dirname(desktop), "resources/app/package.json")).name === "@zcode/desktop"))
       return { ...fail("已安装 ZCode Desktop · 使用原生账户与配置"), installed: true, kind: "desktop", desktopExecutable: desktop };
   }
   if (harness === "opencode") {
@@ -157,9 +160,9 @@ function resolveLauncher(harness, selectedPath, env = process.env) {
       path.basename(desktop).toLowerCase() === "opencode.exe" &&
       stat(desktop)?.isFile() &&
       (hasElectronArchive(path.dirname(desktop)) ||
-        // Electron presents ASAR as a directory; plain Node presents a file.
-        json(path.join(path.dirname(desktop), "resources", "app.asar", "package.json")).name === "@opencode-ai/desktop" ||
-        json(path.join(path.dirname(desktop), "resources", "app", "package.json")).name === "@opencode-ai/desktop")
+        // Both packed ASAR and loose desktop metadata are supported.
+        readDesktopJson(path.join(path.dirname(desktop), "resources", "app.asar", "package.json")).name === "@opencode-ai/desktop" ||
+        readDesktopJson(path.join(path.dirname(desktop), "resources", "app", "package.json")).name === "@opencode-ai/desktop")
     ) {
       const bundledCli = path.join(path.dirname(desktop), "resources", "opencode-cli.exe");
       if (info.isDirectory() && stat(bundledCli)?.isFile())
