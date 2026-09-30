@@ -1,21 +1,42 @@
-// Deterministic format export of the generated logo, not a replacement drawing.
-const { app, nativeImage } = require("electron");
+// Authoritative vector geometry -> transparent PNG -> all Windows icon sizes.
+const { app, BrowserWindow } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
+const { createHash } = require("node:crypto");
 const { iconCrop } = require("./icon-layout.cjs");
+const { SPEC, createGeometry, buildLogoSvg } = require("./brand-geometry.cjs");
+app.commandLine.appendSwitch("force-device-scale-factor", "1");
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
     const root = path.resolve(__dirname, "..");
-    const image = nativeImage.createFromPath(
-      path.join(root, "public/ass-logo.png"),
-    );
-    if (image.isEmpty()) throw new Error("Logo missing");
+    const geometry = createGeometry();
+    const svg = buildLogoSvg(geometry);
+    const renderer = new BrowserWindow({ width: SPEC.size, height: SPEC.size,
+      useContentSize: true, show: false, frame: false, transparent: true,
+      backgroundColor: "#00000000",
+      webPreferences: { offscreen: true, sandbox: true, contextIsolation: true },
+    });
+    let image;
+    try {
+      const html = `<html><head><meta charset="utf-8"><style>html,body{margin:0;width:${SPEC.size}px;height:${SPEC.size}px;background:transparent;overflow:hidden}svg{display:block}</style></head><body>${svg}</body></html>`;
+      await renderer.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+      await renderer.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+      image = await renderer.webContents.capturePage({ x: 0, y: 0, width: SPEC.size, height: SPEC.size });
+    } finally { renderer.destroy(); }
+    if (!image || image.isEmpty()) throw new Error("Vector logo export failed");
+    fs.writeFileSync(path.join(root, "public/ass-logo.svg"), svg);
+    fs.writeFileSync(path.join(root, "public/ass-logo.png"), image.toPNG());
+    fs.mkdirSync(path.join(root, "design/logo"), { recursive: true });
+    fs.writeFileSync(path.join(root, "design/logo/ass-fitted-geometry.json"), JSON.stringify({
+      source: "public/ass-logo-reference.svg", spec: SPEC,
+      roots: geometry.roots.map(({ id, minimum, contour }) => ({ id, minimum, contour })),
+      perimeter: geometry.perimeter, edgeKinds: geometry.facets.map(({ type, id }) => ({ type, id })), hub: geometry.hub,
+    }, null, 2) + "\n");
     const { width, height } = image.getSize();
     const layout = iconCrop(image.toBitmap(), width, height);
     const icon = image.crop(layout.crop);
-    // Retain the source for future edits. Every UI and Windows icon consumes
-    // this same tightly framed export rather than the generator's canvas.
+    // Every UI and Windows icon consumes the same tightly framed SVG export.
     fs.writeFileSync(path.join(root, "public/ass-app-icon.png"), icon.toPNG());
     const sizes = [16, 24, 32, 48, 64, 128, 256];
     const pngs = sizes.map((size) =>
@@ -40,6 +61,20 @@ app
       path.join(root, "assets/ass.ico"),
       Buffer.concat([header, ...pngs]),
     );
+    fs.mkdirSync(path.join(root, "docs/assets"), { recursive: true });
+    const hash = (data) => createHash("sha256").update(data).digest("hex");
+    const files = ["public/ass-logo.svg", "public/ass-logo.png", "public/ass-app-icon.png", "assets/ass.ico"];
+    fs.writeFileSync(path.join(root, "docs/assets/ass-logo-exports.json"), JSON.stringify({
+      version: require(path.join(root, "package.json")).version,
+      reference: "public/ass-logo-reference.svg", spec: SPEC, crop: layout,
+      preservedPetals: geometry.petals.map(({ id, tag }) => ({ id, sha256: hash(tag) })),
+      geometry: { contourEdges: geometry.facets.length,
+        gapEdges: geometry.facets.filter(f => f.type === "gap").length,
+        rootGuides: geometry.roots.map(({ id, contour }) => ({ id, contour })),
+        perimeter: geometry.perimeter, hub: geometry.hub },
+      exports: files.map(file => ({ file, sha256: hash(fs.readFileSync(path.join(root, file))) })),
+      icoSizes: sizes,
+    }, null, 2) + "\n");
     console.log("Exported ASS icon: 16–256px; artwork " + (layout.occupancy * 100).toFixed(1) + "%");
     app.quit();
   })

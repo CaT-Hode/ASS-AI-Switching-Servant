@@ -47,7 +47,7 @@ test('Windows app registration and icon export share the stable packaged ASS bra
   assert.equal(spec.Icon, path.join(root, 'release/v0.2.15/ASS-win32-x64/resources/ass.ico'));
   assert.ok(read('scripts/package.mjs').includes('extraResource: [fileURLToPath(new URL("../assets/ass.ico"'));
   const registration = read('scripts/windows-brand-registration.ps1');
-  assert.ok(registration.includes("Name='IconUri'; Value=$icon") && registration.includes('Value="$exe,0"'));
+  assert.ok(registration.includes("Name='IconUri'; Value=$icon") && registration.includes('Value="$icon,0"'));
   assert.ok(registration.includes('Refusing foreign ASS registry entry') && registration.includes('Export-Clixml'));
   assert.ok(registration.includes('SHChangeNotify') && !registration.includes('Stop-Process'));
 });
