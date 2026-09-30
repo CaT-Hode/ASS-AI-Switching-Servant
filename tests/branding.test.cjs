@@ -41,10 +41,10 @@ test("Pi uses the official compact monochrome mark, black in light and white in 
 });
 test('Windows app registration and icon export share the stable packaged ASS brand', () => {
   const { windowsBrandSpec } = require('../scripts/local-release.cjs');
-  const spec = windowsBrandSpec({ releaseRoot: path.join(root, 'release'), current: path.join(root, 'release/current') });
+  const spec = windowsBrandSpec({ releaseRoot: path.join(root, 'release'), current: path.join(root, 'release/current'), targetPackage: path.join(root, 'release/v0.2.15/ASS-win32-x64') });
   assert.equal(spec.AppId, 'local.ass.desktop');
   assert.equal(spec.Executable, path.join(root, 'release/current/ASS.exe'));
-  assert.equal(spec.Icon, path.join(root, 'release/current/resources/ass.ico'));
+  assert.equal(spec.Icon, path.join(root, 'release/v0.2.15/ASS-win32-x64/resources/ass.ico'));
   assert.ok(read('scripts/package.mjs').includes('extraResource: [fileURLToPath(new URL("../assets/ass.ico"'));
   const registration = read('scripts/windows-brand-registration.ps1');
   assert.ok(registration.includes("Name='IconUri'; Value=$icon") && registration.includes('Value="$exe,0"'));

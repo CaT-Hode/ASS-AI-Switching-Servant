@@ -163,7 +163,9 @@ function shortcutSpec(ctx) {
     path: ctx.shortcut,
     targetPath: target,
     workingDirectory: ctx.current,
-    iconLocation: `${target},0`,
+    // A concrete version changes the icon cache key on every update while the
+    // launch target remains stable. Never read the cached current/EXE icon.
+    iconLocation: `${path.join(ctx.targetPackage, 'resources', 'ass.ico')},0`,
     description: "ASS",
     appUserModelId: "local.ass.desktop",
   };
@@ -195,7 +197,15 @@ function ownedShortcut(ctx, existing) {
   }
   if (existing.arguments || existing.Arguments) throw new Error(`refusing ASS.lnk with custom arguments: ${ctx.shortcut}`);
   const ownedWork = !work || samePath(work, path.dirname(target));
-  const ownedIcon = !icon || samePath(icon.replace(/,\s*-?\d+$/, ""), target);
+  const iconFile = icon.replace(/,\s*-?\d+$/, "");
+  let ownedIcon = !icon || samePath(iconFile, target) || samePath(iconFile, path.join(ctx.current, 'resources', 'ass.ico'));
+  if (!ownedIcon) {
+    const parts = path.relative(ctx.releaseRoot, iconFile).split(path.sep);
+    const version = parts.length === 4 && versionFromEntry(parts[0]);
+    if (version && parts[1] === 'ASS-win32-x64' && parts[2] === 'resources' && parts[3] === 'ass.ico') {
+      assertPlainPath(ctx, iconFile); validatePackage(ctx, path.dirname(path.dirname(iconFile)), version); ownedIcon = true;
+    }
+  }
   if (!ownedWork || !ownedIcon)
     throw new Error(`refusing foreign ASS.lnk: ${ctx.shortcut}`);
   return true;
@@ -432,7 +442,7 @@ function removeCandidate(ctx, item) {
 function shortcutMatches(existing, spec) {
   return Boolean(existing && samePath(existing.targetPath || existing.TargetPath || "", spec.targetPath)
     && samePath(existing.workingDirectory || existing.WorkingDirectory || "", spec.workingDirectory)
-    && samePath(String(existing.iconLocation || existing.IconLocation || "").replace(/,\s*-?\d+$/, ""), spec.targetPath)
+    && samePath(String(existing.iconLocation || existing.IconLocation || "").replace(/,\s*-?\d+$/, ""), spec.iconLocation.replace(/,\s*-?\d+$/, ""))
     && (existing.appUserModelId || existing.AppUserModelId) === spec.appUserModelId
     && !(existing.arguments || existing.Arguments));
 }
@@ -494,7 +504,19 @@ function usage() {
 }
 function windowsBrandSpec(ctx) {
   return { ReleaseRoot: ctx.releaseRoot, Executable: path.join(ctx.current, 'ASS.exe'),
-    Icon: path.join(ctx.current, 'resources', 'ass.ico'), AppId: 'local.ass.desktop' };
+    Icon: path.join(ctx.targetPackage, 'resources', 'ass.ico'), AppId: 'local.ass.desktop' };
+}
+function refreshShortcutIcon(ctx) {
+  // Safe even while ASS routes requests: only replace its already-owned link.
+  assertReleaseRoot(ctx); assertCurrentTarget(ctx);
+  const current = inspectCurrent(ctx);
+  if (!current.exists || !samePath(current.target, ctx.targetPackage)) throw Error('ASS icon refresh must match the installed version');
+  const read = ctx.osApi.shortcutProbe || ((file) => shortcutProbeDefault(file, ctx));
+  ownedShortcut(ctx, read(ctx.shortcut, ctx));
+  const spec = shortcutSpec(ctx); writeShortcut(ctx, spec);
+  if (!shortcutMatches(read(ctx.shortcut, ctx), spec)) throw Error('ASS shortcut icon readback mismatch');
+  registerWindowsBrand(ctx);
+  return { updated: true, shortcut: spec.path, icon: spec.iconLocation };
 }
 function registerWindowsBrand(ctx) {
   const spec = windowsBrandSpec(ctx);
@@ -522,4 +544,5 @@ module.exports = {
   RUNTIME_FILES, makeContext, parseArgs, usage, buildPlan, executeInstall,
   validatePackage, inspectCurrent, collectPruneCandidates, shortcutSpec, prePackageGuard,
   windowsBrandSpec,
+  refreshShortcutIcon,
 };

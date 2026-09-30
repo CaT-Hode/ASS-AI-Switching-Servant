@@ -76,7 +76,7 @@ test("plan reads builds and plans stable shortcut without any filesystem mutatio
   assert.equal(f.writes, 0);
   assert.equal(plan.shortcut.targetPath, path.join(f.ctx.current, "ASS.exe"));
   assert.equal(plan.shortcut.workingDirectory, f.ctx.current);
-  assert.equal(plan.shortcut.iconLocation, path.join(f.ctx.current, "ASS.exe") + ",0");
+  assert.equal(plan.shortcut.iconLocation, path.join(f.ctx.targetPackage, "resources/ass.ico") + ",0");
   assert.equal(plan.shortcut.appUserModelId, "local.ass.desktop");
   assert.equal(plan.prune.candidates.length, 1);
 });

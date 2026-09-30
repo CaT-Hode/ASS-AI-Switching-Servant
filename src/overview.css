@@ -1,4 +1,8 @@
 .usage-overview {
+  --usage-level-1: #49325f;
+  --usage-level-2: #74509b;
+  --usage-level-3: #9f76c7;
+  --usage-level-4: #c79aed;
   display: grid;
   gap: 24px;
   max-width: 1500px;
@@ -176,7 +180,7 @@
 .heatmap-cell:focus-visible,
 .heatmap-cell.selected {
   filter: brightness(0.93);
-  outline: 2px solid light-dark(#708e7a, #708e7a);
+  outline: 2px solid var(--usage-level-3);
   outline-offset: 1px;
 }
 .periodmap-surface {
@@ -254,16 +258,16 @@
   background: light-dark(#f0f0f0, #2f3130);
 }
 .usage-overview [data-level="1"] {
-  background: light-dark(#e1e7e3, #363837);
+  background: var(--usage-level-1);
 }
 .usage-overview [data-level="2"] {
-  background: light-dark(#bac8bf, #bac8bf);
+  background: var(--usage-level-2);
 }
 .usage-overview [data-level="3"] {
-  background: light-dark(#95ac9d, #95ac9d);
+  background: var(--usage-level-3);
 }
 .usage-overview [data-level="4"] {
-  background: light-dark(#779481, #779481);
+  background: var(--usage-level-4);
 }
 .heatmap-footer {
   margin-top: 18px;
@@ -366,13 +370,13 @@
   min-height: 0;
 }
 .token-input {
-  background: light-dark(#b3c4b9, #b3c4b9);
+  background: var(--usage-level-2);
 }
 .token-cache {
-  background: light-dark(#d0dad3, #363837);
+  background: var(--usage-level-1);
 }
 .token-output {
-  background: light-dark(#779581, #779581);
+  background: var(--usage-level-4);
 }
 .token-legend {
   display: flex;
@@ -433,7 +437,7 @@
 .usage-group-track i {
   display: block;
   height: 100%;
-  background: light-dark(#9fb3a6, #9fb3a6);
+  background: linear-gradient(90deg, var(--usage-level-1), var(--usage-level-4));
   border-radius: 5px;
 }
 .overview-accounts-grid {

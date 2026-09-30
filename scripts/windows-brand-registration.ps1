@@ -4,7 +4,10 @@ if ($spec.AppId -ne 'local.ass.desktop') { throw 'Unexpected ASS app identity' }
 $releaseRoot = [IO.Path]::GetFullPath($spec.ReleaseRoot).TrimEnd('\')
 $exe = [IO.Path]::GetFullPath($spec.Executable)
 $icon = [IO.Path]::GetFullPath($spec.Icon)
-if ($exe -ne "$releaseRoot\current\ASS.exe" -or $icon -ne "$releaseRoot\current\resources\ass.ico" -or
+$iconRelative = $icon.Substring([Math]::Min($icon.Length, $releaseRoot.Length + 1))
+$ownedIcon = $icon.StartsWith($releaseRoot + '\', [StringComparison]::OrdinalIgnoreCase) -and
+    ($iconRelative -match '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\\ASS-win32-x64\\resources\\ass\.ico$')
+if ($exe -ne "$releaseRoot\current\ASS.exe" -or !$ownedIcon -or
     !(Test-Path -LiteralPath $exe -PathType Leaf) -or !(Test-Path -LiteralPath $icon -PathType Leaf)) {
     throw 'Unexpected or missing ASS executable/icon'
 }
@@ -18,7 +21,7 @@ $entries = @(
     @{ Key=$appPath; Name=''; Value=$exe },
     @{ Key=$appPath; Name='Path'; Value=[IO.Path]::GetDirectoryName($exe) },
     @{ Key=$application; Name='FriendlyAppName'; Value='ASS' },
-    @{ Key=$defaultIcon; Name=''; Value="$exe,0" }
+    @{ Key=$defaultIcon; Name=''; Value="$icon,0" }
 )
 $before = @(); $created = @()
 foreach ($entry in $entries) {
