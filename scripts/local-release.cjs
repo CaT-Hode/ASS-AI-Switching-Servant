@@ -175,9 +175,11 @@ function shortcutProbeDefault(file, ctx) {
   if (!stat) return null;
   if (isLink(stat)) throw new Error(`refusing linked shortcut path: ${file}`);
   if (process.platform !== "win32") throw new Error(`cannot inspect Windows shortcut on ${process.platform}: ${file}`);
-  const script = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $p=ConvertFrom-Json $env:ASS_SHORTCUT_PROBE; $s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut($p.Path); [Console]::Out.WriteLine((ConvertTo-Json @{TargetPath=$l.TargetPath;WorkingDirectory=$l.WorkingDirectory;IconLocation=$l.IconLocation;Description=$l.Description;Arguments=$l.Arguments;AppUserModelId=(New-Object -ComObject Shell.Application).Namespace([IO.Path]::GetDirectoryName($p.Path)).ParseName([IO.Path]::GetFileName($p.Path)).ExtendedProperty('System.AppUserModel.ID')} -Compress))";
+  // Read the persisted property store directly. Shell.Application's cached
+  // ExtendedProperty can be empty on Windows Server immediately after a write.
+  const script = fs.readFileSync(path.join(__dirname, 'windows-app-identity.ps1'), 'utf8') + "\n[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $p=ConvertFrom-Json $env:ASS_SHORTCUT_PROBE; $s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut($p.Path); [Console]::Out.WriteLine((ConvertTo-Json @{TargetPath=$l.TargetPath;WorkingDirectory=$l.WorkingDirectory;IconLocation=$l.IconLocation;Description=$l.Description;Arguments=$l.Arguments;AppUserModelId=[AssAppIdentity]::GetShortcut($p.Path)} -Compress))";
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-    env: { ...ctx.env, ASS_SHORTCUT_PROBE: JSON.stringify({ Path: file }) },
+    env: { ...ctx.env, ASS_SHORTCUT_SPEC: '', ASS_SHORTCUT_PROBE: JSON.stringify({ Path: file }) },
     encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.status !== 0) throw new Error(`cannot inspect ASS shortcut: ${(result.stderr || "").trim()}`);

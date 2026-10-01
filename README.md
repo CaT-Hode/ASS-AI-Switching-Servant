@@ -47,7 +47,7 @@ v0.3.1 修正 DSH / Kimi / OpenCode 的原生格式兼容性、OAuth 导入事�
 
 ## 下载与启动
 
-从 [Releases](https://github.com/CaT-Hode/ASS-Agent-Switching-Servant/releases) 下载 Windows x64 ZIP，完整解压后运行 `ASS.exe`。不要只复制 EXE：旁边的资源和 DLL 必须保留。
+从 [Releases](https://github.com/CaT-Hode/ASS-Agent-Switching-Servant/releases) 下载唯一的 Windows x64 `ASS-v<版本>-win32-x64-setup.exe` 安装包，运行后从开始菜单打开 ASS。安装包内含完整资源，无需另下载 ZIP；安装在当前用户的 `%LOCALAPPDATA%\Programs\ASS`，在 Windows 应用列表中可卸载，用户数据与客户端账户保留。更新前从托盘退出旧 ASS。发布说明附 SHA-256，后续 Windows 版本只上传一个安装 EXE。
 
 这是未签名的早期版本。Windows 可能显示来源警告，请核对仓库和 SHA-256；不要关闭系统防护。ASS 不内置各个 harness，请自行安装原生客户端，或在“客户端与账户”自动识别、选择安装目录或启动文件。
 
@@ -242,14 +242,16 @@ node scripts/features-qa.cjs
 
 可选原生客户端检查：设置 `ASS_QA_CLIENTS` 指向另行安装客户端的 `node_modules`，再运行 `node scripts/harness-qa.cjs`。它使用合成凭据，不执行真实 OAuth 刷新。`live-qa.cjs` / `codex-qa.cjs` 是需要显式环境变量的实网测试，会产生模型用量，不属于默认测试。`inspection-live-qa.cjs` 还需指定 `ASS_IMPORT_FILE / ASS_LIVE_PROVIDER / ASS_LIVE_MODEL`，仅探测一个模型的 low 档位。UI 测试使用独立目录与 25820 测试端口。
 
-打包 Windows x64 便携应用：
+打包 Windows x64 安装应用：
 
 ```powershell
 npm.cmd run package
-node scripts/package-qa.cjs
+node scripts/installer-qa.cjs
 ```
 
-产物在 `release/v<版本号>/ASS-win32-x64`。打包包含 Electron，所以安装体积不等同于原生小工具；客户端接入验证脚本是可选项，参数及环境变量见脚本头部。
+发布产物为 `release/ASS-v<版本号>-win32-x64-setup.exe`；中间运行目录为 `release/v<版本号>/ASS-win32-x64`。打包采用运行文件白名单：前端已编译为 `dist`，只附带后端需要的 TOML、YAML、JSONC 解析依赖，保留许可证，不包含开发源文件、测试、验证脚本、复现包、日志、source map 或 QA 调试入口。Electron/Chromium 是主要体积来源；安装器只压缩一次。
+
+默认用户数据目录延续旧版；可用 `ASS_DATA_DIR` 指定独立数据目录。安装器可用 `ASS_INSTALL_DIR` 指定安装位置；`ASS_INSTALL_PORTABLE=1` 跳过开始菜单和卸载注册，便于便携安装。
 
 本机开发版使用固定的开始菜单入口。先从托盘退出 ASS，再执行：
 

@@ -81,6 +81,7 @@ const { historyProvider: oauthInfoProvider } = require("../core/oauth-info.cjs")
 const testMode = process.argv.includes("--qa");
 const customData = process.env.ASS_TEST_DATA;
 if (testMode && customData) app.setPath("userData", customData);
+else if (process.env.ASS_DATA_DIR) app.setPath("userData", path.resolve(process.env.ASS_DATA_DIR));
 else
   // Stable pre-rename data location: keep existing DPAPI credentials and settings.
   app.setPath(

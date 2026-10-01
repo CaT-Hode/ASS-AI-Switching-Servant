@@ -10,6 +10,8 @@
 - Claude 用户级 settings.env 覆盖原生授权时阻止切号，preview 与 apply 重新检查；不修改用户设置，不在提示中输出令牌。
 - Codex 历史删除及永久清理明确提示范围：thread_history_*.sqlite 正文与远端数据不在本机 rollout / 索引清理范围。
 - 界面明确 Codex / Claude / OpenCode → pi 的单向导入能力；Pi → OpenCode 和 OpenCode OAuthHistory 尚未实现。
+- Windows 发布改为单个 setup.exe，包含 Electron 和完整资源，安装到当前用户目录并配置开始菜单，支持卸载且保留用户数据。更新检查优先识别 EXE；旧 ZIP 发布仍可作为历史版本下载。
+- 打包采用运行文件白名单，移除前端完整依赖、开发源文件、QA 调试入口、测试与复现资料、构建脚本、source map，只保留 3 个后端解析依赖及软件许可证。应用归档从 42.29 MiB 缩至 2.30 MiB，安装器改为单次 LZX 压缩。
 
 ## 验证
 
@@ -17,8 +19,8 @@
 
 原生检查使用隔离 HOME / XDG / APPDATA 和合成账户，模型请求仅发往本机模拟服务。未验证真实登录、服务端 refresh、撤销、订阅权益或计费；不据此宣称 Ubuntu 原生消费者或所有运行模式完成验收。复制的 refresh grant 仍可能因两端轮换或撤销而相互影响。
 
-Windows x64 发布包的 126 个运行时文件与源码及构建产物一致，发布内容审计和隔离 Electron 启动检查通过。账户、凭据、用户对话和验证资料不包含在发布包中。
+Windows x64 发布包的 126 个运行文件经过源码及构建产物比对，主进程按生产模式生成，不含 QA 调试入口。发布内容审计通过；账户、凭据、用户对话和验证资料不包含在发布包中。
 
 ## 下载
 
-Windows x64：`ASS-v0.3.1-win32-x64.zip`，校验文件：`SHA256SUMS.txt`。完整解压后运行 `ASS.exe`，保留资源与 DLL；更新前退出旧 ASS。此版本使用新的 v0.3.1 标签，不替换 v0.3.0 资产。
+Windows x64：仅上传 `ASS-v0.3.1-win32-x64-setup.exe`。运行安装包后从开始菜单打开 ASS，更新前从托盘退出旧 ASS；SHA-256 见发布页。v0.3.0 的历史 ZIP 保留。

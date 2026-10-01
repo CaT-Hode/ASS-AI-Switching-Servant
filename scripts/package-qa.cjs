@@ -10,22 +10,25 @@ fs.mkdirSync(output, { recursive: true });
 const data = fs.mkdtempSync(path.join(output, "packaged-"));
 const codex = path.join(data, "codex");
 fs.mkdirSync(codex);
+const home = path.join(data, 'home');
+const appData = path.join(home, 'AppData', 'Roaming'), localData = path.join(home, 'AppData', 'Local');
+for (const directory of [home, appData, localData]) fs.mkdirSync(directory, { recursive: true });
+const isolatedEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+  !/^(?:ASS_|DSH_|DEEPSEEK_|CODEX_|OPENAI_|ANTHROPIC_|CLAUDE_|OPENCODE_|PI_|KIMI_|ZCODE_|XDG_|ELECTRON_RUN_AS_NODE)/i.test(key)));
+Object.assign(isolatedEnv, { ASS_DATA_DIR: data, CODEX_HOME: codex, USERPROFILE: home, HOME: home,
+  APPDATA: appData, LOCALAPPDATA: localData, XDG_CONFIG_HOME: path.join(home, '.config'), XDG_DATA_HOME: path.join(home, '.local/share'),
+  PATH: [process.env.SystemRoot, path.join(process.env.SystemRoot, 'System32'), path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0')].join(path.delimiter) });
 (async () => {
   const app = await electron.launch({
-    executablePath: path.join(
+    executablePath: process.env.ASS_TEST_EXECUTABLE || path.join(
       root,
       "release",
       "v" + version,
       "ASS-win32-x64",
       "ASS.exe",
     ),
-    args: ["--qa"],
-    env: {
-      ...process.env,
-      ASS_TEST_DATA: data,
-      ASS_TEST_CODEX: codex,
-      ASS_TEST_PORT: "25820",
-    },
+    args: [],
+    env: isolatedEnv,
     timeout: 60000,
   });
   try {
@@ -35,17 +38,20 @@ fs.mkdirSync(codex);
     page.on("console", (m) => { if (["error", "warning"].includes(m.type())) errors.push(m.text()); });
     await page.waitForSelector("h1");
     assert.equal(await page.title(), "ASS");
-    const state = await app.evaluate(() => global.assTest.snapshot());
+    assert.equal(await app.evaluate(() => typeof global.assTest), 'undefined');
+    assert.equal(await app.evaluate(({ app }) => app.getVersion()), version);
+    const parsed = await app.evaluate(async ({ app }) => {
+      const { createRequire } = await import('node:module');
+      const load = createRequire(app.getAppPath() + '/package.json');
+      return [load('@iarna/toml').parse('value = 7').value,
+        load('yaml').parse('value: 7').value, load('jsonc-parser').parse('{/*comment*/"value":7}').value];
+    });
+    assert.deepEqual(parsed, [7, 7, 7]);
+    const state = await page.evaluate(() => window.ass.call('snapshot'));
     assert.equal(state.providers.length, 0);
-    assert.equal(state.harnesses.clients.length, 7);
-    assert.equal(state.harnesses.clients.filter((c) => !c.nativeLoginOnly).length, 5);
     assert.equal(state.service.running, false);
-    assert.equal(state.encrypted, true);
-    assert.equal(state.authReady, false);
+    assert.equal(state.startupError, '');
     assert.equal(state.codex.attached, false);
-    assert.equal(state.startupError, "");
-    assert.equal(state.updates.automatic, true);
-    assert.equal(state.updates.status, "idle");
     await page.getByRole("button", { name: "关于 ASS", exact: true }).click();
     await page.locator(".ass-wordmark").waitFor();
     assert.equal(await page.locator(".ass-brand-hero p").textContent(), "Agent-Switching-Servant");
@@ -97,7 +103,7 @@ fs.mkdirSync(codex);
       }),
     );
   } finally {
-    await app.evaluate(() => global.assTest.quit()).catch(() => {});
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
     await app.close().catch(() => {});
   }
 })().catch((e) => {

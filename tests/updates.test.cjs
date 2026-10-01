@@ -111,6 +111,21 @@ test("canonical GitHub release URLs remain usable after the repository rename", 
   assert.equal(loaded.openUrl("download"), download);
 });
 
+test('single EXE installer takes precedence and survives update cache reload without a checksum attachment', async t => {
+  const raw = release('v0.3.1', { prerelease: false });
+  const name = 'ASS-v0.3.1-win32-x64-setup.exe', url = `${RELEASES_URL}/download/v0.3.1/${name}`;
+  raw.assets.push({ name, state: 'uploaded', size: 123456, browser_download_url: url, digest: 'sha256:' + 'b'.repeat(64) });
+  assert.equal(safeRelease(raw).download.name, name);
+  const checker = fixture({ fetchRelease: async () => Response.json([raw]) });
+  t.after(() => fs.rmSync(path.dirname(checker.file), { recursive: true, force: true }));
+  await checker.check(); assert.equal(checker.openUrl('download'), url);
+  const restored = new UpdateChecker({ dataDir: path.dirname(checker.file), currentVersion: '0.3.0' });
+  assert.equal(restored.openUrl('download'), url); assert.equal(restored.snapshot().latest.download.sha256, 'b'.repeat(64));
+  raw.assets[1].state = 'starter'; assert.match(safeRelease(raw).download.name, /\.zip$/);
+  raw.assets[1].state = 'uploaded'; raw.assets[1].browser_download_url = 'https://other.example/setup.exe';
+  assert.match(safeRelease(raw).download.name, /\.zip$/);
+});
+
 test("preview channel applies GitHub flags and semantic prerelease tags, not release order", () => {
   const releases = [
     release("v0.1.9", { prerelease: false }),

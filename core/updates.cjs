@@ -53,16 +53,16 @@ function safeRelease(raw) {
   if (raw.html_url !== page) return null;
   const assets = Array.isArray(raw.assets) ? raw.assets.slice(0, 100) : [];
   const findAsset = (names) => {
-    const found = assets.find(
+    const found = names.map(name => assets.find(
       (a) =>
-        names.includes(a?.name) &&
+        name === a?.name &&
         a.state === "uploaded" &&
         Number.isSafeInteger(a.size) &&
         a.size > 0 &&
         a.size <= 2 * 1024 ** 3 &&
         a.browser_download_url ===
           `${RELEASES_URL}/download/${encodeURIComponent(tag)}/${encodeURIComponent(a.name)}`,
-    );
+    )).find(Boolean);
     return found
       ? {
           name: found.name,
@@ -85,6 +85,7 @@ function safeRelease(raw) {
       ? new Date(raw.published_at).toISOString()
       : "",
     download: findAsset([
+      `ASS-v${v.text}-win32-x64-setup.exe`,
       `ASS-v${v.text}-win32-x64.zip`,
       `AI-Switch-Servant-v${v.text}-win32-x64.zip`,
     ]),

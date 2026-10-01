@@ -19,6 +19,16 @@ public static class AssAppIdentity {
     }
     [DllImport("shell32.dll", CharSet=CharSet.Unicode)]
     static extern int SHGetPropertyStoreFromParsingName(string file, IntPtr bind, uint flags, ref Guid iid, out Store store);
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref Value value);
+    public static string GetShortcut(string file) {
+        Guid iid = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"); Store store;
+        Marshal.ThrowExceptionForHR(SHGetPropertyStoreFromParsingName(file, IntPtr.Zero, 0, ref iid, out store));
+        var key = new Key { format = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), id = 5 };
+        Value value = new Value();
+        try { Marshal.ThrowExceptionForHR(store.GetValue(ref key, out value));
+            return value.type == 31 ? Marshal.PtrToStringUni(value.text) : null;
+        } finally { PropVariantClear(ref value); Marshal.ReleaseComObject(store); }
+    }
     public static void SetShortcut(string file, string appId) {
         Guid iid = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"); Store store;
         Marshal.ThrowExceptionForHR(SHGetPropertyStoreFromParsingName(file, IntPtr.Zero, 2, ref iid, out store));
@@ -31,8 +41,10 @@ public static class AssAppIdentity {
     }
 }
 '@
-$spec = ConvertFrom-Json $env:ASS_SHORTCUT_SPEC
-if ($spec.AppUserModelId -ne 'local.ass.desktop' -or [IO.Path]::GetExtension($spec.Path) -ne '.lnk') {
-    throw 'Unexpected ASS shortcut identity request'
+if ($env:ASS_SHORTCUT_SPEC) {
+    $spec = ConvertFrom-Json $env:ASS_SHORTCUT_SPEC
+    if ($spec.AppUserModelId -ne 'local.ass.desktop' -or [IO.Path]::GetExtension($spec.Path) -ne '.lnk') {
+        throw 'Unexpected ASS shortcut identity request'
+    }
+    [AssAppIdentity]::SetShortcut($spec.Path, $spec.AppUserModelId)
 }
-[AssAppIdentity]::SetShortcut($spec.Path, $spec.AppUserModelId)

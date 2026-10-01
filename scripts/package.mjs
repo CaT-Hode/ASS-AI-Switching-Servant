@@ -1,7 +1,9 @@
 import { packager } from "@electron/packager";
 import { fileURLToPath } from "node:url";
 import { setTimeout } from "node:timers/promises";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import layout from "./package-layout.cjs";
 import localRelease from "./local-release.cjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -9,6 +11,15 @@ const { version } = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
 localRelease.prePackageGuard({ root });
+const lock = JSON.parse(await readFile(path.join(root, "package-lock.json"), "utf8"));
+const notices = [];
+for (const [relative, entry] of Object.entries(lock.packages)) {
+  if (!relative.startsWith("node_modules/") || entry.dev) continue;
+  for (const file of await readdir(path.join(root, relative))) {
+    if (/^(?:licen[cs]e|copying)(?:\.[^/]*)?$/i.test(file))
+      notices.push(`${relative.slice(13)} ${entry.version}\n${await readFile(path.join(root, relative, file), "utf8")}`);
+  }
+}
 const outputs = await packager({
   dir: root,
   name: "ASS",
@@ -23,7 +34,25 @@ const outputs = await packager({
   out: fileURLToPath(new URL("../release/v" + version, import.meta.url)),
   overwrite: true,
   tmpdir: false,
-  ignore: /^\/(release|tests|qa|design|scripts|docs|conversation-library|project-conversations)(\/|$)/,
+  prune: false, // The runtime whitelist replaces dependency-based pruning.
+  ignore: (name) => !layout.allowed(name),
+  beforeAsar: [async ({ buildPath }) => {
+    const app = buildPath;
+    const main = path.join(app, "electron", "main.cjs");
+    await writeFile(main, layout.productionMain(await readFile(main, "utf8")));
+    const manifest = JSON.parse(await readFile(path.join(app, "package.json"), "utf8"));
+    delete manifest.scripts;
+    delete manifest.devDependencies;
+    manifest.dependencies = Object.fromEntries(layout.runtimeDependencies.map(name => [name, manifest.dependencies[name]]));
+    await writeFile(path.join(app, "package.json"), JSON.stringify(manifest, null, 2));
+    await writeFile(path.join(app, "THIRD-PARTY-NOTICES.txt"), notices.join("\n\n----------------------------------------\n\n"));
+    for (const dependency of layout.runtimeDependencies) {
+      const file = path.join(app, "node_modules", dependency, "package.json");
+      const metadata = JSON.parse(await readFile(file, "utf8"));
+      for (const key of ['scripts', 'devDependencies', 'directories', 'prettier', 'browserslist', 'typings']) delete metadata[key];
+      await writeFile(file, JSON.stringify(metadata, null, 2));
+    }
+  }],
   // Windows scanners can briefly hold the just-extracted runtime open.
   // Give those handles time to close before Packager renames the directory.
   afterExtract: [
