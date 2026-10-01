@@ -2,11 +2,13 @@
 
 核对日期：2026-09-30（Asia/Shanghai）。这是官方文档、已固定版本源码与合成凭据测试的兼容性检查。未执行真实登录、refresh、推理、客户端升级或原生凭据迁移；没有验证当前用户的 grant 有效性、模型权益或计费结果。
 
+2026-10-01 / v0.3.1 补充：已按 Pi 0.99.1 的实际消费者核对 access JWT 账户字段及 Anthropic 固定刷新客户端；导入改为事务提交。Claude 用户级 settings.env 覆盖阻止 preview/apply，OpenCode v2 的 credential 数据库可作为只读来源。仅支持 Codex / Claude / OpenCode → pi，尚未实现反向转移或 OpenCode OAuthHistory。新增原生验收只使用本机模拟服务和内存刷新 mock；无真实服务端授权结论，详见 [OAuth 专项修复](oauth-qa-0.3.0.md)。以下旧版协议分析保留其原有证据边界。
+
 ## 结论
 
 | 来源 / 目标 | 判断 | 条件与证据边界 |
 | --- | --- | --- |
-| 旧 Codex ChatGPT OAuth → pi `openai-codex` | 保留格式兼容的转移 | 已安装 pi 必须声明支持该 legacy provider；来源须具备 access、refresh、expiry、账户 ID，且不能包含相矛盾的 client / issuer / resource / account 元数据。 |
+| 旧 Codex ChatGPT OAuth → pi `openai-codex` | 保留格式兼容的转移 | 已安装 pi 必须声明支持该 legacy provider；来源须具备 access、refresh、expiry，access JWT 内须有嵌套 chatgpt_account_id，且不能包含相矛盾的 client / issuer / resource / account 元数据；存储账户 ID 不能替代 JWT 字段。 |
 | 旧 Codex OAuth → pi 新 `openai` SIWC | 不能通过复制升级 | 新流程使用独立签发的 client 和 plan usage scopes；需由目标客户端原生登录授权。 |
 | 旧 Codex OAuth → 所核对的 OpenCode `openai` Codex 路径 | 源码层面格式匹配 | OpenCode 与 legacy pi 使用同一 Codex client，并通过 Codex backend 请求。没有实施 OpenCode 原生转移，也没有证明该用户能完成推理。 |
 | 新 SIWC OAuth → 旧 pi `openai-codex` / 所核对的 OpenCode Codex 路径 | 拒绝复制 | 不能丢弃 issued client、scopes 和相关注册元数据，再套用固定 Codex client 刷新。 |

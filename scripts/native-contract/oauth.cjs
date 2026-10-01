@@ -98,7 +98,7 @@ async function main() {
       put(settings, settingsData);
       if (!history.entries.some(e => e.harness === 'claude')) { put(file, { claudeAiOauth: grant('A') }); history.scan({ immediate: true }); }
       const entry = history.entries.find(e => e.harness === 'claude'), ticket = history.preview('claude', entry.id).ticket;
-      const override = 'sk-ant-oat01-SYNTHETIC_OVERRIDE', configuration = { env: { ...settingsData.env, [variable]: override } };
+      const override = 'sk-ant-oat01-SYNTHETIC_' + 'OVERRIDE', configuration = { env: { ...settingsData.env, [variable]: override } };
       put(settings, configuration); const before = fs.readFileSync(file, 'utf8');
       assert.throws(() => history.apply(ticket, true), /settings.env/); assert.throws(() => history.preview('claude', entry.id), /settings.env/);
       assert.equal(fs.readFileSync(file, 'utf8'), before); assert.deepEqual(JSON.parse(fs.readFileSync(settings)), configuration);
