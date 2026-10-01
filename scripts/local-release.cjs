@@ -183,7 +183,15 @@ function shortcutProbeDefault(file, ctx) {
     encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.status !== 0) throw new Error(`cannot inspect ASS shortcut: ${(result.stderr || "").trim()}`);
-  try { return JSON.parse(result.stdout); } catch (e) { throw new Error(`invalid ASS shortcut inspection result: ${e.message}`); }
+  let value;
+  try { value = JSON.parse(result.stdout); } catch (e) { throw new Error(`invalid ASS shortcut inspection result: ${e.message}`); }
+  // WScript expands DOS 8.3 user directories on Windows Server. Rebase only
+  // the checked root's spelling, preserving the release/current junction path.
+  const longRoot = ctx.fsApi.realpathSync.native ? ctx.fsApi.realpathSync.native(ctx.root) : ctx.fsApi.realpathSync(ctx.root);
+  const rootSpelling = file => typeof file === 'string' && file.toLowerCase().startsWith(longRoot.toLowerCase() + path.sep)
+    ? ctx.root + file.slice(longRoot.length) : file;
+  for (const key of ['TargetPath', 'WorkingDirectory', 'IconLocation']) value[key] = rootSpelling(value[key]);
+  return value;
 }
 function ownedShortcut(ctx, existing) {
   if (!existing) return true;
