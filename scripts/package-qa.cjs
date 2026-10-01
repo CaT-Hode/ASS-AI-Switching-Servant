@@ -27,7 +27,9 @@ Object.assign(isolatedEnv, { ASS_DATA_DIR: data, CODEX_HOME: codex, USERPROFILE:
       "ASS-win32-x64",
       "ASS.exe",
     ),
-    args: [],
+    // With a custom executable Playwright does not add its readiness loader.
+    // Load it from the development checkout; it never enters the installer.
+    args: ['-r', path.join(path.dirname(require.resolve('playwright-core/package.json')), 'lib/server/electron/loader.js')],
     env: isolatedEnv,
     timeout: 60000,
   });
@@ -40,8 +42,8 @@ Object.assign(isolatedEnv, { ASS_DATA_DIR: data, CODEX_HOME: codex, USERPROFILE:
     assert.equal(await page.title(), "ASS");
     assert.equal(await app.evaluate(() => typeof global.assTest), 'undefined');
     assert.equal(await app.evaluate(({ app }) => app.getVersion()), version);
-    const parsed = await app.evaluate(async ({ app }) => {
-      const { createRequire } = await import('node:module');
+    const parsed = await app.evaluate(({ app }) => {
+      const { createRequire } = process.getBuiltinModule('module');
       const load = createRequire(app.getAppPath() + '/package.json');
       return [load('@iarna/toml').parse('value = 7').value,
         load('yaml').parse('value: 7').value, load('jsonc-parser').parse('{/*comment*/"value":7}').value];

@@ -13,7 +13,9 @@ function allowed(name) {
     const file = n.slice(prefix.length + 1);
     if (/^(?:package\.json|LICEN[CS]E(?:\.txt|\.md)?)$/i.test(file)) return true;
     if (dependency === '@iarna/toml') return /^(?:[^/]+\.js|lib(?:\/[^/]+\.js)?)$/.test(file);
-    if (dependency === 'yaml') return /^dist(?:\/(?:[^/.]+\/)*[^/.]+(?:\.js)?)?$/.test(file);
+    // YAML's runtime schema directory is named yaml-1.1; dots in directory
+    // names are not source-map or type-definition extensions.
+    if (dependency === 'yaml') return /^dist(?:\/.*)?$/.test(file) && !/\.(?:ts|map)$/.test(file);
     if (dependency === 'jsonc-parser') return /^(?:lib|lib\/umd|lib\/umd\/impl|lib\/umd\/(?:impl\/)?[^/]+\.js)$/.test(file);
   }
   return false;

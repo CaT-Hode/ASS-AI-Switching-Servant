@@ -24,6 +24,20 @@ const manifest = JSON.parse(asar.extractFile(archive, 'package.json'));
 if (manifest.scripts || manifest.devDependencies || Object.keys(manifest.dependencies).sort().join(',') !== [...layout.runtimeDependencies].sort().join(','))
   throw Error('Packaged manifest includes build dependencies or scripts');
 if (/ASS_TEST_|global\.assTest|--qa/.test(asar.extractFile(archive, 'electron/main.cjs').toString('utf8'))) throw Error('Packaged QA controls found');
+// Resolve the packaged parsers from the packaged files before compressing the
+// large Electron runtime, including dependencies loaded through dotted folders.
+const temp = require('node:os').tmpdir();
+const extracted = fs.mkdtempSync(path.join(temp, 'ass-package-runtime-'));
+try {
+  asar.extractAll(archive, extracted);
+  const load = require('node:module').createRequire(path.join(extracted, 'package.json'));
+  const parsed = [load('@iarna/toml').parse('value = 7').value, load('yaml').parse('value: 7').value,
+    load('jsonc-parser').parse('{/*comment*/"value":7}').value];
+  if (parsed.some(value => value !== 7)) throw Error('Packaged runtime parser check failed');
+} finally {
+  if (path.dirname(extracted) !== temp || !path.basename(extracted).startsWith('ass-package-runtime-')) throw Error('Unexpected parser-check directory');
+  fs.rmSync(extracted, { recursive: true, force: true });
+}
 const suspect = [];
 for (const relative of ["core", "electron", "src"]) for (const name of fs.readdirSync(path.join(root, relative))) {
   const file = path.join(root, relative, name);
