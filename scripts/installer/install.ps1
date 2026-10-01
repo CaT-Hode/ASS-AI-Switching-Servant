@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')
 Set-StrictMode -Version 2
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 function Notice([string]$text, [bool]$failed = $false) {

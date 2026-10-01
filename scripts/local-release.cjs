@@ -399,11 +399,13 @@ function writeShortcutDefault(spec, ctx) {
   }
   let published = false;
   try {
-    if (!shortcutMatches(shortcutProbeDefault(temp, ctx), spec)) throw new Error("shortcut readback mismatch");
+    const temporary = shortcutProbeDefault(temp, ctx);
+    if (!shortcutMatches(temporary, spec)) throw new Error("shortcut readback mismatch: " + JSON.stringify({ expected: spec, actual: temporary }));
     if (exists(spec.path, ctx.fsApi)) ctx.fsApi.renameSync(spec.path, backup);
     ctx.fsApi.renameSync(temp, spec.path);
     published = true;
-    if (!shortcutMatches(shortcutProbeDefault(spec.path, ctx), spec)) throw new Error("shortcut readback mismatch");
+    const saved = shortcutProbeDefault(spec.path, ctx);
+    if (!shortcutMatches(saved, spec)) throw new Error("shortcut readback mismatch: " + JSON.stringify({ expected: spec, actual: saved }));
   } catch (e) {
     try { if (exists(temp, ctx.fsApi)) ctx.fsApi.unlinkSync(temp); } catch (_) {}
     try { if (published) ctx.fsApi.unlinkSync(spec.path); } catch (_) {}
