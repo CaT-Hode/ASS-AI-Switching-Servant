@@ -5,6 +5,8 @@ const { pathToFileURL } = require("node:url");
 const { nativeLocations } = require("./credential-status.cjs");
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_RESOURCE = "https://api.openai.com/v1";
+const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const ANTHROPIC_SCOPES = new Set(['org:create_api_key', 'user:profile', 'user:inference', 'user:sessions:claude_code', 'user:mcp_servers', 'user:file_upload']);
 const object = (v) => v && typeof v === "object" && !Array.isArray(v);
 const has = (v) => typeof v === "string" && !!v.trim();
 const safeProvider = (v) => /^[a-z0-9-]{1,80}$/.test(v || "") ? v : undefined;
@@ -42,36 +44,59 @@ function scopes(value) {
 function checkCodexGrant(kind, data, token) {
   // Decoded claims are local format evidence, never signature/entitlement validation.
   const metadata = kind === "codex" ? data : {};
+  const extra = object(token.metadata) ? token.metadata : {};
   const access = jwtPayload(token.access_token || token.access);
   const identity = jwtPayload(token.id_token || token.idToken);
-  const clients = [metadata.client_id, metadata.clientId, token.client_id, token.clientId,
+  const clients = [metadata.client_id, metadata.clientId, extra.client_id, extra.clientId, token.client_id, token.clientId,
     access.client_id, access.clientId, ...scopes(identity.aud)].filter((v) => v !== undefined);
-  const granted = [metadata.scope, metadata.scopes, token.scope, token.scopes, access.scope, access.scopes].flatMap(scopes);
+  const granted = [metadata.scope, metadata.scopes, extra.scope, extra.scopes, token.scope, token.scopes, access.scope, access.scopes].flatMap(scopes);
   const plan = clients.some((v) => v === "dynamic_agent_client" || (typeof v === "string" && v.startsWith("oaiapp_"))) ||
     granted.some((v) => ["chatgpt.tokens.use.direct", "resource.invoke"].includes(v)) ||
-    has(metadata.ext_agent_host_id) || has(token.ext_agent_host_id) ||
+    has(metadata.ext_agent_host_id) || has(extra.ext_agent_host_id) || has(token.ext_agent_host_id) ||
     has(access["https://api.openai.com/auth"]?.encrypted_auth_metadata);
   if (plan) refuse("chatgpt_plan_login_required",
     "检测到 Sign in with ChatGPT 的客户端或 plan scopes 元数据，不能复制为 pi openai-codex；请在目标客户端重新登录 openai。",
     "openai", "chatgpt-plan");
   if (clients.some((v) => v !== CODEX_CLIENT_ID)) refuse("oauth_client_mismatch",
     "OAuth client 与 legacy Codex 不一致，不能共享刷新授权；请在目标客户端重新登录。", "openai-codex");
-  const issuers = [metadata.issuer, token.issuer, access.iss, identity.iss].filter((v) => v !== undefined);
+  const issuers = [metadata.issuer, extra.issuer, extra.iss, token.issuer, access.iss, identity.iss].filter((v) => v !== undefined);
   if (issuers.some((v) => v !== "https://auth.openai.com")) refuse("oauth_issuer_mismatch",
     "OAuth issuer 与已核对的 OpenAI 授权不一致，不能导入。", "openai-codex");
   const audience = access.aud === undefined ? [] : Array.isArray(access.aud) ? access.aud : [access.aud];
   // Legacy Codex access tokens may also have this audience. Audience alone does
   // not distinguish SIWC from Codex; client and granted scopes do.
   if ((audience.length && !audience.includes(OPENAI_RESOURCE)) ||
-      [metadata.resource, token.resource].some((v) => v !== undefined && v !== OPENAI_RESOURCE))
+      [metadata.resource, extra.resource, token.resource].some((v) => v !== undefined && v !== OPENAI_RESOURCE))
     refuse("oauth_resource_mismatch", "OAuth resource 与已核对的 OpenAI 授权不一致，不能导入。", "openai-codex");
-  const accountIds = [token.account_id, token.accountId, access["https://api.openai.com/auth"]?.chatgpt_account_id,
+  const accountIds = [token.account_id, token.accountId, extra.accountID, extra.accountId, extra.account_id, access["https://api.openai.com/auth"]?.chatgpt_account_id,
     identity["https://api.openai.com/auth"]?.chatgpt_account_id, identity.chatgpt_account_id].filter(has);
   if (new Set(accountIds).size > 1) refuse("oauth_account_mismatch",
     "OAuth 工作区与令牌记录不一致，不能导入。", "openai-codex", "codex-legacy");
   if (kind !== "codex" && !clients.length && !has(access["https://api.openai.com/auth"]?.chatgpt_account_id))
     refuse("oauth_grant_unknown", "未确认这是 legacy Codex grant；仅凭 openai provider 名称不能导入。", "openai-codex");
-  return accountIds[0];
+  const jwtAccount = access["https://api.openai.com/auth"]?.chatgpt_account_id;
+  if (!has(jwtAccount)) refuse("oauth_access_account_missing",
+    "目标 pi 从 access JWT 读取账户 ID；来源令牌缺少该字段，不能用存储账户 ID 替代，请在 pi 重新登录。", "openai-codex", "codex-legacy");
+  return jwtAccount;
+}
+function checkAnthropicGrant(metadata, token) {
+  const sources = [metadata, token, ...(object(token.metadata) ? [token.metadata] : [])];
+  if (sources.some(s => [s.clientId, s.client_id].some(v => v !== undefined && v !== ANTHROPIC_CLIENT_ID)))
+    refuse('oauth_client_mismatch', '来源 OAuth client 与 pi 的 Anthropic 刷新客户端不一致，请在 pi 重新登录。', 'anthropic');
+  if (sources.some(s => s.provider !== undefined && s.provider !== 'anthropic'))
+    refuse('oauth_provider_mismatch', '来源授权的 provider 与 Anthropic 不一致，不能导入。', 'anthropic');
+  for (const source of sources) {
+    for (const key of ['scope', 'scopes']) if (source[key] !== undefined) {
+      const value = source[key], granted = scopes(value);
+      if (!(typeof value === 'string' || Array.isArray(value) && value.every(v => typeof v === 'string')) ||
+          !granted.includes('user:inference') || granted.some(s => !ANTHROPIC_SCOPES.has(s)))
+        refuse('oauth_scope_mismatch', '显式授权 scopes 不满足已核对的 pi Anthropic 范围，请在 pi 重新登录。', 'anthropic');
+    }
+    // The consumer does not enforce these fields; their meaning has not been
+    // established by the native contract. Do not silently discard constraints.
+    if (Object.keys(source).some(k => /^(issuer|iss|aud|audience|resource|extensions?|ext_.+)$/.test(k)))
+      refuse('oauth_metadata_unverified', '来源带有尚未核对的 issuer、resource 或授权扩展约束，请在 pi 重新登录。', 'anthropic');
+  }
 }
 function normalizeOAuth(kind, data, provider, targetProvider) {
   if (!object(data)) refuse("oauth_record_invalid", "OAuth 记录格式无法识别。", provider);
@@ -95,7 +120,9 @@ function normalizeOAuth(kind, data, provider, targetProvider) {
   } else if (kind === "claude") {
     const t = data.claudeAiOauth || {};
     id = "anthropic";
+    checkAnthropicGrant(data, t);
     record = {
+      ...t,
       type: "oauth",
       access: t.accessToken,
       refresh: t.refreshToken,
@@ -106,7 +133,9 @@ function normalizeOAuth(kind, data, provider, targetProvider) {
     if (t.type !== "oauth") throw new Error("来源不是 OAuth 授权");
     id = provider === "openai" ? "openai-codex" : provider;
     const accountId = id === "openai-codex" ? checkCodexGrant(kind, data, t) : undefined;
+    if (id === 'anthropic') checkAnthropicGrant({}, t);
     record = {
+      ...t,
       type: "oauth",
       access: t.access,
       refresh: t.refresh,
@@ -140,10 +169,11 @@ function oauthTransferCompatibility(kind, data, provider, { supported, targetPro
       grantType: result.provider === "openai-codex" ? "codex-legacy" : "provider-oauth",
       compatible,
       reasonCode: compatible ? "compatible_format" : "provider_not_supported",
-      reason: compatible ? "凭据格式与目标 provider 匹配；尚未验证刷新、推理或订阅权益。"
+      reason: compatible ? "凭据格式与目标 provider 匹配；尚未验证刷新、推理或订阅权益。缺少授权元数据的旧记录也只代表格式兼容。"
         : "本机 pi 未确认支持来源 grant 对应的 provider；不能改写为其他 provider。",
       requiresLogin: false,
       expired: result.record.expires <= Date.now(),
+      ...(result.record.expires <= Date.now() ? { refreshGuidance: '令牌已过期；需由原生 pi 刷新或重新登录，ASS 未尝试刷新。' } : {}),
       verification: "format-only",
       refreshRotationRisk: compatible,
       ...(compatible ? { warning: ROTATION_WARNING } : {}),
@@ -232,6 +262,23 @@ function enumerateSources(
     });
   const sources = [];
   for (const c of candidates) {
+    if (c.kind === 'opencode') {
+      let rows;
+      try { rows = require('./opencode-version.cjs').credentials(path.dirname(c.file)); }
+      catch { sources.push({ ...c, compatible: false, requiresLogin: false, reasonCode: 'oauth_storage_unreadable',
+        reason: 'OpenCode 授权数据库无法读取或版本不受支持；未回退到旧 auth.json。', verification: 'format-only' }); continue; }
+      if (rows !== null || require('./opencode-version.cjs').version(null, path.dirname(c.file)) === 2) {
+        for (const row of (rows || []).filter(r => r.value?.type === 'oauth')) {
+          const provider = safeProvider(row.integrationID); if (!provider) continue;
+          const selector = require('node:crypto').createHash('sha256').update(String(row.id)).digest('hex').slice(0, 24);
+          const label = require('./account-info.cjs').text(row.label, [row.value.access, row.value.refresh]) || selector.slice(0, 6);
+          sources.push({ ...c, file: path.join(path.dirname(c.file), 'opencode.db'), credentialId: row.id,
+            id: c.id + ':credential:' + selector, label: c.label + ' · v2 · ' + provider + ' · ' + label + (row.active ? ' · 当前' : ''),
+            sourceProvider: provider, ...oauthTransferCompatibility(c.kind, { [provider]: row.value }, provider, { supported }) });
+        }
+        continue;
+      }
+    }
     const data = readJson(c.file);
     const ids =
       c.kind === "opencode"
@@ -254,4 +301,13 @@ module.exports = {
   enumerateSources,
   oauthTransferCompatibility,
   readJson,
+  sourceData(source) {
+    if (source.credentialId !== undefined) {
+      const row = require('./opencode-version.cjs').credentials(path.dirname(source.file))?.find(r =>
+        r.id === source.credentialId && r.integrationID === source.sourceProvider);
+      if (!row || row.value?.type !== 'oauth') throw Error('OpenCode 原生授权已变化，请刷新后重新选择');
+      return { [source.sourceProvider]: row.value };
+    }
+    return readJson(source.file);
+  },
 };

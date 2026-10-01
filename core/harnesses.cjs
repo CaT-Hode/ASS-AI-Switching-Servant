@@ -35,7 +35,7 @@ const {
   normalizeOAuth,
   piOAuthProviders,
   enumerateSources,
-  readJson,
+  sourceData,
 } = require("./oauth-import.cjs");
 const SPECS = [
   {
@@ -348,6 +348,7 @@ class HarnessManager {
       injections: {},
       ...json(this.file),
     };
+    require('./oauth-import-transaction.cjs').recover(this);
     this.nativeHome = options.home || os.homedir();
     this.nativeEnv = options.env || process.env;
     this.launchEnv = options.launchEnv || process.env;
@@ -522,8 +523,18 @@ class HarnessManager {
     const source = this.oauthHistorySources().find((s) => s.harness === id);
     const envKeys = id === "codex" ? ["CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_CLIENT_ID"]
       : id === "claude" ? ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"] : [];
-    return { ...source, blocked: envKeys.some((k) => this.nativeEnv[k])
-      ? "当前环境变量覆盖原生登录，请先在客户端清除覆盖后再切换 OAuth" : "" };
+    let blocked = envKeys.some((k) => this.nativeEnv[k])
+      ? "当前环境变量覆盖原生登录，请先在客户端清除覆盖后再切换 OAuth" : "";
+    if (id === 'claude' && !blocked && source?.dir) {
+      try {
+        const settings = nativeDocument(readNative(path.join(source.dir, 'settings.json')), 'json').data;
+        if (settings.env !== undefined && (!settings.env || typeof settings.env !== 'object' || Array.isArray(settings.env)))
+          blocked = 'Claude 用户级 settings.env 格式无法确认，未切换 OAuth';
+        else if (envKeys.some(k => settings.env?.[k]))
+          blocked = 'Claude 用户级 settings.env 覆盖原生登录；请先在 Claude 设置中处理覆盖后再切换 OAuth';
+      } catch { blocked = 'Claude 用户级 settings.json 无法安全读取，未切换 OAuth'; }
+    }
+    return { ...source, blocked };
   }
   launcher(harness) {
     this.spec(harness);
@@ -595,20 +606,11 @@ class HarnessManager {
       );
     const { provider, record } = normalizeOAuth(
       source.kind,
-      readJson(source.file),
+      sourceData(source),
       source.sourceProvider,
     );
-    // Always import into a NEW profile; never overwrite a token that pi may be refreshing.
-    const id = this.add("pi", label || source.label, provider);
-    atomic(
-      path.join(this.root("pi", id), "auth.json"),
-      JSON.stringify({ [provider]: record }, null, 2),
-    );
-    const p = this.state.profiles.find((p) => p.id === id);
-    p.importedFrom = source.label;
-    p.importedAt = new Date().toISOString();
-    this.save();
-    return id;
+    if (!this.piProviders.some(p => p.id === provider)) throw Error('本机 pi 的 OAuth 能力已变化，请刷新');
+    return require('./oauth-import-transaction.cjs').importProfile(this, label || source.label, provider, record, source.label);
   }
   save() {
     atomic(this.file, JSON.stringify(this.state, null, 2));
@@ -640,7 +642,7 @@ class HarnessManager {
       workspace: this.state.workspace,
       piOAuthProviders: this.piProviders,
       oauthSources: accountsOnly ? [] : this.oauthSources().map(
-        ({ file, sourceProvider, ...s }) => s,
+        ({ file, sourceProvider, credentialId, ...s }) => s,
       ),
       clients: ACTIVE_SPECS.map((s) => {
         if (s.nativeLoginOnly) {

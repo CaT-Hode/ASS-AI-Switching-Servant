@@ -48,7 +48,7 @@ test("historical Codex file evidence and historical OpenCode JWT evidence do not
   const old = jwt({ exp: 2000000000, "https://api.openai.com/auth": { chatgpt_account_id: "synthetic-workspace" } });
   assert.equal(normalizeOAuth("codex", codex({ access_token: old }, { auth_mode: undefined })).provider, "openai-codex");
   assert.equal(normalizeOAuth("opencode", { openai: opencode({ access: old, accountId: undefined }) }, "openai").record.accountId, "synthetic-workspace");
-  assert.equal(normalizeOAuth("codex", codex({ access_token: jwt({ exp: 2000000000 }) })).record.accountId, "synthetic-workspace");
+  assert.throws(() => normalizeOAuth("codex", codex({ access_token: jwt({ exp: 2000000000 }) })), { code: 'oauth_access_account_missing' });
 });
 
 test("new SIWC grants are refused rather than losing issued client, scopes or host metadata", () => {
@@ -105,8 +105,7 @@ test("pi supporting only new openai does not make legacy Codex transferable; exp
     { supported: [{ id: "openai" }] });
   assert.equal(unknown.compatible, false);
   assert.equal(unknown.reasonCode, "oauth_grant_unknown");
-  const opaque = normalizeOAuth("opencode", { openai: opencode({ access: "opaque-legacy", clientId: CLIENT }) }, "openai");
-  assert.equal(opaque.provider, "openai-codex");
+  assert.throws(() => normalizeOAuth("opencode", { openai: opencode({ access: "opaque-legacy", clientId: CLIENT }) }, "openai"), { code: 'oauth_access_account_missing' });
   const expired = oauthTransferCompatibility("codex", codex({ access_token: legacyAccess({ exp: 1500000000 }) }), undefined, { supported });
   assert.equal(expired.compatible, true);
   assert.equal(expired.expired, true);

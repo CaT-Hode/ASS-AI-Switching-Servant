@@ -672,7 +672,8 @@ export function Clients({
                   </div>
                 ))}
                 <p className="hint">
-                  导入会新建独立账户，不覆盖来源。两端分别刷新令牌，可能使另一端失效。
+                  当前支持 Codex、Claude Code、OpenCode → pi 单向导入；不支持 pi → OpenCode 或 OpenCode OAuth 历史切号。
+                  导入会新建独立账户，不覆盖来源。仅核对格式，未验证刷新或订阅权益；两端共享 refresh grant，分别刷新或撤销可能使另一端失效。
                 </p>
               </details>
             )}

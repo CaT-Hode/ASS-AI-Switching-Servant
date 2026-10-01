@@ -241,7 +241,7 @@ test("pi import always creates a new account, keeps source immutable and rendere
   const original = JSON.stringify({
     tokens: {
       access_token:
-        "h." + Buffer.from('{"exp":2000000000}').toString("base64url") + ".s",
+        "h." + Buffer.from('{"exp":2000000000,"https://api.openai.com/auth":{"chatgpt_account_id":"acc"}}').toString("base64url") + ".s",
       refresh_token: "secret-refresh",
       account_id: "acc",
     },
