@@ -132,7 +132,7 @@ function nativeFile(harness, dir, cwd, id, timestamp) {
   if (harness === 'dsh') return path.join(dir, 'sessions', codecs.dshSlug(cwd), id, 'session.v3.jsonl.zstd');
   throw Error('此客户端使用原生导入接口');
 }
-function prepare() {
+function preparePlan() {
   const p = project(data.projectId), t = thread(p, data.threadId), harness = data.harness;
   safePath(data.dir); if (!fs.statSync(p.cwd).isDirectory()) throw Error('项目目录不存在');
   const version = hash(t.refs.join(':') + (harness === 'opencode' ? ':' + (data.nativeVersion || 1) : '')), prior = t.routes.find((r) => r.harness === harness && r.version === version && pathKey(r.dir) === pathKey(data.dir));
@@ -144,7 +144,7 @@ function prepare() {
       // file without rewriting it, and report the actual storage relationship.
       prior.mode = source.dev === native.dev && source.ino === native.ino ? 'hardlink' : 'copy';
     }
-    return { state: data.state, ...prior, cwd: p.cwd };
+    return { state: data.state, ...prior, cwd: p.cwd, existing: true };
   }
   const digest = hash(p.id + ':' + t.id + ':' + harness + ':' + version + ':' + pathKey(data.dir));
   const sessionId = harness === 'opencode' ? 'ses_' + digest.slice(0, 26) : `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
@@ -154,16 +154,57 @@ function prepare() {
   if (messages[0]?.role === 'user') messages[0] = { ...messages[0], text: `[来自 ${labels[from]} 的同步]\n` + messages[0].text };
   const result = codecs.encode(harness, { id: sessionId, cwd: p.cwd, title, messages, createdAt: timestamp, nativeVersion: data.nativeVersion });
   const file = path.join(data.vault, 'projections', harness, sessionId + result.suffix); safePath(file); fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (!fs.existsSync(file)) fs.writeFileSync(file, result.bytes, { flag: 'wx', mode: 0o600 });
-  let target = file, mode = 'import';
-  if (harness !== 'opencode') {
-    target = nativeFile(harness, data.dir, p.cwd, sessionId, timestamp); safePath(target); fs.mkdirSync(path.dirname(target), { recursive: true });
-    if (fs.existsSync(target)) throw Error('已有同名会话，未覆盖');
-    try { fs.linkSync(file, target); mode = 'hardlink'; }
-    catch (e) { if (!['EXDEV', 'EPERM', 'ENOTSUP'].includes(e.code)) throw e; fs.copyFileSync(file, target, fs.constants.COPYFILE_EXCL); mode = 'copy'; }
+  if (!fs.existsSync(file)) {
+    const fd = fs.openSync(file, 'wx', 0o600);
+    try { fs.writeFileSync(fd, result.bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   }
-  const route = { harness, sessionId, version, refs: [...t.refs], dir: data.dir, file, nativeFile: target, mode, createdAt: timestamp };
-  t.routes.push(route);
+  const target = harness === 'opencode' ? file : nativeFile(harness, data.dir, p.cwd, sessionId, timestamp);
+  safePath(target);
+  if (harness !== 'opencode' && fs.existsSync(target)) throw Error('已有同名会话，未覆盖');
+  const route = { harness, sessionId, version, refs: [...t.refs], dir: data.dir, file, nativeFile: target,
+    mode: harness === 'opencode' ? 'import' : 'copy', createdAt: timestamp };
+  // Only the vault is written here. The parent must durably record this intent
+  // before any native path becomes visible to discovery or another process.
+  return { intent: { projectId: p.id, threadId: t.id, cwd: p.cwd, nativeVersion: data.nativeVersion || 1,
+    route, digest: hash(fs.readFileSync(file)) } };
+}
+function preparePublish() {
+  const intent = data.state.pendingPrepare;
+  if (!intent) throw Error('同步发布意图不存在');
+  const p = project(intent.projectId), t = thread(p, intent.threadId), route = { ...intent.route }, harness = route.harness;
+  if (!p.enabled || !p.targets.includes(harness) || !codecs.HARNESSES.includes(harness) || pathKey(p.cwd) !== pathKey(intent.cwd)) throw Error('同步发布身份已变化，未写入');
+  const version = hash(t.refs.join(':') + (harness === 'opencode' ? ':' + intent.nativeVersion : ''));
+  const digest = hash(p.id + ':' + t.id + ':' + harness + ':' + version + ':' + pathKey(route.dir));
+  const sessionId = harness === 'opencode' ? 'ses_' + digest.slice(0, 26) : `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+  const suffix = harness === 'dsh' ? '.jsonl.zstd' : harness === 'opencode' ? '.json' : '.jsonl';
+  const file = path.join(data.vault, 'projections', harness, sessionId + suffix);
+  const target = harness === 'opencode' ? file : nativeFile(harness, route.dir, p.cwd, sessionId, route.createdAt);
+  if (route.sessionId !== sessionId || route.version !== version || JSON.stringify(route.refs) !== JSON.stringify(t.refs) ||
+      pathKey(file) !== pathKey(route.file) || pathKey(target) !== pathKey(route.nativeFile)) throw Error('同步发布路径或身份校验失败');
+  safePath(file); safePath(target); safePath(route.dir);
+  const check = candidate => {
+    const stat = fs.statSync(candidate);
+    if (!stat.isFile() || hash(fs.readFileSync(candidate)) !== intent.digest) throw Error('同步副本发生外部变化，保留文件，未完成发布');
+    const row = harness === 'opencode' ? codecs.decodeOpenCode(JSON.parse(fs.readFileSync(candidate, 'utf8')))
+      : codecs.readConversation({ harness, file: candidate, sessionId });
+    if (row.pending || row.sessionId !== sessionId || pathKey(row.cwd) !== pathKey(p.cwd) ||
+        JSON.stringify(row.messages.map(m => hash(JSON.stringify({ role: m.role, text: m.text })))) !== JSON.stringify(route.refs))
+      throw Error('同步副本内容或身份已变化，保留文件，未完成发布');
+  };
+  check(file);
+  if (harness !== 'opencode') {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    if (!fs.existsSync(target)) {
+      try { fs.linkSync(file, target); }
+      catch (e) { if (!['EXDEV', 'EPERM', 'ENOTSUP'].includes(e.code)) throw e; fs.copyFileSync(file, target, fs.constants.COPYFILE_EXCL); }
+    }
+    check(target);
+    const source = fs.statSync(file), native = fs.statSync(target);
+    route.mode = source.dev === native.dev && source.ino === native.ino ? 'hardlink' : 'copy';
+    const fd = fs.openSync(target, 'r+'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  }
+  if (!t.routes.some(r => r.harness === harness && r.sessionId === sessionId && pathKey(r.nativeFile) === pathKey(target))) t.routes.push(route);
+  delete data.state.pendingPrepare;
   // Keep the retired identity: only this newly owned path is exempt, so an
   // old copy at another path cannot compete with or re-enter the live graph.
   return { state: data.state, ...route, cwd: p.cwd };
@@ -242,7 +283,8 @@ function releaseCommit() {
   if (data.action === 'trash-restore') return require('./conversation-trash.cjs').restore({ vault: data.vault, secret: data.state.secret, entry: data.entry });
   if (data.action === 'discover') return discover();
   if (data.action === 'sync') return sync();
-  if (data.action === 'prepare') return prepare();
+  if (data.action === 'prepare-plan') return preparePlan();
+  if (data.action === 'prepare-publish') return preparePublish();
   if (data.action === 'release-plan') return releasePlan();
   if (data.action === 'release-commit') return releaseCommit();
   if (data.action === 'native-preview') {

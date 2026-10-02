@@ -6,7 +6,7 @@
 
 ASS（Agent-Switching-Servant）是你的 Windows 桌面 AI 路由与账户助手。把模型、API 凭据与官方授权放到一个独立窗口，切换客户端时不必反复搬配置。关闭窗口后继续在托盘运行。
 
-v0.3.1 修正 DSH / Kimi / OpenCode 的原生格式兼容性、OAuth 导入事务和 Claude 切号覆盖检测，并补齐 OpenCode v2 数据库授权来源。详见 [v0.3.1 发布说明](docs/release-v0.3.1.md)。
+v0.3.4 修正项目会话同步中断恢复、Anthropic 上下文耗尽标记、历史翻页后的正文恢复和 Kimi 空模型密钥继承；DSH 原生目录读取当前运行实例的实际模型，不再填充固定默认模型，并修复同一凭据的重复空卡片。详见 [v0.3.4 发布说明](docs/release-v0.3.4.md)。
 
 ## 能做什么
 

@@ -1,6 +1,6 @@
 const crypto = require("node:crypto");
 const { endpoint, EFFORTS, PROTOCOLS } = require("./models.cjs");
-const { convertRequest, sseMessages } = require("./adapters.cjs");
+const { convertRequest, sseMessages, anthropicLimited } = require("./adapters.cjs");
 const { protocolEndpoint, providerSessionHeaders } = require("./provider-transport.cjs");
 const { abortable } = require("./abortable.cjs");
 const modelKey = (provider, model) => JSON.stringify([provider, model]);
@@ -209,7 +209,7 @@ async function inspectStream(stream, protocol, nonce, observe = () => {}, signal
       if (event.delta?.type === "text_delta" && event.delta.text) text = true;
       if (event.delta?.type === "thinking_delta") reasoningObserved = true;
       if (event.type === "message_delta")
-        incomplete = event.delta?.stop_reason === "max_tokens";
+        incomplete ||= anthropicLimited(event.delta?.stop_reason);
       if (event.type === "message_stop") terminal = true;
     } else {
       const c = event.choices?.[0],

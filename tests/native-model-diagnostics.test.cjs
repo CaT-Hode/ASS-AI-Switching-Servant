@@ -21,6 +21,25 @@ const native = (id, dir, file, provider, extras = {}) => ({ id, name: id, accoun
   authType: "api", ready: true, nativeDir: dir, sourcePath: file, ...extras }] });
 const jwt = (payload) => "header." + Buffer.from(JSON.stringify(payload)).toString("base64url") + ".signature";
 
+test('Kimi empty model credentials inherit provider authorization; unknown model env does not override it', t => {
+  const f = fixture(t), TOML = require('@iarna/toml');
+  for (const provider of [{ api_key: 'provider-fixture' }, { api_key_env: 'QA_PROVIDER_KEY' }]) {
+    f.env.QA_PROVIDER_KEY = 'provider-fixture'; f.env.QA_MODEL_KEY = 'unsupported-fixture';
+    const models = Object.fromEntries([undefined, '', '   ', 'model-fixture'].map((key, i) => ['m' + i,
+      { provider_id: 'p', name: 'wire', ...(key === undefined ? {} : { api_key: key }), api_key_env: 'QA_MODEL_KEY' }]));
+    f.put('.kimi-code/config.toml', TOML.stringify({ providers: { p: { type: 'openai', base_url: 'http://127.0.0.1:12345/v1', ...provider } }, models }));
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const c = f.client('kimi'), rows = f.rows(c);
+      assert.equal(rows.length, 4);
+      assert.deepEqual(rows.map(m => f.resolve(c, m).request.headers.authorization),
+        ['Bearer provider-fixture', 'Bearer provider-fixture', 'Bearer provider-fixture', 'Bearer model-fixture']);
+    }
+  }
+  f.put('.kimi-code/config.toml', TOML.stringify({ providers: { p: { type: 'openai', base_url: 'http://127.0.0.1:12345/v1' } },
+    models: { noKey: { provider_id: 'p', name: 'wire', api_key: '', api_key_env: 'QA_MODEL_KEY' } } }));
+  const c = f.client('kimi'); assert.throws(() => f.resolve(c, f.rows(c)[0]), /凭据|密钥/);
+});
+
 test("Kimi rows get isolated identities across homes, use native chat and never expose keys", (t) => {
   const f = fixture(t), file = f.put(".kimi-code/config.toml", kimi()), old = f.put(".kimi/config.toml", kimi("legacy-fixture-key"));
   const before = [file, old].map((p) => fs.readFileSync(p, "utf8")), c = f.client("kimi"), rows = f.rows(c);

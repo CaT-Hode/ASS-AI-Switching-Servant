@@ -24,8 +24,19 @@ function usesProfile(version) {
 function target(dir, manager) {
   return memoRead(target, [dir, manager], () => resolveTarget(dir, manager));
 }
+function runtimeFile(dir) {
+  return ['dsh-app/web.json', 'desktop-link/web.json', 'web.json'].map(file => path.join(dir, file)).find(file => fs.existsSync(file));
+}
+function catalogStamp(dir) {
+  const location = target(dir), files = [runtimeFile(dir), location.config, path.join(dir, '.credentials.yaml')].filter(Boolean);
+  return JSON.stringify(files.map(file => {
+    require('./native-fields.cjs').safePath(file);
+    try {const s=fs.statSync(file);return [file,s.size,s.mtimeMs,s.ctimeMs,s.ino];}
+    catch(e) {if(e.code==='ENOENT')return [file,null];throw e;}
+  }));
+}
 function resolveTarget(dir, manager) {
-  const link = json(path.join(dir, "desktop-link", "web.json"));
+  const link = json(runtimeFile(dir) || path.join(dir, "desktop-link", "web.json"));
   const installed = json(path.join(dir, "desktop-link", "active-core.json"));
   // A running desktop core can differ from the source checkout selected as CLI.
   let version = link.coreVersion || installed.version;
@@ -137,4 +148,4 @@ function profileFiles(location, base) {
     name: 'dsh-profile-' + location.profile, private: true, dependencies: {}, dsh: { profile: { bundles } },
   }, null, 2) + '\n']];
 }
-module.exports = { target, profileTarget, launchArgs, validProfile, profileFiles, reasoning, usesProfile, document, edit, validField, readSettings };
+module.exports = { target, profileTarget, launchArgs, validProfile, profileFiles, reasoning, usesProfile, document, edit, validField, readSettings, runtimeFile, catalogStamp };

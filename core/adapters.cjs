@@ -366,7 +366,7 @@ async function* translateStream(stream, protocol, model) {
       }
       if (data.type === "message_delta") {
         out.usage(data.usage?.input_tokens, data.usage?.output_tokens);
-        limited = data.delta?.stop_reason === "max_tokens";
+        limited ||= anthropicLimited(data.delta?.stop_reason);
       }
       if (data.type === "message_stop") {
         ended = true;
@@ -402,4 +402,5 @@ async function* translateStream(stream, protocol, model) {
   if (!ended) throw new Error("上游流提前断开，未收到结束事件");
   yield* out.finish(limited);
 }
-module.exports = { convertRequest, translateStream, sseMessages };
+const anthropicLimited = reason => ['max_tokens', 'model_context_window_exceeded'].includes(reason);
+module.exports = { convertRequest, translateStream, sseMessages, anthropicLimited };

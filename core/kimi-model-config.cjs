@@ -19,14 +19,14 @@ function normalize(config = {}) {
       if (object(providers[provider])) provider = 'inline:' + alias;
       providers[provider] = { type: raw.protocol, base_url: raw.base_url,
         ...(has(raw.api_key) ? { api_key: raw.api_key } : {}),
-        ...(has(raw.api_key_env) ? { api_key_env: raw.api_key_env } : {}), ...(raw.oauth ? { oauth: raw.oauth } : {}) };
+        ...(raw.oauth ? { oauth: raw.oauth } : {}) };
     } else if (has(provider) && object(providers[provider]) &&
-        ['base_url', 'api_key', 'api_key_env', 'protocol', 'oauth'].some(k => Object.hasOwn(raw, k))) {
+        ['base_url', 'api_key', 'protocol', 'oauth'].some(k => Object.hasOwn(raw, k))) {
       const inherited = providers[provider], effective = { ...inherited };
-      for (const field of ['base_url', 'api_key', 'api_key_env', 'oauth']) if (Object.hasOwn(raw, field)) effective[field] = raw[field];
+      for (const field of ['base_url', 'oauth']) if (Object.hasOwn(raw, field)) effective[field] = raw[field];
       // A model key supersedes inherited authorization, never combines with it.
-      if (Object.hasOwn(raw, 'api_key')) { delete effective.api_key_env; delete effective.oauth; }
-      else if (Object.hasOwn(raw, 'api_key_env')) { delete effective.api_key; delete effective.oauth; }
+      // Kimi ignores model.api_key_env; empty model keys inherit the provider.
+      if (has(raw.api_key)) { effective.api_key = raw.api_key; delete effective.api_key_env; delete effective.oauth; }
       else if (Object.hasOwn(raw, 'oauth')) { delete effective.api_key; delete effective.api_key_env; }
       if (Object.hasOwn(raw, 'protocol')) effective.type = raw.protocol;
       if (effective.oauth && String(effective.base_url).replace(/\/+$/, '') !== String(inherited.base_url).replace(/\/+$/, '')) {

@@ -6,6 +6,39 @@ const { messagesRequest, messagesJSON, messagesEvents, normalizeMessages } = req
 const { convertRequest, translateStream } = require("../core/adapters.cjs");
 const sse = events => new Response(events.map(e => "data: " + JSON.stringify(e) + "\n\n").join(""), { headers: { "content-type": "text/event-stream" } });
 const m = { model: "test", maxOutputTokens: 2048 };
+test('Anthropic context exhaustion rejects unfinished tools while a complete tool remains callable', async () => {
+  for (const reason of ['max_tokens', 'model_context_window_exceeded', 'tool_use']) {
+    const events = [], consume = async () => { for await (const e of translateStream(sse([
+      {type:'content_block_start',index:0,content_block:{type:'tool_use',id:'call',name:'echo',input:{marker:'ok'}}},
+      {type:'message_delta',delta:{stop_reason:reason}},{type:'message_stop'},
+    ]).body,'anthropic','test')) events.push(e); };
+    if(reason==='tool_use') {await consume();assert.equal(events.at(-1).response.status,'completed');assert.equal(events.at(-1).response.output[0].type,'function_call');}
+    else await assert.rejects(consume(),/工具调用未完整/);
+  }
+});
+
+for (const stream of [false, true]) test(`Anthropic context exhaustion stays incomplete through Responses (${stream ? 'stream' : 'JSON'})`, async t => {
+  let reason = 'model_context_window_exceeded';
+  const router = new Router({ getState: () => ({ providers: [{ id: 'p', enabled: true, baseUrl: 'http://127.0.0.1:12345', apiKey: 'synthetic',
+    models: [{ ...m, enabled: true, wireApi: 'anthropic' }] }] }), fetchUpstream: async () => sse([
+      { type: 'message_start', message: { usage: { input_tokens: 7 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'Partial answer' } },
+      { type: 'message_delta', delta: { stop_reason: reason }, usage: { output_tokens: 3 } }, { type: 'message_stop' },
+    ]) });
+  await router.start(0); t.after(() => router.stop());
+  for (reason of ['model_context_window_exceeded', 'max_tokens', 'end_turn', 'refusal', 'model_context_window_exceeded']) {
+    const response = await fetch(`http://127.0.0.1:${router.port}/clients/ASS/v1/responses`, { method: 'POST',
+      headers: { authorization: 'Bearer ' + router.clientToken, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: require('../core/models.cjs').codexModelId('p', 'test'), input: 'test', stream }) });
+    assert.equal(response.status, 200);
+    const body = await response.text(), final = stream ? body.split('\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6))).at(-1).response : JSON.parse(body);
+    const limited = ['max_tokens', 'model_context_window_exceeded'].includes(reason);
+    assert.equal(final.status, limited ? 'incomplete' : 'completed');
+    if (limited) assert.equal(final.incomplete_details.reason, 'max_output_tokens');
+    assert.equal(final.output[0].status, final.status); assert.equal(final.output[0].content[0].text, 'Partial answer');
+    assert.deepEqual(final.usage, { input_tokens: 7, output_tokens: 3, total_tokens: 10 });
+  }
+});
 test("CC's additional system/developer turns are preserved across all upstream protocols", () => {
   const body = { system: [{ type: "text", text: "top" }], messages: [{ role: "user", content: "hello" }, { role: "system", content: [{ type: "text", text: "extra" }] }, { role: "developer", content: "developer" }], max_tokens: 1 };
   const native = normalizeMessages(body);

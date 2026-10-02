@@ -95,21 +95,6 @@ const packages = {
   "@opencode/ai/providers/openai": "openai-responses",
   "@opencode/ai/providers/openai-compatible": "openai-chat",
 };
-// DSH llm-deepseek defaults, upstream aa8262ec. Advisory, not a live entitlement check.
-const deepseekDefaults = [
-  {
-    id: "deepseek-flash",
-    name: "DeepSeek-V41-Flash",
-    input: ["text", "image"],
-  },
-  { id: "deepseek-v4-flash", name: "DeepSeek-V4-Flash" },
-  { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro" },
-  {
-    id: "deepseek-v4-flash-vision-exp",
-    name: "DeepSeek-V4-Flash-Vision-Exp",
-    input: ["text", "image"],
-  },
-].map((m) => ({ ...m, contextWindow: 1000000 }));
 function opencodeProvider(account, dir, provider, home, env, readConfig = read) {
   return memoRead(opencodeProvider, [account.kind, account.workspace, dir, provider, home, env, readConfig],
     () => resolveOpenCodeProvider(account, dir, provider, home, env, readConfig));
@@ -223,7 +208,7 @@ function readNativeModels(client, account, home, env) {
     ) {
       const entries = Array.isArray(deep.models)
         ? deep.models
-        : deepseekDefaults;
+        : [];
       flat.push(
         ...entries
           .filter((m) => m && typeof m === "object")
@@ -233,9 +218,7 @@ function readNativeModels(client, account, home, env) {
               m && {
                 ...m,
                 nativeProvider: "deepseek-official",
-                catalogSource: Array.isArray(deep.models)
-                  ? "DSH 本机配置"
-                  : "DSH 内置目录",
+                catalogSource: "DSH 本机配置",
               }
             );
           }),
@@ -331,15 +314,22 @@ function modelSources(
   for (const client of harnesses.clients.filter((c) => c.id !== "codex")) {
     const accounts = (client.modelAccounts || client.accounts).filter((a) => a.kind !== "api" &&
       (!store.providers.some((p) => p.id === a.supplierId) ||
+        (client.id === 'dsh' && directories['native-dsh']?.accounts?.[a.id]) ||
         nativeApiModels.some((row) => row.clientId === client.id && row.accountId === a.id)));
     if (!accounts.length) continue;
     const models = new Map();
+    const visibleAccounts = [];
     const directory = directories["native-" + client.id];
     const assigned = new Map(nativeApiModels.filter((row) => row.clientId === client.id)
       .map((row) => [JSON.stringify([row.accountId, row.nativeProvider, row.model]), row.supplierId]));
-    for (const a of accounts)
-      for (const m of directory?.accounts?.[a.id]?.models ||
-        nativeModels(client, a, home || "", env)) {
+    for (const a of accounts) {
+      const before = models.size;
+      let cached = directory?.accounts?.[a.id];
+      if (client.id === 'dsh' && cached?.context) {
+        try {if(cached.context !== dsh.catalogStamp(a.nativeDir || path.dirname(a.sourcePath || ''))) cached = undefined;}
+        catch {cached = undefined;}
+      }
+      for (const m of cached?.models || nativeModels(client, a, home || "", env)) {
         const sameModelInSupplier = a.authType === "api" && a.supplierId &&
           store.providers.some((p) => p.id === a.supplierId && p.models.some((item) => item.model === m.model));
         // The model directory may call this account "deepseek" while the API
@@ -351,9 +341,15 @@ function modelSources(
           ...m, diagnosticProviderId, nativeAccountLabel: a.label || "", nativeScope: nativeScope(a),
         });
       }
+      // A saved supplier already represents this credential. An unavailable or
+      // fully assigned catalog must not turn it into another empty account.
+      const represented = store.providers.some((p) => p.id === a.supplierId) ||
+        nativeApiModels.some((row) => row.clientId === client.id && row.accountId === a.id);
+      if (!represented || models.size > before) visibleAccounts.push(a);
+    }
     const runtime = applyZCodeEntitlement(client, [...models.values()]);
     const rows = runtime.rows.map(({ nativeScope: _nativeScope, ...model }) => model);
-    if (!rows.length && assigned.size) continue;
+    if (!rows.length && !visibleAccounts.length) continue;
     const directoryError = directory?.error;
     const entitlementNotice = runtime.unresolved?.length
       ? `当前权益中的 ${runtime.unresolved.length} 个模型缺少本机目录元数据；请更新或刷新 ZCode 模型目录。` : undefined;
@@ -363,7 +359,7 @@ function modelSources(
       kind: "native",
       readOnly: true,
       enabled: true,
-      accountCount: accounts.filter((a) => !a.catalogOnly).length,
+      accountCount: visibleAccounts.filter((a) => !a.catalogOnly).length,
       catalogError: directoryError,
       entitlementNotice,
       modelEntitlement: runtime.entitlement,

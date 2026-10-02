@@ -31,6 +31,12 @@ class ProjectConversations {
     this.state.secret ||= crypto.randomBytes(32).toString('base64');
     atomic(this.file, JSON.stringify({ encrypted: this.encryption.encryptString(JSON.stringify(this.state)).toString('base64') }));
   }
+  async recoverPrepare() {
+    if (!this.state.pendingPrepare) return;
+    const old = this.state, r = await this.run('prepare-publish'); this.state = r.state;
+    try { this.persist(); } catch (e) { this.state = old; throw e; }
+    return r;
+  }
   run(action, args = {}) {
     return new Promise((resolve, reject) => {
       const w = new Worker(path.join(__dirname, 'project-conversation-worker.cjs'), { workerData: {
@@ -49,6 +55,7 @@ class ProjectConversations {
     if (!['active', 'inactive', 'all'].includes(scope)) throw Error('对话范围无效');
     this.scope = scope;
     return this.serial(async () => {
+      await this.recoverPrepare();
       const r = await this.run('discover', { scope, history: await this.history?.() || [] }); this.candidates = r.projects; this.recordsCache = r.records;
       for (const p of this.state.projects) {
         const native = r.projects.find(row => row.id === p.id);
@@ -81,7 +88,8 @@ class ProjectConversations {
         return { ...this.summary(this.project(id)), removed: r.removed, message: '同步已关闭，已完成内容归回初始客户端；同步副本已移除，可从 ASS 备份恢复。' };
       });
     }
-    await this.serial(() => {
+    await this.serial(async () => {
+      await this.recoverPrepare();
       let p = this.state.projects.find((p) => p.id === id);
       if (!p) {
         const candidate = this.candidates.find((p) => p.id === id); if (!candidate || !path.isAbsolute(candidate.cwd)) throw Error('请先从记录中选择项目');
@@ -96,6 +104,7 @@ class ProjectConversations {
   }
   async sync(id) {
     return this.serial(async () => {
+      await this.recoverPrepare();
       if (id) this.project(id); if (!this.state.projects.some((p) => p.enabled && (!id || p.id === id))) return { updated: 0 };
       this.persist(); const r = await this.run('sync', { projectId: id });
       const old = this.state; this.state = r.state;
@@ -240,10 +249,18 @@ class ProjectConversations {
     await this.sync(projectId);
     return this.serial(async () => {
       const p = this.project(projectId); if (!p.enabled || !p.targets.includes(harness)) throw Error('请先启用此项目与客户端的同步');
-      this.persist(); const r = await this.run('prepare', { projectId, threadId, harness, dir, nativeVersion });
-      const old = this.state; this.state = r.state;
-      try { this.persist(); } catch (e) { this.state = old; throw e; }
-      const { state, ...result } = r; return result;
+      this.persist(); const plan = await this.run('prepare-plan', { projectId, threadId, harness, dir, nativeVersion });
+      let r;
+      if (plan.existing) {
+        const old = this.state; this.state = plan.state;
+        try { this.persist(); } catch (e) { this.state = old; throw e; }
+        r = plan;
+      } else {
+        this.state.pendingPrepare = plan.intent;
+        try { this.persist(); } catch (e) { delete this.state.pendingPrepare; throw e; }
+        r = await this.recoverPrepare();
+      }
+      const { state, existing, ...result } = r; return result;
     });
   }
   start() {

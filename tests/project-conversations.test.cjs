@@ -29,9 +29,100 @@ function fixture(t, all = false) {
     db.close();
   }
   const dataDir = path.join(root, 'data'), options = { dataDir, crypto: encryption, sources: () => sources };
-  const library = new ProjectConversations(options); return { root, cwd, other, dirs, sources, file, options, library };
+  const library = new ProjectConversations(options); return { root, cwd, other, dirs, sources, file, options, library, secret };
 }
 async function enable(f) { const list = await f.library.list(), p = list.items.find((p) => p.cwd === f.cwd); assert.ok(p); await f.library.configure(p.id, { enabled: true }); return p.id; }
+for (const harness of ['claude', 'pi', 'dsh', 'codex']) for (const code of ['EIO', 'ENOSPC'])
+test(`${harness} projection survives failed index ${code}, restart/retry and closing without duplicates`, async t => {
+  const f = fixture(t), id = await enable(f), th = f.library.project(id).threads[0], original = fs.readFileSync(f.file);
+  const unrelated = path.join(f.other, 'keep.txt'); fs.writeFileSync(unrelated, 'unrelated');
+  const rename = fs.renameSync; let route, failed = false;
+  fs.renameSync = function(src, dst) {
+    if(dst === f.library.file && !failed) {
+      const state = JSON.parse(f.options.crypto.decryptString(Buffer.from(JSON.parse(fs.readFileSync(src, 'utf8')).encrypted, 'base64')));
+      route = state.projects.find(p => p.id === id)?.threads.flatMap(t => t.routes).find(r => r.harness === harness);
+      if(route) { failed = true; throw Object.assign(Error('Synthetic index ' + code), {code}); }
+    }
+    return rename.apply(this, arguments);
+  };
+  try { await assert.rejects(f.library.prepare(id, th.id, harness, f.dirs[harness]), new RegExp(code)); }
+  finally { fs.renameSync = rename; }
+  assert.ok(failed); assert.ok(fs.existsSync(route.nativeFile));
+  const restarted = new ProjectConversations(f.options); await restarted.sync(id);
+  assert.equal(restarted.project(id).threads.length, 1);
+  const repeated = await restarted.prepare(id, th.id, harness, f.dirs[harness]); assert.equal(repeated.nativeFile, route.nativeFile);
+  assert.equal(restarted.project(id).threads[0].routes.length, 1);
+  await restarted.configure(id, {enabled:false}); await restarted.configure(id, {enabled:false});
+  assert.equal(fs.existsSync(route.nativeFile), false); assert.deepEqual(fs.readFileSync(f.file), original);
+  assert.equal(fs.readFileSync(unrelated, 'utf8'), 'unrelated');
+});
+for (const harness of ['claude', 'pi', 'dsh', 'codex']) for (const published of [false, true])
+test(`${harness} projection recovers real process exit ${published ? 'after' : 'before'} native publication`, async t => {
+  const f = fixture(t), id = await enable(f), th = f.library.project(id).threads[0], before = fs.readFileSync(f.file);
+  const script = path.join(f.root, 'crash.cjs');
+  fs.writeFileSync(script, `const fs=require('node:fs'),crypto=require('node:crypto');
+    const {ProjectConversations}=require(${JSON.stringify(require.resolve('../core/project-conversations.cjs'))});
+    const [dataDir,sourcesText,keyText,id,threadId,harness,dir,published]=process.argv.slice(2), key=Buffer.from(keyText,'hex');
+    const encryption={isEncryptionAvailable:()=>true,
+      encryptString(s){const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);const b=Buffer.concat([c.update(s),c.final()]);return Buffer.concat([iv,c.getAuthTag(),b]);},
+      decryptString(b){const c=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));c.setAuthTag(b.subarray(12,28));return Buffer.concat([c.update(b.subarray(28)),c.final()]).toString();}};
+    const lib=new ProjectConversations({dataDir,crypto:encryption,sources:()=>JSON.parse(sourcesText)}),run=lib.run.bind(lib);
+    lib.run=async(action,args)=>{if(action==='prepare-publish'&&published==='false')process.exit(73);
+      const r=await run(action,args);if(action==='prepare-publish')process.exit(73);return r;};
+    lib.prepare(id,threadId,harness,dir).then(()=>process.exit(1),e=>{console.error(e);process.exit(2)});`);
+  const child = require('node:child_process').spawnSync(process.execPath, [script, f.options.dataDir, JSON.stringify(f.sources), f.secret.toString('hex'), id, th.id, harness, f.dirs[harness], String(published)], {encoding:'utf8',timeout:15000});
+  assert.equal(child.status, 73, child.stderr);
+  const restarted = new ProjectConversations(f.options), intent = restarted.state.pendingPrepare; assert.ok(intent);
+  assert.equal(fs.existsSync(intent.route.nativeFile), published);
+  await restarted.list(); await restarted.sync(id); assert.equal(restarted.project(id).threads.length, 1);
+  assert.equal(restarted.state.pendingPrepare, undefined);
+  const route = await restarted.prepare(id, th.id, harness, f.dirs[harness]); assert.equal(route.nativeFile, intent.route.nativeFile);
+  await restarted.configure(id, {enabled:false}); assert.equal(fs.existsSync(route.nativeFile), false);
+  assert.deepEqual(fs.readFileSync(f.file), before);
+});
+for (const code of ['EIO', 'ENOSPC']) test(`projection intent ${code} never publishes native data; retry is safe`, async t => {
+  const f = fixture(t), id = await enable(f), th = f.library.project(id).threads[0], persist = f.library.persist.bind(f.library);
+  f.library.persist = () => { if(f.library.state.pendingPrepare) throw Object.assign(Error('Synthetic ' + code), {code}); persist(); };
+  await assert.rejects(f.library.prepare(id, th.id, 'claude', f.dirs.claude), new RegExp(code));
+  assert.equal(f.library.state.pendingPrepare, undefined);
+  assert.equal(codecs.discover(f.sources).rows.length, 1);
+  f.library.persist = persist; await f.library.prepare(id, th.id, 'claude', f.dirs.claude);
+  await f.library.sync(id); assert.equal(f.library.project(id).threads.length, 1);
+});
+for (const detached of [false, true]) test(`pending projection preserves external native edits (${detached ? 'copy' : 'hardlink'}) and reports conflict`, async t => {
+  const f = fixture(t), id = await enable(f), th = f.library.project(id).threads[0], persist = f.library.persist.bind(f.library);
+  f.library.persist = () => { if(f.library.project(id).threads[0].routes.length) throw Error('Synthetic final index EIO'); persist(); };
+  await assert.rejects(f.library.prepare(id, th.id, 'claude', f.dirs.claude), /EIO/);
+  const route = f.library.state.pendingPrepare.route;
+  if(detached) {const replacement=route.nativeFile+'.replacement';fs.writeFileSync(replacement,fs.readFileSync(route.nativeFile));fs.renameSync(replacement,route.nativeFile);}
+  fs.appendFileSync(route.nativeFile, '\n{"external":"keep every byte"}\n'); const bytes=fs.readFileSync(route.nativeFile);
+  const restarted=new ProjectConversations(f.options);
+  for(let repeat=0;repeat<2;repeat++) {
+    await assert.rejects(restarted.sync(id), /外部变化/);
+    await assert.rejects(restarted.configure(id,{enabled:false}), /外部变化/);
+    assert.deepEqual(fs.readFileSync(route.nativeFile),bytes); assert.ok(restarted.state.pendingPrepare);
+    assert.equal(restarted.project(id).threads.length,1);
+  }
+});
+test('pending publication rejects a foreign path before modifying any file', async t => {
+  const f=fixture(t),id=await enable(f),th=f.library.project(id).threads[0],persist=f.library.persist.bind(f.library);
+  f.library.persist=()=>{if(f.library.project(id).threads[0].routes.length)throw Error('Synthetic EIO');persist();};
+  await assert.rejects(f.library.prepare(id,th.id,'claude',f.dirs.claude),/EIO/);
+  const route=f.library.state.pendingPrepare.route,original=fs.readFileSync(route.nativeFile),foreign=path.join(f.other,'foreign.jsonl');
+  fs.writeFileSync(foreign,original);route.nativeFile=foreign;persist();
+  const restarted=new ProjectConversations(f.options);
+  await assert.rejects(restarted.list(),/路径或身份/);assert.deepEqual(fs.readFileSync(foreign),original);
+  assert.equal(restarted.project(id).threads[0].routes.length,0);
+});
+test('changing sync targets first commits the pending publication instead of invalidating its intent', async t => {
+  const f=fixture(t),id=await enable(f),th=f.library.project(id).threads[0],persist=f.library.persist.bind(f.library);
+  f.library.persist=()=>{if(f.library.project(id).threads[0].routes.length)throw Error('Synthetic EIO');persist();};
+  await assert.rejects(f.library.prepare(id,th.id,'claude',f.dirs.claude),/EIO/);
+  const restarted=new ProjectConversations(f.options),route=restarted.state.pendingPrepare.route;
+  await restarted.configure(id,{enabled:true,targets:['pi']});assert.equal(restarted.state.pendingPrepare,undefined);
+  assert.equal(restarted.project(id).threads.length,1);assert.equal(restarted.project(id).threads[0].routes[0].nativeFile,route.nativeFile);
+  await restarted.configure(id,{enabled:false});assert.equal(fs.existsSync(route.nativeFile),false);
+});
 test('native project rename refreshes enabled name and search, with unreadable metadata preserving the last name', async t => {
   const f=fixture(t),file=path.join(f.dirs.codex,'.codex-global-state.json');
   const rename=name=>write(file,JSON.stringify({'local-projects':{local:{id:'local',name,rootPaths:[f.cwd]}},'thread-project-assignments':{[ID]:{projectKind:'local',projectId:'local'}}}));

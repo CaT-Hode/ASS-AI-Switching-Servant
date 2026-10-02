@@ -81,15 +81,13 @@ test("OpenCode honors custom XDG/cache/config paths and plural provider syntax",
   assert.equal(m[0].displayName, "Override");
   assert.equal(m[0].contextWindow, 64000);
 });
-test("DSH official API credential gets labeled built-in models even with no explicit plugin model config", (t) => {
+test("DSH model inventory never substitutes fixed defaults for missing explicit models", (t) => {
   const { home, write } = fixture(t),
     dir = path.join(home, ".dsh"),
     a = { provider: "DEEPSEEK_API_KEY", nativeDir: dir };
   write(".dsh/settings.yaml", "agent-default-model: {}\n");
   const builtin = nativeModels({ id: "dsh" }, a, home, {});
-  assert.equal(builtin.length, 4);
-  assert.ok(builtin.some((m) => m.model === "deepseek-flash"));
-  assert.equal(builtin[0].catalogSource, "DSH 内置目录");
+  assert.deepEqual(builtin, []);
   write(".dsh/settings.yaml", "llm-deepseek:\n  models:\n    - id: selected\n");
   const overridden = nativeModels({ id: "dsh" }, a, home, {});
   assert.deepEqual(

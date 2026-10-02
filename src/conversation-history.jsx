@@ -34,6 +34,7 @@ export function ConversationHistory({ initialHarness, onClose, onChange }) {
   const [offset, setOffset] = useState(0), [selected, setSelected] = useState(null), [preview, setPreview] = useState(null), [before, setBefore] = useState(0);
   const [revision, setRevision] = useState(0), [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState(''), [cleaning, setCleaning] = useState(null);
   const previewSelection = useRef(null);
+  const [previewRevision, setPreviewRevision] = useState(0);
   events.current = { onClose, busy, cleaning };
   useEffect(() => {
     const opener = document.activeElement; panel.current?.querySelector('button')?.focus();
@@ -61,10 +62,10 @@ export function ConversationHistory({ initialHarness, onClose, onChange }) {
     let current = true; setPreview(null);
     if (selected?.id !== previewSelection.current && before) { setBefore(0); return; }
     previewSelection.current = selected?.id;
-    if (selected?.available) api.call('conversations-backup-preview', selected.id, before).then(r => { if (current) setPreview(r); })
+    if (backups && selected?.available) api.call('conversations-backup-preview', selected.id, before).then(r => { if (current) setPreview(r); })
       .catch(e => { if (current) setError(errorText(e)); });
     return () => { current = false; };
-  }, [selected?.id, selected?.capturedAt, before, revision]);
+  }, [backups, selected?.id, selected?.capturedAt, selected?.available, before, previewRevision]);
   async function act(name, ...args) {
     setBusy(name); setError(''); setNotice(''); setCleaning(null);
     try {
@@ -91,7 +92,7 @@ export function ConversationHistory({ initialHarness, onClose, onChange }) {
         <p className="conversation-history-help">归档和索引缺失的日志不自动备份。预览展示保存时的内容；清理仅移除 ASS 副本。</p>
         <div className="conversation-history-body"><nav aria-label="保留副本列表">
           {backups?.items.map(row => <article key={row.id} className={selected?.id === row.id ? 'selected' : ''}>
-            <button className="conversation-history-main" aria-pressed={selected?.id === row.id} onClick={() => { setSelected(row); setBefore(0); }}><strong>{row.title}</strong><small>{date(row.capturedAt)} · {storageSize(row.backupBytes)}</small><HistoryBadge row={row} current />{!row.available && <small>副本缺失或不完整</small>}</button>
+            <button className="conversation-history-main" aria-pressed={selected?.id === row.id} onClick={() => { setSelected(row); setBefore(0); setPreviewRevision(n => n + 1); }}><strong>{row.title}</strong><small>{date(row.capturedAt)} · {storageSize(row.backupBytes)}</small><HistoryBadge row={row} current />{!row.available && <small>副本缺失或不完整</small>}</button>
             <button className="icon-button" aria-label={'清理副本 ' + row.title} disabled={!!busy} onClick={() => cleanup(row)}><Trash2 size={14} /></button>
           </article>)}
           {backups && !backups.total && <div className="empty"><ShieldCheck size={30} /><p>暂无保留副本</p></div>}

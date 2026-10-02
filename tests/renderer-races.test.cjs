@@ -14,7 +14,7 @@ before(async () => {
       name==='model'?{provider:{id:'p',name:'Test'},onSave:async()=>{},onClose:()=>{}}:
       {initialHarness:'codex',state:{preferences:{conversations:{}},harnesses:{clients:[{id:'codex',detected:true,accounts:[]}]}},onClose:()=>{},onChange:()=>{}})));`,
     resolveDir: path.resolve(__dirname, '..'), loader: 'jsx' }, bundle: true, outfile: path.join(root, 'renderer.js'), platform: 'browser', logLevel: 'silent' });
-  fs.writeFileSync(path.join(root, 'index.html'), '<html><body><div id="root"></div><script src="renderer.js"></script></body></html>');
+  fs.writeFileSync(path.join(root, 'index.html'), '<html><head><title>ASS renderer regression</title></head><body><div id="root"></div><script src="renderer.js"></script></body></html>');
   fs.writeFileSync(path.join(root, 'main.cjs'), `const {app,BrowserWindow}=require('electron');app.setPath('userData',${JSON.stringify(path.join(root,'profile'))});app.whenReady().then(()=>{const w=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,backgroundThrottling:false}});w.loadURL('about:blank')});`);
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
   app = await electron.launch({ args: [...(process.platform === 'linux' ? ['--no-sandbox'] : []), path.join(root, 'main.cjs')], env }); page = await app.firstWindow(); page.setDefaultTimeout(process.env.CI ? 15000 : 5000);
@@ -29,8 +29,10 @@ before(async () => {
       const row = (short=false) => ({id:short?'short':'long',title:short?'Short':'Long',kind:'native',harness:'codex',available:true,nativePresent:true,capturedAt:'2026-10-02',file:'fake',backupBytes:1});
       if(name==='project-conversations-list') return {items:[{id:'p',name:'Project',cwd:'fake',enabled:false,targets:['codex'],counts:{codex:41},harnesses:['codex']}]};
       if(name==='project-conversations-records') return {total:41,items:[row(args[1].offset>0)]};
-      if(name==='conversations-backups') return {total:41,bytes:1,items:[row(args[0].offset>0)]};
+      if(name==='conversations-backups') return window.emptyList?{total:0,bytes:0,items:[]}:{total:41,bytes:1,items:[row(args[0].offset>0)]};
       if(name==='project-conversations-native-preview'||name==='conversations-backup-preview') {
+        if(window.failPreview) {window.failPreview=false;throw Error('Synthetic preview failure');}
+        if(window.deferPreview) {window.deferPreview=false;return wait('preview');}
         const [id,before]=args; return {total:id==='short'?1:80,hasEarlier:id==='long'&&!before,messages:id==='short'&&before?[]:[{role:'assistant',text:id==='short'?'Short answer':before?'Earlier answer':'Latest answer'}]}; }
       if(name==='project-conversations-trash') { if(window.deferTrash) return wait('trash'); return {items:[{id:'deleted',label:'Deleted',count:1,bytes:1,phase:'deleted'}]}; }
       if(name==='project-conversations-restore') return wait('restore');
@@ -43,6 +45,36 @@ after(async () => { await app?.close(); if(root) fs.rmSync(root,{recursive:true,
 beforeEach(async () => { rendererErrors.length = 0; await page.goto('file:///' + path.join(root,'index.html').replaceAll('\\','/')); });
 afterEach(() => assert.deepEqual(rendererErrors, [], 'no uncaught React renderer errors'));
 const mount = name => page.evaluate(name => window.mount(name), name);
+for (const earlier of [false, true]) test(`renderer history: failed next page and return to same row reloads transcript at ${earlier ? 40 : 0}`, async () => {
+  await mount('history'); await page.getByText('Latest answer', {exact:true}).waitFor();
+  if(earlier) { await page.getByRole('button',{name:'更早内容',exact:true}).click(); await page.getByText('Earlier answer',{exact:true}).waitFor(); }
+  for(let i=0;i<2;i++) {
+    await page.evaluate(()=>{window.failList=true;});
+    await page.getByRole('button',{name:'下一页副本',exact:true}).click();
+    await page.getByRole('alert').getByText('Synthetic listing failure',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'上一页副本',exact:true}).click();
+    await page.getByText(earlier?'Earlier answer':'Latest answer',{exact:true}).waitFor();
+  }
+  await page.getByRole('button',{name:/^Long/}).click(); await page.getByText('Latest answer',{exact:true}).waitFor();
+});
+test('renderer history: selecting same row retries failed preview, empty page clears it and late preview cannot win', async () => {
+  await page.evaluate(()=>{window.failPreview=true;}); await mount('history');
+  await page.getByRole('alert').getByText('Synthetic preview failure',{exact:true}).waitFor();
+  await page.getByRole('button',{name:/^Long/}).click(); await page.getByText('Latest answer',{exact:true}).waitFor();
+  await page.evaluate(()=>{window.deferPreview=true;});
+  await page.getByRole('button',{name:'更早内容',exact:true}).click(); await page.waitForFunction(()=>!!window.pending.preview);
+  await page.getByRole('button',{name:'下一页副本',exact:true}).click(); await page.getByText('Short answer',{exact:true}).waitFor();
+  await page.evaluate(()=>window.pending.preview.resolve({total:80,hasEarlier:false,messages:[{role:'assistant',text:'Stale preview'}]}));
+  await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+  assert.equal(await page.getByText('Stale preview',{exact:true}).count(),0);
+  await page.getByRole('button',{name:'上一页副本',exact:true}).click(); await page.getByText('Latest answer',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'保留当前对话',exact:true}).click(); await page.getByText('Latest answer',{exact:true}).waitFor();
+  assert.equal(await page.title(),'ASS renderer regression'); assert.match(page.url(), /index\.html$/);
+  assert.equal(await page.locator('vite-error-overlay').count(),0);
+  await page.screenshot({path:path.join(os.tmpdir(),'ass-round4-history-fixed.png')});
+  await page.evaluate(()=>{window.emptyList=true;}); await page.getByRole('button',{name:'下一页副本',exact:true}).click();
+  await page.getByText('暂无保留副本',{exact:true}).waitFor(); assert.equal(await page.getByText('Latest answer',{exact:true}).count(),0);
+});
 for (const kind of ['project','history']) test(`renderer ${kind}: automatic page selection resets transcript offset and repeats safely`, async () => {
   await mount(kind); await page.getByText('Latest answer',{exact:true}).waitFor();
   await page.getByRole('button',{name:'更早内容',exact:true}).click(); await page.getByText('Earlier answer',{exact:true}).waitFor();

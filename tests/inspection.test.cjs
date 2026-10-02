@@ -24,6 +24,14 @@ const stream = (events) =>
     events.map((e) => "data: " + JSON.stringify(e) + "\n\n").join(""),
     { headers: { "content-type": "text/event-stream" } },
   );
+test('Anthropic context exhaustion cannot pass capability inspection', async () => {
+  for (const reason of ['end_turn', 'max_tokens', 'model_context_window_exceeded', 'refusal', 'model_context_window_exceeded']) {
+    const result = await inspectStream(stream([{type:'content_block_delta',delta:{type:'text_delta',text:'OK'}},
+      {type:'message_delta',delta:{stop_reason:reason}}, {type:'message_stop'}]).body, 'anthropic', 'nonce');
+    const limited = ['max_tokens', 'model_context_window_exceeded'].includes(reason);
+    assert.equal(result.incomplete, limited); assert.equal(result.completed, !limited); assert.equal(result.text, true);
+  }
+});
 function success(body) {
   const marker = body.input.match(/marker ([a-f0-9]+)/)?.[1];
   return stream([

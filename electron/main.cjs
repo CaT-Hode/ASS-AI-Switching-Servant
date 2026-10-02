@@ -248,6 +248,9 @@ async function readNativeModelMetadata(id, signal) {
     .snapshot()
     .clients.find((c) => "native-" + c.id === id);
   if (!client) throw Error("原生客户端不存在");
+  if (client.id === 'dsh') return require('../core/dsh-model-catalog.cjs').readDshModelMetadata(client, {
+    home: harnesses.nativeHome, env: harnesses.nativeEnv, signal,
+  });
   const accounts = {},
     errors = [];
   for (const a of (client.modelAccounts || client.accounts).filter((a) => a.kind !== "api")) {
@@ -316,6 +319,10 @@ async function syncNativeSuppliers() {
       }
     }
     for (const client of clients) {
+      // DSH's local picker does not depend on a remote API verification result.
+      if (client.id === 'dsh') {
+        try { await readModelMetadata('native-dsh', true); } catch {}
+      }
       const accounts = (client.modelAccounts || client.accounts).filter((a) => nativeOfficialProvider(client, a));
       let verified = false;
       for (const account of accounts) {
@@ -325,7 +332,7 @@ async function syncNativeSuppliers() {
           verified ||= accountInfo.public(provider).remote && !accountInfo.public(provider).error;
         } catch {}
       }
-      if (verified) {
+      if (verified && client.id !== 'dsh') {
         try { await readModelMetadata("native-" + client.id, true); } catch {}
       }
     }
