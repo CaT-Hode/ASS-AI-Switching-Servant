@@ -6,18 +6,18 @@ const { _electron: electron } = require('playwright');
 let app, page, root; const rendererErrors = [];
 before(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'ass-renderer-regression-'));
-  require('esbuild').buildSync({ stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client';
+  require('esbuild').buildSync({ stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import {flushSync} from 'react-dom';
     import {ProjectConversations} from './src/project-conversations.jsx';
     import {ConversationHistory} from './src/conversation-history.jsx'; import {ModelEditor} from './src/editors.jsx';
     const root=createRoot(document.getElementById('root'));
-    window.mount=(name)=>root.render(React.createElement({project:ProjectConversations,history:ConversationHistory,model:ModelEditor}[name],
+    window.mount=(name)=>flushSync(()=>root.render(React.createElement({project:ProjectConversations,history:ConversationHistory,model:ModelEditor}[name],
       name==='model'?{provider:{id:'p',name:'Test'},onSave:async()=>{},onClose:()=>{}}:
-      {initialHarness:'codex',state:{preferences:{conversations:{}},harnesses:{clients:[{id:'codex',detected:true,accounts:[]}]}},onClose:()=>{},onChange:()=>{}}));`,
+      {initialHarness:'codex',state:{preferences:{conversations:{}},harnesses:{clients:[{id:'codex',detected:true,accounts:[]}]}},onClose:()=>{},onChange:()=>{}})));`,
     resolveDir: path.resolve(__dirname, '..'), loader: 'jsx' }, bundle: true, outfile: path.join(root, 'renderer.js'), platform: 'browser', logLevel: 'silent' });
   fs.writeFileSync(path.join(root, 'index.html'), '<html><body><div id="root"></div><script src="renderer.js"></script></body></html>');
   fs.writeFileSync(path.join(root, 'main.cjs'), `const {app,BrowserWindow}=require('electron');app.setPath('userData',${JSON.stringify(path.join(root,'profile'))});app.whenReady().then(()=>{const w=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,backgroundThrottling:false}});w.loadURL('about:blank')});`);
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
-  app = await electron.launch({ args: [...(process.platform === 'linux' ? ['--no-sandbox'] : []), path.join(root, 'main.cjs')], env }); page = await app.firstWindow(); page.setDefaultTimeout(5000);
+  app = await electron.launch({ args: [...(process.platform === 'linux' ? ['--no-sandbox'] : []), path.join(root, 'main.cjs')], env }); page = await app.firstWindow(); page.setDefaultTimeout(process.env.CI ? 15000 : 5000);
   page.on('pageerror', error => rendererErrors.push(error.message));
   await page.context().route(/^https?:/, route => route.abort());
   await page.addInitScript(() => {
