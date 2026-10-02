@@ -7,7 +7,7 @@ const path = require("node:path");
 const SPEC = Object.freeze({
   size: 1254, center: [626.5, 627], petals: 8, gap: 20, petalWidthScale: 0.93,
   rootDepth: 32, simplifyTolerance: 1.5, holeRadius: 116,
-  petalColor: "#82807c", hubColor: "#dc782f",
+  petalColor: "#ffffff", petalOutlineWidth: 50, canvasPadding: 32, hubColor: "#dc782f",
 });
 const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
@@ -97,8 +97,11 @@ function narrowPetal(petal) {
     const offset = sub([Number(tokens[i++]), Number(tokens[i++])], SPEC.center);
     transformed.push(point(add(SPEC.center, add(mul(radial, dot(offset, radial)), mul(tangent, dot(offset, tangent) * SPEC.petalWidthScale)))));
   }
-  const d = transformed.join(' ');
-  return { ...petal, d, tag: petal.tag.replace(/\bd="[^"]*"/, `d="${d}"`) };
+  const d = transformed.join(' ').replace(/\s*Z\s*$/i, '') + ' Z';
+  // Only the outside half of this stroke is visible: the original petal
+  // silhouettes are punched out below, so white occupies their surrounding gaps.
+  const tag = `<path id="${petal.id}" d="${d}" fill="none" stroke="${SPEC.petalColor}" stroke-width="${SPEC.petalOutlineWidth * 2}" stroke-linejoin="round"/>`;
+  return { ...petal, d, tag };
 }
 function createGeometry() {
   const petals = loadPetals().map(narrowPetal), roots = petals.map(rootContour).sort((a, b) => a.angle - b.angle);
@@ -126,6 +129,9 @@ function buildLogoSvg(geometry = createGeometry()) {
   const outer = `M ${point(geometry.hub[0])} ` + geometry.hub.slice(1).map(p => `L ${point(p)}`).join(" ") + " Z";
   const [cx, cy] = SPEC.center, r = SPEC.holeRadius;
   const hole = `M ${n(cx + r)} ${n(cy)} A ${r} ${r} 0 1 0 ${n(cx - r)} ${n(cy)} A ${r} ${r} 0 1 0 ${n(cx + r)} ${n(cy)} Z`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254" role="img" aria-labelledby="title">\n<title id="title">ASS — narrow traced petals and a bold fitted orange hub</title>\n${geometry.petals.map(p => p.tag).join("\n")}\n<path id="hub-fitted" fill="${SPEC.hubColor}" fill-rule="evenodd" d="${outer} ${hole}"/>\n</svg>\n`;
+  const centerClearance = `M ${point(geometry.perimeter[0])} ` + geometry.perimeter.slice(1).map(p => `L ${point(p)}`).join(" ") + " Z";
+  const cutouts = geometry.petals.map(p => `<path d="${p.d}" fill="#000000"/>`).join("\n");
+  const padding = SPEC.canvasPadding, side = SPEC.size + padding * 2;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="${-padding} ${-padding} ${side} ${side}" role="img" aria-labelledby="title">\n<title id="title">ASS — joined bold white outlines with hollow petals and an orange gear</title>\n<defs>\n<mask id="petal-cutouts" maskUnits="userSpaceOnUse" x="${-padding}" y="${-padding}" width="${side}" height="${side}" style="mask-type:luminance">\n<rect x="${-padding}" y="${-padding}" width="${side}" height="${side}" fill="#ffffff"/>\n${cutouts}\n<path d="${centerClearance}" fill="#000000"/>\n</mask>\n</defs>\n<g mask="url(#petal-cutouts)">\n${geometry.petals.map(p => p.tag).join("\n")}\n</g>\n<path id="hub-fitted" fill="${SPEC.hubColor}" fill-rule="evenodd" d="${outer} ${hole}"/>\n</svg>\n`;
 }
 module.exports = { SPEC, loadPetals, narrowPetal, samplePath, createGeometry, buildLogoSvg, pointSegmentDistance };

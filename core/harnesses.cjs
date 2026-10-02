@@ -525,6 +525,10 @@ class HarnessManager {
       : id === "claude" ? ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"] : [];
     let blocked = envKeys.some((k) => this.nativeEnv[k])
       ? "当前环境变量覆盖原生登录，请先在客户端清除覆盖后再切换 OAuth" : "";
+    if (id === 'pi' && !blocked) {
+      const launcher = this.launcher('pi');
+      if (!/^0\.99\./.test(launcher.version || '')) blocked = 'Pi 登录锁协议无法确认；请配置受支持的 0.99.x 原生安装目录后再切换 OAuth';
+    }
     if (id === 'claude' && !blocked && source?.dir) {
       try {
         const settings = nativeDocument(readNative(path.join(source.dir, 'settings.json')), 'json').data;

@@ -142,3 +142,18 @@ test("native results survive config changes as stale history and reject in-fligh
   assert.equal(restored.record(result, fingerprint), false);
   assert.equal(restored.public()[modelKey(result.providerId, result.model)].stale, true);
 });
+
+test('Kimi model url/key and same-host flat routes retain isolated private identities', t => {
+  const f = fixture(t), TOML = require('@iarna/toml');
+  f.put('.kimi-code/config.toml', TOML.stringify({ providers: { p: { type: 'openai', base_url: 'https://same.test/provider/v1', api_key: 'provider-fixture' } }, models: {
+    override: { provider_id: 'p', name: 'wire', base_url: 'https://same.test/model/v1', api_key: 'model-fixture' },
+    modelKey: { provider_id: 'p', name: 'wire', api_key: 'key-only-fixture' },
+    first: { name: 'wire', protocol: 'openai', base_url: 'https://same.test/first/v1', api_key: 'first-fixture' },
+    second: { name: 'wire', protocol: 'openai', base_url: 'https://same.test/second/v1', api_key: 'second-fixture' },
+  } }));
+  const c = f.client('kimi'), rows = f.rows(c), targets = rows.map(m => f.resolve(c, m));
+  assert.equal(rows.length, 4); assert.equal(new Set(rows.map(m => m.diagnosticProviderId)).size, 4);
+  assert.deepEqual(targets.map(t => t.provider.apiKey), ['model-fixture', 'key-only-fixture', 'first-fixture', 'second-fixture']);
+  assert.deepEqual(targets.map(t => new URL(t.request.url).pathname), ['/model/v1/chat/completions', '/provider/v1/chat/completions', '/first/v1/chat/completions', '/second/v1/chat/completions']);
+  assert.doesNotMatch(JSON.stringify(c) + JSON.stringify(rows), /model-fixture|key-only-fixture|first-fixture|second-fixture/);
+});

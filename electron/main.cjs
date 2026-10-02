@@ -1038,6 +1038,12 @@ else {
             if (codecs.pathKey(current.dir) !== codecs.pathKey(item.dir)) throw Error('OpenCode 数据目录已变化，未删除旧目录的记录');
             if (item.signature && codecs.hash(JSON.stringify(codecs.openCodeBundle(path.join(item.dir, 'opencode.db'), item.sessionId))) !== item.signature)
               throw Error('OpenCode 会话已改变，请重新关闭同步');
+            if (!item.signature) {
+              const expected = JSON.parse(fs.readFileSync(item.file, 'utf8'));
+              try { const existing = codecs.openCodeBundle(path.join(item.dir, 'opencode.db'), item.sessionId);
+                if (!require('../core/opencode-version.cjs').equal(existing, expected)) throw Error('OpenCode 已有同 ID 的其他内容，未覆盖');
+              } catch (error) { if (!/会话不存在|unable to open database file/.test(error.message)) throw error; }
+            }
             await new Promise((resolve, reject) => require('node:child_process').execFile(launcher.executable,
               [...launcher.args, ...require('../core/opencode-version.cjs').command(require('../core/opencode-version.cjs').version(launcher, item.dir), item.signature ? 'delete' : 'import', item.signature ? item.sessionId : item.file)],
               { cwd: item.cwd, env: current.env, windowsHide: true, timeout: 30000, maxBuffer: 1024 ** 2 },
@@ -1048,8 +1054,10 @@ else {
               catch (error) { if (/会话不存在/.test(error.message)) removed = true; else throw error; }
               if (!removed) throw Error('OpenCode 未移除同步副本，未关闭同步；请重试');
             } else {
+              const expected = JSON.parse(fs.readFileSync(item.file, 'utf8'));
               const returned = codecs.openCodeBundle(path.join(item.dir, 'opencode.db'), item.sessionId);
-              if (codecs.pathKey(returned.info.directory) !== codecs.pathKey(item.cwd)) throw Error('OpenCode 归回位置不一致，未关闭同步');
+              if (!require('../core/opencode-version.cjs').equal(returned, expected)) throw Error('OpenCode 归回内容不一致，未关闭同步');
+              if (codecs.pathKey(require('../core/opencode-version.cjs').cwd(returned)) !== codecs.pathKey(item.cwd)) throw Error('OpenCode 归回位置不一致，未关闭同步');
             }
           }
         } });
@@ -1073,7 +1081,7 @@ else {
       register(
         "supplier-refresh",
         async (sourceId, accountId, automatic = false) => {
-          if (sourceId === "official" || sourceId.startsWith("native-")) {
+          if (sourceId === "official" || (!store.state.providers.some(p => p.id === sourceId) && /^native-(codex|claude|dsh|opencode|pi|kimi|zcode)$/.test(sourceId))) {
             const clientId =
               sourceId === "official" ? "codex" : sourceId.slice(7);
             const client = informationClient(clientId);
@@ -1267,10 +1275,21 @@ else {
         const prepared = await projectConversations.prepare(id, thread, harness, initial.dir,
           harness === 'opencode' ? require('../core/opencode-version.cjs').version(harnesses.launcher(harness), initial.dir) : 1);
         if (harness === "opencode") {
+          const preCodecs = require('../core/project-codecs.cjs'), preContract = require('../core/opencode-version.cjs');
+          if (fs.existsSync(path.join(initial.dir, 'opencode.db'))) {
+            try { const current = preCodecs.openCodeBundle(path.join(initial.dir, 'opencode.db'), prepared.sessionId);
+              if (!preContract.equal(current, JSON.parse(fs.readFileSync(prepared.file, 'utf8')))) throw Error('OpenCode 已有同 ID 的其他内容，未覆盖');
+            } catch (error) { if (!/会话不存在/.test(error.message)) throw error; }
+          }
           // Use the official importer: never splice rows into a live native DB.
           await new Promise((resolve, reject) => require("node:child_process").execFile(launcher.executable,
             [...launcher.args, ...require('../core/opencode-version.cjs').command(require('../core/opencode-version.cjs').version(launcher, initial.dir), 'import', prepared.file)], { cwd: project.cwd, env: initial.env, windowsHide: true, timeout: 30000, maxBuffer: 1024 ** 2 },
-            (error, stdout) => error || !stdout.includes("Imported session:") ? reject(Error("OpenCode 原生导入失败，共享记录已保留；请确认 CLI 版本支持 import")) : resolve()));
+            (error) => error ? reject(Error("OpenCode 原生导入失败，共享记录已保留；请确认 CLI 版本支持 import")) : resolve()));
+          const codecs = require('../core/project-codecs.cjs'), contract = require('../core/opencode-version.cjs');
+          const expected = JSON.parse(fs.readFileSync(prepared.file, 'utf8'));
+          const imported = codecs.openCodeBundle(path.join(initial.dir, 'opencode.db'), prepared.sessionId);
+          if (!contract.equal(imported, expected) || codecs.pathKey(contract.cwd(imported)) !== codecs.pathKey(project.cwd))
+            throw Error('OpenCode 导入身份或内容不一致，共享记录已保留');
         }
         const plan = harnesses.projectConversationPlan(harness, project.cwd, prepared.sessionId, prepared.nativeFile);
         if (connections.enabled[harness] && connections.needsRouter(harness) && !router.server) await router.start(servicePort);
@@ -1485,9 +1504,7 @@ else {
         });
         if (chosen.canceled) return null;
         const file = chosen.filePaths[0];
-        if (fs.statSync(file).size > 5 * 1024 * 1024)
-          throw new Error("配置文件超过 5 MiB");
-        const result = store.import(JSON.parse(fs.readFileSync(file, "utf8")));
+        const result = store.import(require('../core/config-limits.cjs').readConfigFile(file));
         invalidateReports();
         queueProtocolChecks();
         return result;
@@ -1508,14 +1525,7 @@ else {
           cancelId: 0,
         });
         if (r.response === 1) {
-          const identity = apiIdentity(store.state.providers.find((p) => p.id === id));
-          if (identity) store.state.nativeApiExclusions = [...new Set([...(store.state.nativeApiExclusions || []), identity])];
-          if (/^native_api_[a-f0-9]{20}$/.test(id))
-            store.state.nativeSupplierExclusions = [...new Set([...(store.state.nativeSupplierExclusions || []), id])];
-          store.state.providers = store.state.providers.filter(
-            (p) => p.id !== id,
-          );
-          store.save();
+          store.removeProvider(id);
           invalidateReports(id);
         }
       });
@@ -1676,7 +1686,7 @@ else {
         x.startsWith("--import-config="),
       );
       if (importArg) {
-        store.import(JSON.parse(fs.readFileSync(importArg.slice(16), "utf8")));
+        store.import(require('../core/config-limits.cjs').readConfigFile(importArg.slice(16)));
       }
       if (testMode)
         global.assTest = {

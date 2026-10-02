@@ -133,17 +133,20 @@ const call = (name, ...args) => page.evaluate(([name, args]) => window.ass.call(
       const canvas = document.createElement('canvas'); canvas.width = canvas.height = 100;
       const c = canvas.getContext('2d'); c.drawImage(image, 0, 0, 100, 100);
       const pixel = (x, y) => Array.from(c.getImageData(x, y, 1, 1).data);
-      return { corner: pixel(0, 0), hole: pixel(50, 50), petal: pixel(25, 25), ring: pixel(61, 50) };
+      const rgba = c.getImageData(0, 0, 100, 100).data;
+      let white = 0;
+      for (let i = 0; i < rgba.length; i += 4) if (rgba[i] > 245 && rgba[i + 1] > 245 && rgba[i + 2] > 245 && rgba[i + 3] > 200) white++;
+      return { corner: pixel(0, 0), hole: pixel(50, 50), petal: pixel(25, 25), ring: pixel(61, 50), white };
     });
     assert.ok(pixels.corner[3] < 10 && pixels.hole[3] < 10, 'transparent background and hollow ring');
-    assert.ok(pixels.petal[3] > 240 && Math.max(...pixels.petal.slice(0, 3)) - Math.min(...pixels.petal.slice(0, 3)) < 15, 'neutral gray petals');
-    assert.ok(pixels.ring[3] > 240 && pixels.ring[0] > pixels.ring[1] * 2, 'red center retained');
+    assert.ok(pixels.petal[3] < 10 && pixels.white > 100, 'hollow petals with white outlines in the gaps');
+    assert.ok(pixels.ring[3] > 240 && pixels.ring[0] > pixels.ring[1] * 1.5, 'orange center retained');
     await page.getByRole('button', { name: '供应商与模型', exact: true }).click();
     await page.getByRole('button', { name: '查看 ASS 版本与更新', exact: true }).click();
     await page.getByRole('heading', { name: '关于 ASS', exact: true }).waitFor();
     await page.screenshot({ path: path.join(out, 'neutral-about-dark.png'), animations: 'disabled' });
     assert.equal(await page.getByText('从 ASS 官方 GitHub Releases 获取版本信息。').count(), 0);
     assert.equal(await page.locator('vite-error-overlay').count(), 0); assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, data, viewport: '1440x960 and 1100x960 desktop', checks: ['body starts in former title area', 'aligned native chrome and sidebar at both desktop widths', 'logo and clickable version inside title bar', 'same transparent gray-petal/red-ring icon in header and about', 'one harness refresh entry', 'subscription quotas retained', 'compact account information', 'same native/promoted API dedup after model sync', 'different API keys retained', 'static harness/provider logos', 'import only on provider page', 'neutral palette across overview, diagnostics, about and nested model dialogs', 'light/dark screenshots', 'no horizontal overflow or renderer errors'], realProcessesTouched: false }));
+    console.log(JSON.stringify({ ok: true, data, viewport: '1440x960 and 1100x960 desktop', checks: ['body starts in former title area', 'aligned native chrome and sidebar at both desktop widths', 'logo and clickable version inside title bar', 'same hollow-petal/white-outline/orange-gear icon in header and about', 'one harness refresh entry', 'subscription quotas retained', 'compact account information', 'same native/promoted API dedup after model sync', 'different API keys retained', 'static harness/provider logos', 'import only on provider page', 'neutral palette across overview, diagnostics, about and nested model dialogs', 'light/dark screenshots', 'no horizontal overflow or renderer errors'], realProcessesTouched: false }));
   } finally { await app.evaluate(() => global.assTest.quit()).catch(() => {}); await app.close().catch(() => {}); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });

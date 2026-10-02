@@ -32,6 +32,26 @@ function fixture(t, all = false) {
   const library = new ProjectConversations(options); return { root, cwd, other, dirs, sources, file, options, library };
 }
 async function enable(f) { const list = await f.library.list(), p = list.items.find((p) => p.cwd === f.cwd); assert.ok(p); await f.library.configure(p.id, { enabled: true }); return p.id; }
+test('native project rename refreshes enabled name and search, with unreadable metadata preserving the last name', async t => {
+  const f=fixture(t),file=path.join(f.dirs.codex,'.codex-global-state.json');
+  const rename=name=>write(file,JSON.stringify({'local-projects':{local:{id:'local',name,rootPaths:[f.cwd]}},'thread-project-assignments':{[ID]:{projectKind:'local',projectId:'local'}}}));
+  rename('Original native');const id=await enable(f);rename('Renamed native');
+  for(let i=0;i<2;i++){assert.equal((await f.library.list()).items.find(p=>p.id===id).name,'Renamed native');assert.equal(f.library.search({query:'Renamed native',harness:'codex'}).items[0].id,id);assert.equal(f.library.search({query:'Original native',harness:'codex'}).items.length,0);}
+  write(file,'{broken');assert.equal((await f.library.list()).items.find(p=>p.id===id).name,'Renamed native');
+});
+test('re-enable skips retired projections while making a recreated identical route visible; retries and failed release preserve state',async t=>{
+  const f=fixture(t),id=await enable(f);let thread=f.library.project(id).threads[0];const route=await f.library.prepare(id,thread.id,'claude',f.dirs.claude);
+  const oldBytes=fs.readFileSync(route.nativeFile);await f.library.configure(id,{enabled:false});assert.ok(f.library.project(id).retired.includes('claude\0'+route.sessionId));
+  // An old projection reappears through a stale/native copy. It must not be a new origin.
+  write(route.nativeFile,oldBytes);await f.library.configure(id,{enabled:true});assert.equal(f.library.project(id).threads.length,1);fs.unlinkSync(route.nativeFile);
+  thread=f.library.project(id).threads[0];const rebuilt=await f.library.prepare(id,thread.id,'claude',f.dirs.claude);assert.equal(rebuilt.sessionId,route.sessionId);
+  const stale=path.join(f.dirs.claude,'projects','stale',route.sessionId+'.jsonl');write(stale,oldBytes);fs.utimesSync(stale,new Date('2030-01-01'),new Date('2030-01-01'));
+  for(let i=0;i<2;i++){await f.library.list();assert.ok(f.library.recordsCache.some(r=>r.harness==='claude'&&r.sessionId===rebuilt.sessionId));}
+  assert.equal(f.library.recordsCache.find(r=>r.harness==='claude'&&r.sessionId===rebuilt.sessionId).file,rebuilt.nativeFile);await f.library.sync(id);assert.equal(f.library.project(id).threads.length,1);
+  const original=f.library.run.bind(f.library);f.library.run=(action,args)=>action==='release-plan'?Promise.reject(Error('Synthetic release failure')):original(action,args);
+  await assert.rejects(f.library.configure(id,{enabled:false}),/release failure/);assert.equal(f.library.project(id).enabled,true);f.library.run=original;
+  await f.library.configure(id,{enabled:false});await f.library.configure(id,{enabled:false});assert.equal(f.library.project(id).enabled,false);
+});
 function appendCC(route, user, answer) {
   const rows = codecs.lines(route.nativeFile), parent = rows.filter((r) => r.uuid).at(-1).uuid, uid = crypto.randomUUID(), aid = crypto.randomUUID();
   fs.appendFileSync(route.nativeFile, codecs.jsonl([
@@ -551,4 +571,31 @@ test('OpenCode project resume uses its existing native auth/DB root, not an isol
   manager.state.credentialHomes.opencode = f.dirs.opencode;
   const plan = manager.projectConversationPlan('opencode', f.cwd);
   assert.equal(plan.env.XDG_DATA_HOME, path.dirname(f.dirs.opencode)); assert.equal(plan.env.XDG_CONFIG_HOME, path.join(f.root, 'config')); assert.deepEqual(plan.files, []);
+});
+
+test('delete and restore preflight all native metadata before publishing transcript changes', async t => {
+  const f = fixture(t), trash = require('../core/conversation-trash.cjs'), names = path.join(f.dirs.codex, 'session_index.jsonl');
+  write(names, JSON.stringify({ id: ID, thread_name: 'original' }) + '\n');
+  const db = new DatabaseSync(path.join(f.dirs.codex, 'state_5.sqlite')); db.exec('CREATE TABLE threads(id TEXT PRIMARY KEY, title TEXT, rollout_path TEXT)'); db.prepare('INSERT INTO threads VALUES(?,?,?)').run(ID, 'original', f.file);
+  await f.library.list(); const row = codecs.discover(f.sources).rows.find(r => r.sessionId === ID), entry = await trash.plan({ vault: f.library.vault, secret: f.library.state.secret, rows: [row], sources: f.sources, label: 'preflight' });
+  write(names, JSON.stringify({ id: ID, thread_name: 'concurrent rename' }) + '\n');
+  await assert.rejects(trash.commit(entry, f.library.vault), /名称索引已变化/);
+  assert.ok(fs.existsSync(f.file)); assert.equal(db.prepare('SELECT count(*) AS n FROM threads').get().n, 1);
+  write(names, JSON.stringify({ id: ID, thread_name: 'original' }) + '\n');
+  const deleted = await trash.commit(entry, f.library.vault); assert.equal(fs.existsSync(f.file), false);
+  write(names, JSON.stringify({ id: ID, thread_name: 'new name' }) + '\n');
+  await assert.rejects(trash.restore({ vault: f.library.vault, secret: f.library.state.secret, entry: deleted }), /名称已变化/);
+  assert.equal(fs.existsSync(f.file), false); assert.equal(db.prepare('SELECT count(*) AS n FROM threads').get().n, 0); assert.match(fs.readFileSync(names, 'utf8'), /new name/); db.close();
+});
+test('partial native deletion is durable and recoverable after a later file failure', async t => {
+  const f = fixture(t), trash = require('../core/conversation-trash.cjs'), secondId = crypto.randomUUID(), second = path.join(f.dirs.codex, 'sessions', 'rollout-' + secondId + '.jsonl');
+  write(second, codecs.encode('codex', { id: secondId, cwd: f.cwd, messages, title: 'second', createdAt: timestamp }).bytes);
+  await f.library.list(); const entry = await trash.plan({ vault: f.library.vault, secret: f.library.state.secret, rows: codecs.discover(f.sources).rows, sources: f.sources, label: 'partial' });
+  const original = fs.unlinkSync;
+  fs.unlinkSync = file => { if (file === second) throw Error('synthetic later file busy'); return original(file); };
+  try { await assert.rejects(trash.commit(entry, f.library.vault), /未全部完成/); } finally { fs.unlinkSync = original; }
+  assert.equal(trash.status(f.library.vault, entry).phase, 'delete-partial');
+  assert.equal(fs.existsSync(f.file), false); assert.equal(fs.existsSync(second), true);
+  await trash.restore({ vault: f.library.vault, secret: f.library.state.secret, entry });
+  assert.ok(fs.existsSync(f.file)); assert.ok(fs.existsSync(second)); assert.equal(trash.status(f.library.vault, entry).phase, 'restored');
 });

@@ -176,39 +176,20 @@ function convertRequest(body, model, protocol) {
   return request;
 }
 async function* sseMessages(stream, signal) {
-  const reader = stream.getReader(),
-    decoder = new TextDecoder();
+  const reader = stream.getReader(), parser = new (require('./sse-parser.cjs').SseParser)();
   const cancel = () => { void reader.cancel().catch(() => {}); };
-  signal?.addEventListener("abort", cancel, { once: true });
-  let buffer = "";
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
     while (true) {
       signal?.throwIfAborted();
       const { value, done } = await reader.read();
       signal?.throwIfAborted();
-      buffer += done
-        ? decoder.decode()
-        : decoder.decode(value, { stream: true });
-      buffer = buffer.replace(/\r\n/g, "\n");
-      let end;
-      while ((end = buffer.indexOf("\n\n")) >= 0) {
-        const block = buffer.slice(0, end);
-        buffer = buffer.slice(end + 2);
-        const data = block
-          .split("\n")
-          .filter((l) => l.startsWith("data:"))
-          .map((l) => l.slice(5).trimStart())
-          .join("\n");
-        if (data) {
-          if (data === "[DONE]") yield { done: true };
-          else yield JSON.parse(data);
-        }
-      }
+      for (const frame of parser.feed(value, done, event => event.done || ['response.completed', 'response.incomplete', 'message_stop'].includes(event.type))) yield frame.event;
       if (done) break;
     }
   } finally {
-    signal?.removeEventListener("abort", cancel);
-    cancel();
+    signal?.removeEventListener('abort', cancel);
+    await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }
@@ -303,9 +284,10 @@ class ResponseEvents {
     });
   }
   finish(incomplete = false) {
+    if (incomplete && [...this.items.values()].some(v => v.item.type === 'function_call')) throw Error('上游工具调用未完整生成，未转发执行');
     const ev = [];
     for (const { item, index } of this.items.values()) {
-      item.status = "completed";
+      item.status = incomplete ? "incomplete" : "completed";
       if (item.type === "function_call")
         ev.push(
           this.event("response.function_call_arguments.done", {
@@ -357,6 +339,7 @@ async function* translateStream(stream, protocol, model) {
     limited = false;
   for await (const data of sseMessages(stream)) {
     if (data.error || data.type === "error") throw new Error("上游流返回错误");
+    if (data.choices?.some(c => c.delta?.refusal || c.finish_reason === 'content_filter')) throw Error('上游拒绝或过滤了请求，未作为正常完成转发');
     if (protocol === "anthropic") {
       if (data.type === "message_start")
         out.usage(data.message?.usage?.input_tokens, data.message?.usage?.output_tokens);
@@ -376,6 +359,10 @@ async function* translateStream(stream, protocol, model) {
           yield out.delta(data.index, data.delta.text);
         if (data.delta.type === "input_json_delta")
           yield out.delta(data.index, data.delta.partial_json);
+      }
+      if (data.type === 'content_block_stop') {
+        const item = out.items.get(data.index)?.item;
+        if (item?.type === 'function_call' && !item.arguments) yield out.delta(data.index, '{}');
       }
       if (data.type === "message_delta") {
         out.usage(data.usage?.input_tokens, data.usage?.output_tokens);
@@ -405,6 +392,8 @@ async function* translateStream(stream, protocol, model) {
       }
       for (const t of d?.tool_calls || []) {
         const key = "tool" + t.index;
+        const existing = out.items.get(key)?.item;
+        if (existing && t.function?.name && t.function.name !== existing.name) throw Error('上游分段工具名称无法安全识别，未转发执行');
         yield* out.add(key, "tool", { id: t.id, name: t.function?.name });
         if (t.function?.arguments) yield out.delta(key, t.function.arguments);
       }

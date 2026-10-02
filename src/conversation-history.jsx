@@ -33,6 +33,7 @@ export function ConversationHistory({ initialHarness, onClose, onChange }) {
   const [tab, setTab] = useState('backups'), [backups, setBackups] = useState(null), [trash, setTrash] = useState(null);
   const [offset, setOffset] = useState(0), [selected, setSelected] = useState(null), [preview, setPreview] = useState(null), [before, setBefore] = useState(0);
   const [revision, setRevision] = useState(0), [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState(''), [cleaning, setCleaning] = useState(null);
+  const previewSelection = useRef(null);
   events.current = { onClose, busy, cleaning };
   useEffect(() => {
     const opener = document.activeElement; panel.current?.querySelector('button')?.focus();
@@ -58,6 +59,8 @@ export function ConversationHistory({ initialHarness, onClose, onChange }) {
   }, [harness, offset, revision]);
   useEffect(() => {
     let current = true; setPreview(null);
+    if (selected?.id !== previewSelection.current && before) { setBefore(0); return; }
+    previewSelection.current = selected?.id;
     if (selected?.available) api.call('conversations-backup-preview', selected.id, before).then(r => { if (current) setPreview(r); })
       .catch(e => { if (current) setError(errorText(e)); });
     return () => { current = false; };
@@ -101,7 +104,7 @@ export function ConversationHistory({ initialHarness, onClose, onChange }) {
           <footer><button className="button" disabled={!!busy || !selected.available || selected.nativeAvailable} onClick={() => act('conversations-backup-restore', selected.id)}><RotateCcw size={14} />恢复到当前客户端</button><button className="button primary" disabled={!!busy || !selected.available} onClick={() => act('conversations-resume', selected.id)}><Play size={14} />使用当前账户继续</button></footer>
         </> : <div className="empty">选择副本查看保存的内容</div>}</div></div>
       </> : <div className="conversation-history-trash"><p className="conversation-history-help">删除前的恢复备份，共 {storageSize(trash?.bytes)}。永久清理后无法再从此备份恢复。仅清除 ASS 副本；Codex 的 thread_history_*.sqlite 正文数据库及远端副本不在清理范围内。</p>
-        {trash?.items.map(row => <article key={row.id}><div><strong>{row.label}</strong><small>{row.count} 个对话 · {storageSize(row.bytes)} · {date(row.createdAt)}{row.phase === 'restored' ? ' · 已恢复' : row.phase === 'deleted' ? '' : ' · 删除未完成'}</small></div><div className="actions"><button className="button" disabled={!!busy || ['restored', 'purging'].includes(row.phase)} onClick={() => act('project-conversations-restore', row.id)}><RotateCcw size={14} />恢复</button><button className="button danger" disabled={!!busy || !['deleted', 'restored', 'purging'].includes(row.phase)} onClick={() => setCleaning({ type: 'trash', title: row.label, count: row.count, bytes: row.bytes, input: { id: row.id, confirmed: true } })}>永久清理</button></div></article>)}
+        {trash?.items.map(row => <article key={row.id}><div><strong>{row.label}</strong><small>{row.count} 个对话 · {storageSize(row.bytes)} · {date(row.createdAt)}{row.phase === 'restored' ? ' · 已恢复' : row.phase === 'deleted' ? '' : ['restoring', 'restore-partial'].includes(row.phase) ? ' · 恢复未完成' : ' · 删除未完成'}</small></div><div className="actions"><button className="button" disabled={!!busy || ['restored', 'purging'].includes(row.phase)} onClick={() => act('project-conversations-restore', row.id)}><RotateCcw size={14} />恢复</button><button className="button danger" disabled={!!busy || !['deleted', 'restored', 'purging'].includes(row.phase)} onClick={() => setCleaning({ type: 'trash', title: row.label, count: row.count, bytes: row.bytes, input: { id: row.id, confirmed: true } })}>永久清理</button></div></article>)}
         {trash && !trash.items.length && <div className="empty">暂无已删除备份</div>}
       </div>}
       {cleaning && <div className="conversation-history-confirm" role="alertdialog" aria-label="永久清理历史确认"><strong>{cleaning.title}</strong><p>永久清理 {cleaning.count} 个{cleaning.type === 'backups' ? '保留副本' : '对话的恢复备份'}（{storageSize(cleaning.bytes)}），此操作不可恢复。</p><p>仅清除 ASS 保存的副本与恢复备份。Codex 的 thread_history_*.sqlite 正文存储可能仍保留内容；不会清除该存储或远端副本。</p><div className="actions"><button className="button" autoFocus onClick={() => setCleaning(null)}>取消</button><button className="button danger" disabled={!!busy} onClick={() => act(cleaning.type === 'backups' ? 'conversations-backup-cleanup' : 'project-conversations-trash-purge', cleaning.input)}>永久清理</button></div></div>}

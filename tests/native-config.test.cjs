@@ -56,6 +56,8 @@ function fixture(t) {
     path.join(home, ".codex"),
     { home, env: {}, isConnected: () => true },
   );
+  const originalLauncher = manager.launcher.bind(manager);
+  manager.launcher = id => id === 'opencode' ? { ...originalLauncher(id), version: '1.18.33' } : originalLauncher(id);
   const native = new NativeConfig(data, crypt, manager);
   manager.options.nativeConfig = native;
   return { root, home, data, providers, manager, native };

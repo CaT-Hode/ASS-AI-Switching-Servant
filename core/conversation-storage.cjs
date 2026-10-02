@@ -9,6 +9,8 @@ function trashFiles(vault, entry) {
     if (!/^[a-f0-9]{64}\.opencode\.enc$/.test(item.backup)) throw Error('删除备份文件名无效');
     files.add(path.join(directory, item.backup));
   }
+  const progress = path.join(directory, 'progress.json');
+  if (fs.existsSync(progress)) files.add(progress);
   return [...files].map(file => {
     safePath(file); let stat;
     try { stat = fs.lstatSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; }

@@ -1,5 +1,5 @@
 {
-  "version": "0.3.1",
+  "version": "0.3.2",
   "reference": "public/ass-logo-reference.svg",
   "spec": {
     "size": 1254,
@@ -13,7 +13,9 @@
     "rootDepth": 32,
     "simplifyTolerance": 1.5,
     "holeRadius": 116,
-    "petalColor": "#82807c",
+    "petalColor": "#ffffff",
+    "petalOutlineWidth": 50,
+    "canvasPadding": 32,
     "hubColor": "#dc782f"
   },
   "crop": {
@@ -24,45 +26,45 @@
       "height": 1254
     },
     "artwork": {
-      "x": 27,
-      "y": 43,
-      "width": 1201,
-      "height": 1171
+      "x": 8,
+      "y": 23,
+      "width": 1238,
+      "height": 1210
     },
-    "occupancy": 0.9577352472089314
+    "occupancy": 0.9872408293460925
   },
   "preservedPetals": [
     {
       "id": "petal-5",
-      "sha256": "681b0f890f61898037b1d4b3f5c6d830772ee80ccdb3a90c3356af94f2b7dbd9"
+      "sha256": "9310f24a157ab5b166ff8e1a7027d5e0bb3a94e50e13faf5f6198c7d4acd7d55"
     },
     {
       "id": "petal-2",
-      "sha256": "f76ca2ef128c99c4228017bcbec0fca36226c2467759aad502641dd38d319c0e"
+      "sha256": "bc8ed7437cc37340dcda746eb9a9688eca400f29bd2a63cfdc957f2b6e6865a3"
     },
     {
       "id": "petal-1",
-      "sha256": "250693cf718c2b03db7461ae99733a8a64f110c8b00dd2919202bb82a6896efd"
+      "sha256": "cee9b7000248c2058ae414d497d18b1c1f7ec94d61ed02731d67e0b6adc20147"
     },
     {
       "id": "petal-3",
-      "sha256": "850ff353a868d6c5a20c7698d64d4785311aca040b6f8921c3c6f0e7caa1cc1a"
+      "sha256": "d7788990b7c61b1b9325c24873cdae7bec5143c5b5e4a2049b34f6fd61664e55"
     },
     {
       "id": "petal-6",
-      "sha256": "8667286284469adaf846ba0924d9a9adb6f64306768d5cb404cfaae9a92151c0"
+      "sha256": "4cbff25d70f7e9cc21c4c77f1af27e76d5eb953c9b7cc81926cbbfd570cbb2aa"
     },
     {
       "id": "petal-9",
-      "sha256": "c3a110f02d14a614a46444613cc76b9e3883d9cf0067e0306cfe190f5df4a293"
+      "sha256": "319c8fbc174cca1399532f3eb76f47a687bea7f86e77b297d861d8f8b33b7d70"
     },
     {
       "id": "petal-8",
-      "sha256": "c4c81998ce675e167c8149c06d0d10846f10e230a9dba812f6116a1828b94c04"
+      "sha256": "49be53b246233227b2e3292698583eb109a8c89324fc3e34db5a286189e624a9"
     },
     {
       "id": "petal-7",
-      "sha256": "af2e5dd1fe083952bfdd6e4b92ec896d6ae670c927b402c189c8da884ae2e57a"
+      "sha256": "7025c42cf1200f93e660db2c4e4900ed8758c7e38b056e000745d00e998bbbbe"
     }
   ],
   "geometry": {
@@ -754,19 +756,19 @@
   "exports": [
     {
       "file": "public/ass-logo.svg",
-      "sha256": "62b6b1b85fa0ff9edf919e71035f3b429ef99304585ebaf5df3eb02d739161f4"
+      "sha256": "9808d0da5e450dd4d8d9e32e9db381bf3a000e3dfbe29d7f81149659f58161d6"
     },
     {
       "file": "public/ass-logo.png",
-      "sha256": "84bd924790e2f472949b6aaacf0d7a680f8083905cfa0a31ef871fa4d27a8191"
+      "sha256": "dd6e589aa6a0c5234a137c8aab715117fcbf872e3e4f649de0e91838f69cd08a"
     },
     {
       "file": "public/ass-app-icon.png",
-      "sha256": "84bd924790e2f472949b6aaacf0d7a680f8083905cfa0a31ef871fa4d27a8191"
+      "sha256": "dd6e589aa6a0c5234a137c8aab715117fcbf872e3e4f649de0e91838f69cd08a"
     },
     {
       "file": "assets/ass.ico",
-      "sha256": "ef066f8451dca5a52859db4648a5b1969934af428f8b72cc2d7dd719ea8abfc8"
+      "sha256": "f7de241de1c8454fb370535a69f99acc0c24fc332fbfbf47c8e6cbc3961c788e"
     }
   ],
   "icoSizes": [

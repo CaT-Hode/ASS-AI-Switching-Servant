@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Folder, Search, Loader2, MessagesSquare, Play, RefreshCw, ShieldCheck, ChevronRight, RotateCcw, Pin, Monitor, Trash2, X } from './icons.jsx';
 import { useConversationColumns } from './conversation-columns.jsx';
@@ -27,6 +27,14 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
   const [nativeView, setNativeView] = useState(false);
   const [deleting, setDeleting] = useState(null), [trash, setTrash] = useState(null);
   const [scope, setScope] = useState('active'), [historyOpen, setHistoryOpen] = useState(false);
+  const previewSelection = useRef(''), trashGeneration = useRef(0);
+  useEffect(() => () => { trashGeneration.current++; }, []);
+  function closeTrash() { trashGeneration.current++; setTrash(null); }
+  async function openTrash() {
+    const generation = ++trashGeneration.current;
+    try { const value = await api.call('project-conversations-trash'); if (generation === trashGeneration.current) setTrash(value); }
+    catch (e) { if (generation === trashGeneration.current) setError(errorText(e)); }
+  }
   const columns = useConversationColumns(state.preferences.conversations?.columns, (value) => api.call('ui-preferences', { conversations: { columns: value } }).catch((e) => setError(errorText(e))));
   useEffect(() => {
     if (!deleting) return;
@@ -65,6 +73,9 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
   }, [project?.id, shared, view, list, offset, threadQuery, pinned, !!searchTerm]);
   useEffect(() => {
     let current = true; setPreview(null); setConfirm('');
+    const selection = JSON.stringify([selected?.id, selected?.kind]);
+    if (selection !== previewSelection.current && before) { setBefore(0); return; }
+    previewSelection.current = selection;
     if (selected) api.call(selected.kind === 'native' ? 'project-conversations-native-preview' : 'project-conversations-preview',
       ...(selected.kind === 'native' ? [selected.id, before] : [project.id, selected.id, before])).then((r) => { if (current) setPreview(r); })
       .catch((e) => { if (current) setError(errorText(e)); });
@@ -82,11 +93,15 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
     setProject(items[0] || null); setOffset(0); setBefore(0);
   } }, [items, list, project?.id]);
   async function action(name, ...args) {
+    const generation = trashGeneration.current;
     setBusy(name); setError(''); setNotice(''); setConfirm('');
     const destructive = ['project-conversations-delete', 'project-conversations-restore'].includes(name);
     try { const r = await api.call(name, ...args); const message = r?.message || (name === 'conversations-preserve' ? '已保留 ' + r.retained + ' 个对话' : '');
       if (destructive && onNotify) onNotify(message); else setNotice(message);
-      if (name === 'project-conversations-restore') setTrash(await api.call('project-conversations-trash'));
+      if (name === 'project-conversations-restore' && trash && generation === trashGeneration.current) {
+        const value = await api.call('project-conversations-trash');
+        if (generation === trashGeneration.current) setTrash(value);
+      }
       if (!name.includes('resume') && name !== 'conversations-open-desktop') setRevision((n) => n + 1);
     } catch (e) { if (destructive && onNotify) onNotify(errorText(e), true); else setError(errorText(e)); } finally { setBusy(''); }
   }
@@ -111,7 +126,7 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
       <div className="conversation-scope" aria-label="对话范围">{[['active', '当前对话'], ['inactive', '归档及残留']].map(([id, label]) => <button key={id} aria-pressed={scope === id} onClick={() => { setScope(id); setOffset(0); setBefore(0); setSelected(null); }}>{label}{id === 'inactive' && !!list?.inactive?.[view] && <small>{list.inactive[view]}</small>}</button>)}</div>
       <span className="conversation-count">{list ? items.reduce((n, p) => n + (p.enabled ? p.count : p.counts?.[view] || 0), 0) + ' 个对话' : '读取记录…'}</span>
       <div className="actions"><button className="button" disabled={!!busy} onClick={() => setHistoryOpen(true)}><ShieldCheck size={15} />历史与存储</button>
-        <button className="icon-button" aria-label="已删除记录" onClick={async () => { try { setTrash(await api.call('project-conversations-trash')); } catch (e) { setError(errorText(e)); } }}><Trash2 size={17} /></button>
+        <button className="icon-button" aria-label="已删除记录" onClick={openTrash}><Trash2 size={17} /></button>
         <button className="icon-button" aria-label="刷新项目记录" disabled={!!busy} onClick={() => setRevision((n) => n + 1)}><RefreshCw size={17} /></button></div></div>
     {error && <p className="error-box" role="alert">{error}</p>}{notice && <p className="client-notice" role="status">{notice}</p>}
     <div className="conversation-layout project-sync-layout">
@@ -159,9 +174,9 @@ export function ProjectConversations({ state, initialHarness, onClient, onNotify
       <p>Codex：移除 rollout 文件和原生会话索引。Codex 的 thread_history_*.sqlite 正文存储可能仍保留内容；此操作不会清除该存储或远端副本。</p>
       <div className="actions"><button className="button" autoFocus onClick={() => setDeleting(null)}>取消</button><button className="button danger" disabled={!!busy} onClick={() => { const input = { projectId: deleting.projectId, recordId: deleting.recordId, confirmed: true }; setDeleting(null); action('project-conversations-delete', input); }}>删除</button></div>
     </div>, document.body)}
-    {trash && <div className="conversation-trash-backdrop" onClick={() => setTrash(null)}><section className="conversation-trash-panel" role="dialog" aria-modal="true" aria-label="已删除记录" onClick={(e) => e.stopPropagation()}>
-      <header><h2>已删除记录</h2><button className="icon-button" aria-label="关闭已删除记录" onClick={() => setTrash(null)}><X size={18} /></button></header>
-      {trash.items.map((r) => <article key={r.id}><div><strong>{r.label}</strong><small>{r.count} 个对话 · {time(r.createdAt)}{r.phase !== 'deleted' && ' · 删除未完成'}</small></div><button className="button" disabled={!!busy} onClick={() => action('project-conversations-restore', r.id)}><RotateCcw size={14} />恢复</button></article>)}
+    {trash && <div className="conversation-trash-backdrop" onClick={closeTrash}><section className="conversation-trash-panel" role="dialog" aria-modal="true" aria-label="已删除记录" onClick={(e) => e.stopPropagation()}>
+      <header><h2>已删除记录</h2><button className="icon-button" aria-label="关闭已删除记录" onClick={closeTrash}><X size={18} /></button></header>
+      {trash.items.map((r) => <article key={r.id}><div><strong>{r.label}</strong><small>{r.count} 个对话 · {time(r.createdAt)}{r.phase !== 'deleted' && (['restoring', 'restore-partial'].includes(r.phase) ? ' · 恢复未完成' : ' · 删除未完成')}</small></div><button className="button" disabled={!!busy} onClick={() => action('project-conversations-restore', r.id)}><RotateCcw size={14} />恢复</button></article>)}
       {!trash.items.length && <div className="empty">暂无已删除记录</div>}
       {error && <p className="error-box" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     </section></div>}

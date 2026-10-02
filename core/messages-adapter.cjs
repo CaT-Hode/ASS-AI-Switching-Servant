@@ -87,6 +87,9 @@ async function* messagesEvents(stream, protocol, model) {
   const events = protocol === "openai-responses" ? sseMessages(stream) : translateStream(stream, protocol, model);
   for await (const event of events) {
     if (event.error || ["error", "response.failed"].includes(event.type)) throw Error("上游返回错误事件");
+    if (/^response\.refusal\./.test(event.type || '') || event.item?.content?.some(c => c.type === 'refusal') ||
+        event.response?.output?.some(item => item.content?.some(c => c.type === 'refusal')) ||
+        event.response?.incomplete_details?.reason === 'content_filter') throw Error('上游拒绝或过滤了请求，未作为正常完成转发');
     if (event.type === "response.output_item.added" && event.item?.type === "function_call") {
       tool = true; blocks.set(event.item.id, { index: index++, type: "tool", closed: false, hasDelta: false });
       yield { type: "content_block_start", index: blocks.get(event.item.id).index,
@@ -111,8 +114,11 @@ async function* messagesEvents(stream, protocol, model) {
         yield { type: "content_block_delta", index: block.index, delta: { type: "input_json_delta", partial_json: event.arguments } };
       }
     }
-    if (event.type === "response.output_item.done") yield* finishItem(event.item);
+    // A closed argument block is not proof that a tool completed. Wait for the
+    // response terminal before publishing a callable tool block's stop event.
+    if (event.type === "response.output_item.done" && event.item?.type !== 'function_call') yield* finishItem(event.item);
     if (["response.completed", "response.incomplete"].includes(event.type)) {
+      if (event.type === 'response.incomplete' && (tool || event.response?.output?.some(item => item.type === 'function_call'))) throw Error('上游工具调用未完整生成，未转发执行');
       for (const item of event.response?.output || []) {
         // Some providers only put text / tool arguments in the completed item.
         yield* finishItem(item);

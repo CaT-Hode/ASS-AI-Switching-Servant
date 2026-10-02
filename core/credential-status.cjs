@@ -192,8 +192,8 @@ function inspectCredentials(
   if (harness === 'opencode') {
     const dataDir = native ? dir : path.join(dir, 'data/opencode');
     try {
-      const adapter = require('./opencode-version.cjs'), entries = adapter.credentials(dataDir);
-      if (entries !== null || adapter.version(launcher, dataDir) === 2) {
+      const adapter = require('./opencode-version.cjs'), major = adapter.version(launcher, dataDir), entries = major === 2 ? adapter.credentials(dataDir) : null;
+      if (major === 2) {
         const rows = (entries || []).filter(r => typeof r.integrationID === 'string' && !/^ass-/.test(r.integrationID)).map(r => {
           const row = r.value.type === 'key' ? api(r.integrationID, r.value.key)
             : r.value.type === 'oauth' ? oauth(r.integrationID, r.value.access, r.value.refresh, r.value.expires, now)

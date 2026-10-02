@@ -58,7 +58,7 @@ test('Kimi effective env override requires nonempty model name and blocks partia
 test('OpenCode v2 credential service distinguishes active accounts and never falls back to stale auth', t => {
   const dir = fixture(t), file = path.join(dir, 'opencode.db'), { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(file);
-  db.exec('CREATE TABLE credential(id TEXT PRIMARY KEY,integration_id TEXT,label TEXT,value TEXT,active INTEGER)');
+  db.exec('CREATE TABLE session_v2(id TEXT); CREATE TABLE session_message(id TEXT); CREATE TABLE credential(id TEXT PRIMARY KEY,integration_id TEXT,label TEXT,value TEXT,active INTEGER)');
   for (const [id, active, key] of [['cred_a', 1, 'key-a'], ['cred_b', 0, 'key-b']])
     db.prepare('INSERT INTO credential VALUES(?,?,?,?,?)').run(id, 'openai', id, JSON.stringify({ type: 'key', key }), active);
   db.close(); fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({ openai: { type: 'api', key: 'stale' } }));

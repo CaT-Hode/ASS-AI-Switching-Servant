@@ -15,6 +15,13 @@ class ProjectConversations {
       const state = JSON.parse(encryption.decryptString(Buffer.from(JSON.parse(raw).encrypted, 'base64')));
       if (state.version !== 1 || !Array.isArray(state.projects) || Buffer.from(state.secret || '', 'base64').length !== 32) throw Error();
       this.state = { observed: {}, ...state };
+      for (const entry of this.state.trash || []) {
+        Object.assign(entry, require('./conversation-trash.cjs').status(this.vault, entry));
+        if (entry.phase === 'restored') {
+          const restored = new Set(entry.rows.map(row => row.harness + '\0' + row.sessionId));
+          this.state.deleted = (this.state.deleted || []).filter(id => !restored.has(id));
+        }
+      }
     } } catch { this.error = '项目对话索引无法解密，未覆盖'; }
   }
   serial(fn) { const next = this.queue.then(fn); this.queue = next.catch(() => {}); return next; }
@@ -43,6 +50,10 @@ class ProjectConversations {
     this.scope = scope;
     return this.serial(async () => {
       const r = await this.run('discover', { scope, history: await this.history?.() || [] }); this.candidates = r.projects; this.recordsCache = r.records;
+      for (const p of this.state.projects) {
+        const native = r.projects.find(row => row.id === p.id);
+        if (native?.nativeName) p.name = native.nativeName;
+      }
       if (!this.error) { this.state.observed = r.observed; this.state.catalog = r.catalog; this.persist(); }
       const map = new Map(r.projects.map((p) => [p.id, { ...p, enabled: false, targets: HARNESSES, lastSync: '', branches: 0 }]));
       for (const p of this.state.projects) if ((p.enabled && scope !== 'inactive') || map.has(p.id)) {
@@ -102,7 +113,7 @@ class ProjectConversations {
   }
   async records(id, { offset = 0, query = '', harness = '', pinned = false } = {}) {
     if (!Number.isInteger(offset) || offset < 0 || typeof query !== 'string' || query.length > 500 || (harness && !HARNESSES.includes(harness))) throw Error('会话查询无效');
-    if (!this.candidates.some((p) => p.id === id) && !this.state.projects.some((p) => p.id === id)) await this.list();
+    if (!this.recordsCache.length || !this.candidates.some((p) => p.id === id) && !this.state.projects.some((p) => p.id === id)) await this.list();
     const all = this.recordsCache.filter((r) => r.projectId === id && (!harness || r.harness === harness));
     const filtered = all.filter((r) => (!pinned || r.pinned) && `${r.title} ${r.sessionId}`.toLowerCase().includes(query.toLowerCase()))
       .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
@@ -133,6 +144,7 @@ class ProjectConversations {
   }
   record(id) { const r = this.recordsCache.find((r) => r.id === id); if (!r) throw Error('会话不存在，请刷新'); return r; }
   trashList({ includeRestored = false } = {}) {
+    for (const entry of this.state.trash || []) Object.assign(entry, require('./conversation-trash.cjs').status(this.vault, entry));
     const items = (this.state.trash || []).filter((r) => includeRestored || r.phase !== 'restored').map((r) => ({ id: r.id, label: r.label, createdAt: r.createdAt, count: r.rows.length, phase: r.phase,
       bytes: require('./conversation-storage.cjs').trashFiles(this.vault, r).reduce((n, f) => n + f.bytes, 0) }));
     return { items, bytes: items.reduce((n, r) => n + r.bytes, 0) };
@@ -179,7 +191,9 @@ class ProjectConversations {
         if (!this.releaseImports) throw Error('OpenCode CLI 不可用，备份保留，未删除');
         await this.releaseImports({ imports: entry.imports, returns: [] });
       }
-      const updated = await this.run('trash-commit', { entry });
+      let updated;
+      try { updated = await this.run('trash-commit', { entry }); }
+      catch (error) { Object.assign(entry, require('./conversation-trash.cjs').status(this.vault, entry)); this.persist(); throw error; }
       Object.assign(entry, updated); this.recordsCache = []; this.state.deleted = [...new Set([...(this.state.deleted || []), ...entry.rows.map(r => r.harness + '\0' + r.sessionId)])]; this.persist();
       return { id: entry.id, message: `已删除 ${entry.rows.length} 个本地对话，可从“已删除记录”恢复。` };
     });
@@ -196,7 +210,7 @@ class ProjectConversations {
           for (const item of entry.imports) {
             const bundle = require('./conversation-trash.cjs').importBundle(this.vault, this.state.secret, entry, item);
             try { const current = require('./project-codecs.cjs').openCodeBundle(item.file, item.sessionId);
-              if (JSON.stringify(current) !== JSON.stringify(bundle)) throw Error('OpenCode 已有同 ID 的记录，未覆盖'); continue;
+              if (!require('./opencode-version.cjs').equal(current, bundle)) throw Error('OpenCode 已有同 ID 的记录，未覆盖'); continue;
             } catch (e) { if (!/会话不存在/.test(e.message)) throw e; }
             const file = path.join(this.vault, 'trash', entry.id, item.sessionId + '.restore.json');
             atomic(file, JSON.stringify(bundle)); returns.push({ ...item, file, signature: undefined });
@@ -204,7 +218,10 @@ class ProjectConversations {
           await this.releaseImports({ returns, imports: [] });
         } finally { for (const item of returns) if (fs.existsSync(item.file)) fs.unlinkSync(item.file); }
       }
-      const updated = await this.run('trash-restore', { entry }); Object.assign(entry, updated);
+      let updated;
+      try { updated = await this.run('trash-restore', { entry }); }
+      catch (error) { Object.assign(entry, require('./conversation-trash.cjs').status(this.vault, entry)); this.persist(); throw error; }
+      Object.assign(entry, updated);
       const keys = new Set(entry.rows.map(r => r.harness + '\0' + r.sessionId));
       this.state.deleted = (this.state.deleted || []).filter(key => !keys.has(key)); this.persist();
       return { message: '本地对话已恢复，项目文件未改动。' };

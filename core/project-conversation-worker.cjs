@@ -58,23 +58,26 @@ function discover() {
   data.state.catalog ||= {};
   const result = codecs.discover(data.sources, { cache: data.state.catalog }), grouped = new Map();
   const records = new Map();
+  const deleted = new Set(data.state.deleted || []), retired = new Set(data.state.projects.flatMap((p) => p.retired || []));
+  for (const entry of data.state.trash || []) if (['deleted', 'purging'].includes(entry.phase)) for (const row of entry.rows || []) deleted.add(identity(row));
+  const liveRoutes = data.state.projects.filter(p => p.enabled).flatMap(p => p.threads.flatMap(t => t.routes));
+  const owned = row => row.nativePresent && liveRoutes.some(route => identity(route) === identity(row) && pathKey(route.nativeFile) === pathKey(row.file));
+  const eligible = row => !deleted.has(identity(row)) && (!retired.has(identity(row)) || owned(row));
   const prefer = (old, row) => !old || Number(!!row.nativePresent) > Number(!!old.nativePresent) ||
     (row.nativePresent === old.nativePresent && (Number(!!row.indexedFile) > Number(!!old.indexedFile) ||
       (row.indexedFile === old.indexedFile && row.updatedAt > old.updatedAt)));
-  for (const row of result.rows) if (prefer(records.get(identity(row)), row)) records.set(identity(row), row);
+  for (const row of result.rows) if (eligible(row) && prefer(records.get(identity(row)), row)) records.set(identity(row), row);
   for (const history of data.history || []) {
+    if (!eligible(history)) continue;
     const old = records.get(identity(history));
     const same = old?.file === history.file;
     if (same || prefer(old, history)) records.set(identity(history), { ...old, ...history, libraryId: history.id, dir: history.dir || old?.dir || path.dirname(history.file) });
   }
-  const retired = new Set([...(data.state.deleted || []), ...data.state.projects.flatMap((p) => p.retired || [])]);
-  for (const entry of data.state.trash || []) if (['deleted', 'purging'].includes(entry.phase)) for (const row of entry.rows || []) retired.add(identity(row));
-  for (const [key] of records) if (retired.has(key)) records.delete(key);
   const inactive = {};
   for (const [key, row] of records) {
     row.historyStatus = historyStatus(row);
     if (row.historyStatus !== 'active') inactive[row.harness] = (inactive[row.harness] || 0) + 1;
-    if (!inScope(row, data.scope || 'active')) records.delete(key);
+    if (!inScope(row, data.scope || 'active') && !((data.scope || 'active') === 'active' && row.historyStatus === 'residual' && owned(row))) records.delete(key);
   }
   for (const row of records.values()) {
     const cwd = row.projectless ? '' : row.projectExplicit ? row.cwd : codecs.projectPath(row.cwd, data.sources), id = cwd ? hash(pathKey(cwd)) : codecs.NO_PROJECT; row.projectId = id;
@@ -82,6 +85,9 @@ function discover() {
     if (route) row.syncedFrom = route.t.home?.harness || route.t.origins[0]?.harness;
     let p = grouped.get(id);
     if (!p) { p = { id, cwd, name: row.projectName || (cwd ? path.basename(cwd) : '无项目会话'), nonProject: !cwd, count: 0, counts: {}, harnesses: [], keys: new Set() }; grouped.set(id, p); }
+    if (row.projectName && (!p.nativeName || row.updatedAt > p.nameUpdatedAt)) {
+      p.name = p.nativeName = row.projectName; p.nameUpdatedAt = row.updatedAt;
+    }
     if (!p.keys.has(identity(row))) { p.count++; p.counts[row.harness] = (p.counts[row.harness] || 0) + 1; p.keys.add(identity(row)); }
     if (!p.harnesses.includes(row.harness)) p.harnesses.push(row.harness);
   }
@@ -95,6 +101,7 @@ function sync() {
     const r = codecs.discover(data.sources, { cwd: p.cwd, includeMessages: true, cache: data.state.catalog, processed }); p.errors = r.errors;
     const unique = new Map();
     for (const row of r.rows) {
+      if ((p.retired || []).includes(identity(row)) && !p.threads.some(t => t.routes.some(route => identity(route) === identity(row) && pathKey(route.nativeFile) === pathKey(row.file)))) continue;
       const ownedProjection = historyStatus(row) === 'residual' && p.threads.some(t => t.routes.some(route => identity(route) === identity(row) && pathKey(route.nativeFile) === pathKey(row.file)));
       if (!inScope(row) && !ownedProjection) continue;
       const old = unique.get(identity(row)); if (!old || Number(!!row.indexedFile) > Number(!!old.indexedFile) || (row.indexedFile === old.indexedFile && row.updatedAt > old.updatedAt)) unique.set(identity(row), row);
@@ -156,7 +163,10 @@ function prepare() {
     catch (e) { if (!['EXDEV', 'EPERM', 'ENOTSUP'].includes(e.code)) throw e; fs.copyFileSync(file, target, fs.constants.COPYFILE_EXCL); mode = 'copy'; }
   }
   const route = { harness, sessionId, version, refs: [...t.refs], dir: data.dir, file, nativeFile: target, mode, createdAt: timestamp };
-  t.routes.push(route); return { state: data.state, ...route, cwd: p.cwd };
+  t.routes.push(route);
+  // Keep the retired identity: only this newly owned path is exempt, so an
+  // old copy at another path cannot compete with or re-enter the live graph.
+  return { state: data.state, ...route, cwd: p.cwd };
 }
 // Two-phase release: export completed updates to the initial harness first,
 // then remove ONLY indexed ASS projections after a compare-before-remove.
@@ -228,7 +238,7 @@ function releaseCommit() {
 }
 (async () => {
   if (data.action === 'trash-plan') return require('./conversation-trash.cjs').plan({ vault: data.vault, secret: data.state.secret, rows: data.rows, sources: data.sources, label: data.label });
-  if (data.action === 'trash-commit') return require('./conversation-trash.cjs').commit(data.entry);
+  if (data.action === 'trash-commit') return require('./conversation-trash.cjs').commit(data.entry, data.vault);
   if (data.action === 'trash-restore') return require('./conversation-trash.cjs').restore({ vault: data.vault, secret: data.state.secret, entry: data.entry });
   if (data.action === 'discover') return discover();
   if (data.action === 'sync') return sync();

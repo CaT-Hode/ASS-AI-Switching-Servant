@@ -88,7 +88,7 @@ function notExpired(token, seconds) {
 }
 function kimiTarget(a, m, env) {
   const config = require('./kimi-model-config.cjs').normalize(read(a.sourcePath, "toml")), p = config.providers?.[m.nativeProvider];
-  const rows = config.models.filter((r) => r?.provider === m.nativeProvider && r.model === m.model);
+  const rows = config.models.filter((r) => r?.provider === m.nativeProvider && r.model === m.model && (!m.nativeAlias || r.alias === m.nativeAlias));
   if (!object(p) || (m.model && rows.length !== 1)) throw Error("Kimi 模型配置已变化或有重复声明，请刷新目录");
   const environmentIssue = require('./kimi-model-config.cjs').environmentIssue(env);
   if (environmentIssue) throw Error(environmentIssue);

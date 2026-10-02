@@ -97,7 +97,7 @@ function readAsarPackageDefault(asarFile) {
 }
 
 const RUNTIME_FILES = [
-  "ASS.exe", "resources/app.asar", "locales/en-US.pak", "icudtl.dat", "resources.pak",
+  "ASS.exe", "resources/app.asar", "resources/ass.ico", "locales/en-US.pak", "icudtl.dat", "resources.pak",
   "chrome_100_percent.pak", "chrome_200_percent.pak", "snapshot_blob.bin",
   "v8_context_snapshot.bin", "version", "ffmpeg.dll", "libEGL.dll", "libGLESv2.dll",
   "d3dcompiler_47.dll", "dxcompiler.dll", "dxil.dll", "vk_swiftshader.dll",
@@ -119,7 +119,7 @@ function packageTree(ctx, packageDir, pruning = false) {
 }
 function validatePackage(ctx, packageDir, expectedVersion = ctx.version) {
   assertPackageDirectory(ctx, packageDir);
-  const required = RUNTIME_FILES.filter(file => !["libEGL.dll", "libGLESv2.dll"].includes(file));
+  const required = RUNTIME_FILES.filter(file => !["libEGL.dll", "libGLESv2.dll", "resources/ass.ico"].includes(file));
   const missing = [];
   for (const relative of required) {
     const target = path.join(packageDir, relative);

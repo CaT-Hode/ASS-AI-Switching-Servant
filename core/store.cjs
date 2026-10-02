@@ -2,6 +2,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { isDeepStrictEqual } = require("node:util");
 const { atomic } = require("./config.cjs");
+const { validateProviders } = require('./config-limits.cjs');
+const { apiIdentity } = require('./native-api-identity.cjs');
 const {
   parseImport,
   normalizeProvider,
@@ -53,6 +55,7 @@ class Store {
     }
   }
   save() {
+    validateProviders(this.state.providers);
     if ((fs.existsSync(this.file) ? fs.readFileSync(this.file, "utf8") : null) !== this.persisted)
       throw Error("供应商配置已在外部更新，请刷新后重试；未覆盖现有文件");
     if (!this.crypto.isEncryptionAvailable())
@@ -185,6 +188,16 @@ class Store {
       throw error;
     }
     return provider.id;
+  }
+  removeProvider(id) {
+    const provider = this.state.providers.find(p => p.id === id);
+    if (!provider) return false;
+    const previous = this.state, identity = apiIdentity(provider);
+    this.state = { ...previous, providers: previous.providers.filter(p => p.id !== id) };
+    if (identity) this.state.nativeApiExclusions = [...new Set([...(previous.nativeApiExclusions || []), identity])];
+    if (/^native_api_[a-f0-9]{20}$/.test(id)) this.state.nativeSupplierExclusions = [...new Set([...(previous.nativeSupplierExclusions || []), id])];
+    try { this.save(); } catch (error) { this.state = previous; throw error; }
+    return true;
   }
   model(providerId, input, originalName, expected) {
     const previous = this.state;

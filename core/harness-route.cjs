@@ -1,7 +1,8 @@
 const crypto = require("node:crypto");
+const { readTaskJSON } = require('./task-outcome.cjs');
 const { endpoint } = require("./models.cjs");
 const { sseMessages } = require("./adapters.cjs");
-const { once } = require("node:events");
+const { write: writeResponse } = require("./stream-write.cjs");
 const { messagesTransport, providerSessionHeaders } = require("./provider-transport.cjs");
 const { messagesRequest, messagesEvents, messagesJSON, normalizeMessages } = require("./messages-adapter.cjs");
 const { claudeModels, resolveClaudeModel } = require("./claude-models.cjs");
@@ -69,16 +70,8 @@ function harnessRoute(url, body, state) {
 async function forwardHarness(router, req, res) {
   const began = Date.now(),
     controller = new AbortController();
-  let route, timer;
-  const write = async (value) => {
-    if (!res.write(value))
-      await Promise.race([
-        once(res, "drain"),
-        once(res, "close").then(() => {
-          throw new Error("客户端已断开");
-        }),
-      ]);
-  };
+  let route, timer, httpStatus = null;
+  const write = value => writeResponse(res, value);
   try {
     const credential =
       req.headers["x-api-key"] ||
@@ -145,6 +138,7 @@ async function forwardHarness(router, req, res) {
       },
       p.network,
     );
+    httpStatus = response.status;
     if (!response.ok) {
       await response.body?.cancel();
       throw Object.assign(
@@ -172,7 +166,7 @@ async function forwardHarness(router, req, res) {
       });
       res.flushHeaders();
       let terminal = false;
-      for await (const event of sseMessages(response.body)) {
+      for await (const event of sseMessages(response.body, controller.signal)) {
         if (
           event.type === "error" ||
           event.type === "response.failed" ||
@@ -182,7 +176,7 @@ async function forwardHarness(router, req, res) {
         if (
           (protocol === "anthropic" && event.type === "message_stop") ||
           (protocol === "openai-chat" &&
-            (event.done || event.choices?.some((c) => c.finish_reason))) ||
+            event.done) ||
           (protocol === "openai-responses" &&
             ["response.completed", "response.incomplete"].includes(event.type))
         )
@@ -195,15 +189,11 @@ async function forwardHarness(router, req, res) {
               JSON.stringify(event) +
               "\n\n",
           );
+        if (terminal) break;
       }
       if (!terminal) throw new Error("上游流提前结束");
     } else {
-      const text = await response.text();
-      try {
-        JSON.parse(text);
-      } catch {
-        throw new Error("上游未返回有效 JSON");
-      }
+      const { text } = await readTaskJSON(response);
       res.writeHead(response.status, { "content-type": "application/json" });
       await write(text);
     }
@@ -215,15 +205,17 @@ async function forwardHarness(router, req, res) {
       status: response.status,
       ms: Date.now() - began,
       ok: true,
+      httpStatus, httpOk: httpStatus >= 200 && httpStatus < 300, taskOk: true,
     });
   } catch (error) {
     // Never put raw provider error bodies or parser excerpts into logs.
-    const message =
+    let message =
       error instanceof SyntaxError
         ? "上游返回无效流数据"
         : controller.signal.aborted
           ? "请求取消或超时"
           : error.message;
+    for (const secret of [route?.p.apiKey, router.clientToken, req.headers['x-api-key'], req.headers.authorization?.replace(/^Bearer /i, '')].filter(Boolean)) message = message.split(secret).join('[REDACTED]');
     if (!res.headersSent) {
       res.writeHead(error.status || 502, {
         "content-type": "application/json",
@@ -251,9 +243,11 @@ async function forwardHarness(router, req, res) {
       status: error.status || 502,
       ms: Date.now() - began,
       ok: false,
+      httpStatus, httpOk: httpStatus !== null && httpStatus >= 200 && httpStatus < 300, taskOk: false,
       error: message.slice(0, 300),
     });
   } finally {
+    controller.abort();
     clearTimeout(timer);
     if (router.controllers.delete(controller)) router.active--;
   }

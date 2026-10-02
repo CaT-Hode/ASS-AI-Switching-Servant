@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const { CONFIG_LIMITS, checkSize, validateProviders } = require('./config-limits.cjs');
 const { tail, inferProtocol, contextDefault } = require("./presets.cjs");
 const { normalizeBalance } = require("./balance.cjs");
 const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
@@ -116,6 +117,7 @@ function normalizeHeaders(raw) {
 }
 function normalizeProvider(raw, officialModels = []) {
   if (!raw || typeof raw !== "object") throw new Error("供应商配置无效");
+  if (/[\x00-\x1f\x7f]/.test(String(raw.apiKey || ''))) throw Error('API Key 含无效控制字符');
   const id = raw.id || "ass_" + crypto.randomBytes(6).toString("hex");
   if (!/^[\w-]{1,100}$/.test(id) || id === "official")
     throw new Error("供应商 ID 无效");
@@ -151,6 +153,7 @@ function normalizeProvider(raw, officialModels = []) {
     : raw.model
       ? [{ model: raw.model }]
       : [];
+  if (!Array.isArray(list) || list.length > CONFIG_LIMITS.models) throw Error('每个供应商的模型数量超过 10000 上限');
   p.models = list.map((m) => normalizeModel(m, p, officialModels));
   p.balance = normalizeBalance(raw.balance);
   if (raw.nativeCatalogInitialized === true) p.nativeCatalogInitialized = true;
@@ -161,13 +164,16 @@ function normalizeProvider(raw, officialModels = []) {
   return p;
 }
 function parseImport(raw, officialModels = []) {
-  if (!raw || !Array.isArray(raw.providers) || raw.providers.length > 100)
+  if (!raw || !Array.isArray(raw.providers))
     throw new Error("请选择包含 providers 列表的配置 JSON 文件");
+  if (raw.providers.length > CONFIG_LIMITS.providers) throw Error('供应商数量超过 100 上限');
+  checkSize(JSON.stringify(raw, null, 2));
   const providers = raw.providers.map((p) =>
     normalizeProvider(p, officialModels),
   );
   if (new Set(providers.map((p) => p.id)).size !== providers.length)
     throw new Error("导入文件包含重复供应商 ID");
+  validateProviders(providers);
   return providers;
 }
 function endpoint(base, protocol, suffix = "") {

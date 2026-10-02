@@ -36,6 +36,8 @@ function fixture(t, env = {}) {
   ].map(([id, apiKey, baseUrl, extraHeaders]) => ({ id, name: id, apiKey, baseUrl, extraHeaders,
     models: [{ model: "deepseek-audit", wireApi: "openai-chat" }] })) });
   const manager = new HarnessManager(data, () => ({ providers }), [], path.join(home, ".codex"), { home, env });
+  const originalLauncher = manager.launcher.bind(manager);
+  manager.launcher = id => id === 'opencode' ? { ...originalLauncher(id), version: '1.18.33' } : originalLauncher(id);
   const native = new NativeConfig(data, crypt, manager); manager.options.nativeConfig = native;
   const write = (relative, value) => put(path.join(home, relative), value);
   const profiles = (id, options = {}) => {

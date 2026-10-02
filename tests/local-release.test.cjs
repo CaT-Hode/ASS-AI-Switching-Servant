@@ -58,6 +58,13 @@ function snapshot(root) {
   visit(root);
   return result;
 }
+test('owned resources icon is prunable, repeat install is safe, and unknown resources stay protected',t=>{
+  const f=fixture(t),old=f.build('0.2.4');fs.writeFileSync(path.join(old,'resources/ass.ico'),'synthetic icon');
+  assert.ok(buildPlan(f.ctx,{prune:true}).prune.candidates.some(item=>item.path===old));
+  executeInstall(f.ctx,{prune:true});assert.equal(fs.existsSync(old),false);executeInstall(f.ctx,{prune:true});
+  const unknown=f.build('0.2.3');fs.writeFileSync(path.join(unknown,'resources/unknown.txt'),'keep');
+  assert.ok(buildPlan(f.ctx,{prune:true}).prune.unknown.includes(path.dirname(unknown)));assert.ok(fs.existsSync(unknown));
+});
 
 test("CLI defaults to read-only plan, including --prune", () => {
   assert.equal(parseArgs([]).command, "plan");

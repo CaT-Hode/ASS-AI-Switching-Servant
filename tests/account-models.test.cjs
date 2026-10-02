@@ -360,7 +360,7 @@ test("aggregated native models are read-only declarations and never leak keys or
     }),
   );
   const sources = modelSources(store.public(), h.snapshot(), { home }),
-    source = sources.find((s) => s.kind === "native");
+    source = sources.find((s) => s.id === "native-pi");
   assert.equal(source.readOnly, true);
   assert.equal(source.models[0].model, "native-test");
   assert.equal(source.models[0].contextWindow, null);

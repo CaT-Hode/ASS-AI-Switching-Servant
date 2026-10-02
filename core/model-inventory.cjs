@@ -267,7 +267,7 @@ function readNativeModels(client, account, home, env) {
 // just a harness. Never share a test record between same-named models or homes.
 function nativeTargetId(client, account, model) {
   return "native-test:" + client.id + ":" + createHash("sha256")
-    .update(JSON.stringify([account.id, account.sourcePath, model.nativeProvider || ""]))
+    .update(JSON.stringify([account.id, account.sourcePath, model.nativeProvider || "", model.nativeAlias || ""]))
     .digest("hex").slice(0, 32);
 }
 const nativeScope = (account) => createHash("sha256")

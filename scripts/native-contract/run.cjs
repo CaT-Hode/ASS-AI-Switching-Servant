@@ -27,6 +27,11 @@ async function main() {
   if (!process.argv.includes('--enable')) { console.log('SKIPPED native contracts: use --enable and --prefix <installed harness roots>'); return; }
   const index = process.argv.indexOf('--prefix'), prefix = index >= 0 && process.argv[index + 1];
   if (!prefix || !path.isAbsolute(prefix)) throw Error('Provide absolute --prefix with pinned packages in <name>/node_modules/<package>');
+  // QA's separately named latest versions; never downloads or resolves a floating tag.
+  if (process.argv.includes('--latest')) {
+    const versions = { codex: '0.159.3', claude: '2.1.286', pi: '0.99.2', 'opencode-v1': '1.18.34', 'opencode-v2': '2.0.21' };
+    for (const [name, version] of Object.entries(versions)) pins[name][1] = version;
+  }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ass-native-contract-'));
   const results = [], server = await mock();
   const check = async (name, fn) => {
@@ -43,6 +48,7 @@ async function main() {
       if (name === 'zcode' ? !zcodeMeta?.version || !fs.existsSync(zcodeCLI) : !fs.existsSync(manifest)) { results.push({ name, status: 'blocked', message: 'Pinned native consumer is not installed' }); continue; }
       const meta = zcodeMeta || JSON.parse(fs.readFileSync(manifest, 'utf8'));
       if (meta.name !== pkg || meta.version !== expected) { results.push({ name, status: 'blocked', message: `Expected ${pkg}@${expected}` }); continue; }
+      put(path.join(root, name, 'consumer-version.json'), { package: meta.name, version: meta.version, manifestSha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(manifest)).digest('hex') });
       try {
       const home = path.join(root, name, 'home'), work = path.join(root, name, 'project'); fs.mkdirSync(home, { recursive: true }); fs.mkdirSync(work, { recursive: true });
       const env = { HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData/Roaming'), LOCALAPPDATA: path.join(home, 'AppData/Local'),
@@ -61,6 +67,9 @@ async function main() {
         ZCODE_BUILTIN_PROVIDER_BUNDLED_CONFIG_FILE: path.join(zcodeRoot, 'resources/config/provider/zcode-builtin.json') });
       const launcher = resolveLauncher(harness, name === 'zcode' ? zcodeCLI : packageDir, env), f = { home, work, env };
       if (!launcher.ready) { results.push({ name, status: 'blocked', message: launcher.message }); continue; }
+      put(path.join(root, name, 'consumer-launcher.json'), { version: meta.version, executable: launcher.executable, args: launcher.args,
+        executableSha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(launcher.executable)).digest('hex'),
+        ...(launcher.entryPoint && fs.existsSync(launcher.entryPoint) ? { entryPointSha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(launcher.entryPoint)).digest('hex') } : {}) });
       const providers = parseImport({ providers: [{ id: 'contract', baseUrl: server.base, apiKey: 'synthetic-contract-key',
         models: [{ model: 'contract-model', wireApi: harness === 'claude' ? 'anthropic' : harness === 'codex' ? 'openai-responses' : 'openai-chat', efforts: ['low'], defaultEffort: 'low', contextWindow: 64000, maxOutputTokens: 1024 }] }] });
       const data = path.join(root, name, 'ass'), manager = new HarnessManager(data, () => ({ providers }), [], env.CODEX_HOME, { home, env, launchEnv: env, isConnected: () => true });
@@ -184,6 +193,9 @@ async function main() {
         assert.equal(r.code, 0, r.stderr.slice(-5000));
         assert.ok(adapter.credentials(dir).find(r => r.id === 'cred_contract_b').active);
       });
+      if (harness === 'opencode') await require('./round2.cjs').openCode({ name, launcher, f, root, execute, put, crypt, check });
+      if (harness === 'kimi') await require('./round2.cjs').kimi({ name, launcher, f, root, execute, put, server, check });
+      if (harness === 'pi') await require('./round2.cjs').pi({ name, packageDir, f, root, put, crypt, check });
       if (['dsh', 'pi', 'opencode'].includes(harness)) await check(name + ': native history continuation', async () => {
         const sid = harness === 'opencode' ? 'ses_asscontract1234567890123456' : '123e4567-e89b-42d3-a456-426614174000';
         const seed = { id: sid, cwd: work, title: 'Contract history', messages: [{ role: 'user', text: 'ASS_HISTORY_USER 中文' }, { role: 'assistant', text: 'ASS_HISTORY_ASSISTANT 😀' }], nativeVersion: name === 'opencode-v2' ? 2 : 1 };

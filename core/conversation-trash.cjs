@@ -25,26 +25,26 @@ function codexRow(row) {
     return { file, value, fields: fields.map((r) => r.name) };
   } finally { db.close(); }
 }
-function removeCodex(item) {
+function removeCodex(item, checkOnly = false) {
   if (!item) return;
   safePath(item.file); const { DatabaseSync } = require('node:sqlite'), db = new DatabaseSync(item.file, { timeout: 1000 });
   try {
     db.exec('PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE');
     const current = db.prepare('SELECT * FROM threads WHERE id=?').get(item.value.id);
     if (current && JSON.stringify(current) !== JSON.stringify(item.value)) throw Error('Codex 会话索引已变化，未删除');
-    if (current) db.prepare('DELETE FROM threads WHERE id=?').run(item.value.id);
+    if (current && !checkOnly) db.prepare('DELETE FROM threads WHERE id=?').run(item.value.id);
     db.exec('COMMIT');
   } catch (e) { try { db.exec('ROLLBACK'); } catch {} throw e; }
   finally { db.close(); }
 }
-function restoreCodex(item) {
+function restoreCodex(item, checkOnly = false) {
   if (!item) return; safePath(item.file);
   const { DatabaseSync } = require('node:sqlite'), db = new DatabaseSync(item.file, { timeout: 1000 });
   try {
     db.exec('BEGIN IMMEDIATE');
     const current = db.prepare('SELECT * FROM threads WHERE id=?').get(item.value.id);
     if (current && JSON.stringify(current) !== JSON.stringify(item.value)) throw Error('Codex 已有同 ID 的会话，未覆盖');
-    if (!current) {
+    if (!current && !checkOnly) {
       const fields = new Set(db.prepare('PRAGMA table_info(threads)').all().map((r) => r.name));
       const keys = item.fields.filter((k) => fields.has(k));
       if (keys.some((k) => !/^[a-zA-Z0-9_]+$/.test(k))) throw Error('索引字段无效');
@@ -69,24 +69,24 @@ function metadataFiles(row) {
     return entries.length ? [{ file, format: 'json', entries, sessionId: row.sessionId }] : [];
   });
 }
-function updateMetadata(item, restore) {
+function updateMetadata(item, restore, checkOnly = false) {
   safePath(item.file); if (!fs.existsSync(item.file)) { if (!restore) return; throw Error('客户端索引文件已移走，请先恢复目录'); }
   const raw = fs.readFileSync(item.file, 'utf8');
   if (item.format === 'jsonl') {
     const current = raw.split('\n').filter((l) => { try { return JSON.parse(l).id === item.sessionId; } catch { return false; } });
     if (restore) {
       if (current.length && JSON.stringify(current) !== JSON.stringify(item.entries)) throw Error('同 ID 的会话名称已变化，未覆盖');
-      if (!current.length) atomic(item.file, raw + (raw.endsWith('\n') ? '' : '\n') + item.entries.join('\n') + '\n');
+      if (!current.length && !checkOnly) atomic(item.file, raw + (raw.endsWith('\n') ? '' : '\n') + item.entries.join('\n') + '\n');
     } else {
-      if (JSON.stringify(current) !== JSON.stringify(item.entries)) throw Error('客户端名称索引已变化，未删除');
-      atomic(item.file, raw.split('\n').filter((l) => !item.entries.includes(l)).join('\n'));
+      if (current.length && JSON.stringify(current) !== JSON.stringify(item.entries)) throw Error('客户端名称索引已变化，未删除');
+      if (!checkOnly) atomic(item.file, raw.split('\n').filter((l) => !item.entries.includes(l)).join('\n'));
     }
   } else {
     const value = JSON.parse(raw), current = value.entries.filter((r) => r.sessionId === item.sessionId);
     if (restore && current.length && JSON.stringify(current) !== JSON.stringify(item.entries)) throw Error('同 ID 的会话已变化，未覆盖');
-    if (!restore && JSON.stringify(current) !== JSON.stringify(item.entries)) throw Error('客户端名称索引已变化，未删除');
+    if (!restore && current.length && JSON.stringify(current) !== JSON.stringify(item.entries)) throw Error('客户端名称索引已变化，未删除');
     value.entries = restore ? current.length ? value.entries : [...value.entries, ...item.entries] : value.entries.filter((r) => r.sessionId !== item.sessionId);
-    atomic(item.file, JSON.stringify(value));
+    if (!checkOnly) atomic(item.file, JSON.stringify(value));
   }
 }
 async function plan({ vault, secret, rows, sources, label }) {
@@ -128,7 +128,24 @@ async function plan({ vault, secret, rows, sources, label }) {
   result.metadata = result.metadata.filter((m, i, all) => all.findIndex((x) => x.file === m.file && x.sessionId === m.sessionId) === i);
   return result;
 }
-async function commit(entry) {
+function progressFile(vault, entry) {
+  if (!vault) return null;
+  if (!/^[a-f0-9-]{36}$/.test(entry.id)) throw Error('备份标识无效');
+  const file = path.join(vault, 'trash', entry.id, 'progress.json'); safePath(file); return file;
+}
+function progress(vault, entry, phase, step) {
+  const file = progressFile(vault, entry);
+  if (file) atomic(file, JSON.stringify({ id: entry.id, phase, step, updatedAt: new Date().toISOString() }));
+}
+function status(vault, entry) {
+  const file = progressFile(vault, entry);
+  if (!file || !fs.existsSync(file)) return entry;
+  if (fs.statSync(file).size > 32768) throw Error('删除恢复进度记录过大');
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!['deleting', 'delete-partial', 'deleted', 'restoring', 'restore-partial', 'restored'].includes(saved.phase)) throw Error('删除恢复进度记录无效');
+  return saved.id === entry.id ? { ...entry, phase: saved.phase, progress: saved.step } : entry;
+}
+async function commit(entry, vault) {
   for (const item of entry.files) {
     safePath(item.file); if (!fs.existsSync(item.file)) continue;
     if (stamp(fs.statSync(item.file)) !== item.signature) throw Error('会话已变化，未删除；备份保留');
@@ -136,19 +153,30 @@ async function commit(entry) {
     if (digest.digest('hex') !== item.snapshot.digest || stamp(fs.statSync(item.file)) !== item.signature) throw Error('会话内容已变化，未删除；备份保留');
   }
   // Revalidate all native metadata before removing any transcript.
-  for (const item of entry.indexes) removeCodex(item);
-  for (const item of entry.metadata) updateMetadata(item, false);
-  for (const item of entry.files) {
-    safePath(item.file); if (!fs.existsSync(item.file)) continue;
-    if (stamp(fs.statSync(item.file)) !== item.signature) throw Error('会话仍在变化，停止删除；可从备份恢复');
-    fs.unlinkSync(item.file);
+  for (const item of entry.indexes) removeCodex(item, true);
+  for (const item of entry.metadata) updateMetadata(item, false, true);
+  progress(vault, entry, 'deleting', '开始删除索引');
+  try {
+    for (const item of entry.indexes) { removeCodex(item); progress(vault, entry, 'deleting', '已处理会话索引'); }
+    for (const item of entry.metadata) { updateMetadata(item, false); progress(vault, entry, 'deleting', '已处理名称索引'); }
+    for (const item of entry.files) {
+      safePath(item.file); if (!fs.existsSync(item.file)) continue;
+      if (stamp(fs.statSync(item.file)) !== item.signature) throw Error('会话仍在变化，停止删除；可从备份恢复');
+      fs.unlinkSync(item.file);
+    }
+    progress(vault, entry, 'deleted', '删除完成');
+    return { ...entry, phase: 'deleted' };
+  } catch (error) {
+    progress(vault, entry, 'delete-partial', '部分步骤完成，可重试删除或恢复');
+    throw Error('删除未全部完成，部分索引或记录可能已移除；备份保留，可重试或恢复。' + error.message);
   }
-  return { ...entry, phase: 'deleted' };
 }
 async function restore({ vault, secret, entry }) {
   const directory = path.join(vault, 'trash', entry.id), staged = [];
   if (!/^[a-f0-9-]{36}$/.test(entry.id)) throw Error('备份标识无效');
   try {
+    for (const item of entry.indexes) restoreCodex(item, true);
+    for (const item of entry.metadata) updateMetadata(item, true, true);
     for (const item of entry.files) {
       safePath(item.file);
       if (fs.existsSync(item.file)) {
@@ -163,10 +191,21 @@ async function restore({ vault, secret, entry }) {
       const tmp = item.file + '.' + crypto.randomUUID() + '.restore.tmp'; staged.push({ tmp, target: item.file });
       await pipeline(fs.createReadStream(encrypted, { start: 28 }), d, fs.createWriteStream(tmp, { flags: 'wx', mode: 0o600 }));
     }
-    for (const item of staged) { safePath(item.target); fs.linkSync(item.tmp, item.target); }
+    // Recheck after asynchronous decryption before publishing any transcript.
+    for (const item of entry.indexes) restoreCodex(item, true);
+    for (const item of entry.metadata) updateMetadata(item, true, true);
+    progress(vault, entry, 'restoring', '开始恢复记录');
+    for (const item of staged) { safePath(item.target); fs.linkSync(item.tmp, item.target); progress(vault, entry, 'restoring', '已恢复会话文件'); }
     for (const item of entry.indexes) restoreCodex(item);
     for (const item of entry.metadata) updateMetadata(item, true);
+    progress(vault, entry, 'restored', '恢复完成');
     return { ...entry, phase: 'restored', restoredAt: new Date().toISOString() };
+  } catch (error) {
+    // Preflight errors produce no visible changes; publication failures retain
+    // a durable status instead of claiming the native transcript is absent.
+    const saved = status(vault, entry);
+    if (saved.phase === 'restoring') { progress(vault, entry, 'restore-partial', '部分步骤完成，请重试恢复'); throw Error('恢复未全部完成，部分记录可能已恢复；备份保留，请重试。' + error.message); }
+    throw error;
   } finally { for (const item of staged) if (fs.existsSync(item.tmp)) fs.unlinkSync(item.tmp); }
 }
 function importBundle(vault, secret, entry, item) {
@@ -178,4 +217,4 @@ function importBundle(vault, secret, entry, item) {
   if (hash(body) !== item.signature) throw Error('OpenCode 备份校验失败');
   return JSON.parse(body.toString('utf8'));
 }
-module.exports = { plan, commit, restore, importBundle };
+module.exports = { plan, commit, restore, importBundle, status };

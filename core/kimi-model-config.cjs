@@ -15,15 +15,26 @@ function normalize(config = {}) {
     const name = raw.name ?? raw.model;
     if (!has(name)) continue;
     if (!has(provider) && has(raw.base_url)) {
-      // Native derives the inline provider identity from the endpoint host.
       try { provider = new URL(raw.base_url).host; } catch { issues.push('Kimi 内联模型地址无效'); continue; }
-      const inline = { type: raw.protocol, base_url: raw.base_url,
+      if (object(providers[provider])) provider = 'inline:' + alias;
+      providers[provider] = { type: raw.protocol, base_url: raw.base_url,
         ...(has(raw.api_key) ? { api_key: raw.api_key } : {}),
         ...(has(raw.api_key_env) ? { api_key_env: raw.api_key_env } : {}), ...(raw.oauth ? { oauth: raw.oauth } : {}) };
-      if (providers[provider] && JSON.stringify(providers[provider]) !== JSON.stringify(inline)) {
-        issues.push('Kimi 内联供应商与现有路由冲突，未推断目标'); continue;
+    } else if (has(provider) && object(providers[provider]) &&
+        ['base_url', 'api_key', 'api_key_env', 'protocol', 'oauth'].some(k => Object.hasOwn(raw, k))) {
+      const inherited = providers[provider], effective = { ...inherited };
+      for (const field of ['base_url', 'api_key', 'api_key_env', 'oauth']) if (Object.hasOwn(raw, field)) effective[field] = raw[field];
+      // A model key supersedes inherited authorization, never combines with it.
+      if (Object.hasOwn(raw, 'api_key')) { delete effective.api_key_env; delete effective.oauth; }
+      else if (Object.hasOwn(raw, 'api_key_env')) { delete effective.api_key; delete effective.oauth; }
+      else if (Object.hasOwn(raw, 'oauth')) { delete effective.api_key; delete effective.api_key_env; }
+      if (Object.hasOwn(raw, 'protocol')) effective.type = raw.protocol;
+      if (effective.oauth && String(effective.base_url).replace(/\/+$/, '') !== String(inherited.base_url).replace(/\/+$/, '')) {
+        issues.push('Kimi OAuth 模型覆盖了授权地址，未发送凭据'); continue;
       }
-      providers[provider] = inline;
+      provider = 'route:' + provider + ':' + alias;
+      if (Object.hasOwn(providers, provider)) { issues.push('Kimi 模型路由标识冲突'); continue; }
+      providers[provider] = effective;
     }
     if (!has(provider) || !object(providers[provider])) { issues.push('Kimi 模型引用了不存在的供应商'); continue; }
     models.push({ ...raw, provider, model: name, alias });

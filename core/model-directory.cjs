@@ -49,8 +49,8 @@ class ModelDirectory {
     const ttl = cached?.error ? 30000 : 5 * 60 * 1000;
     if (!refresh && cached && this.now() - this.completed.get(id) < ttl)
       return Promise.resolve(cached);
-    const native = !!this.readNative && id.startsWith("native-");
-    const provider = id === "official" || native ? null : this.getProvider(id);
+    const provider = id === 'official' ? null : this.getProvider(id);
+    const native = !provider && !!this.readNative && /^native-(codex|claude|dsh|opencode|pi|kimi|zcode)$/.test(id);
     if (id !== "official" && !native && !provider)
       return Promise.reject(Error("供应商不存在"));
     const request = { controller: new AbortController(), promise: null };

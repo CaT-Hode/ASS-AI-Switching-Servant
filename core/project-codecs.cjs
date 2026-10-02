@@ -63,9 +63,21 @@ function decode(harness, rows, { completed = true } = {}) {
   let header = {}, messages = [], model = '', title = '', pending = false;
   if (harness === 'codex') {
     header = rows.find((r) => r.type === 'session_meta')?.payload || {};
-    const life = rows.filter((r) => r.type === 'event_msg' && ['task_started', 'task_complete', 'turn_aborted'].includes(r.payload?.type)).at(-1);
-    pending = life?.payload.type === 'task_started';
-    if (pending && completed) rows = rows.slice(0, Math.max(1, rows.findLastIndex((r) => r.type === 'event_msg' && r.payload?.type === 'task_complete') + 1));
+    const life = rows.filter(r => r.type === 'event_msg' && ['task_started', 'task_complete', 'turn_aborted'].includes(r.payload?.type));
+    pending = ['task_started', 'turn_aborted'].includes(life.at(-1)?.payload.type);
+    // Lifecycle-aware logs share only the committed prefix. Legacy logs without
+    // lifecycle markers retain their existing compatibility behavior.
+    if (completed && life.length) {
+      const committed = rows.filter(r => r.type === 'session_meta'); let turn = [];
+      for (const row of rows) {
+        const event = row.type === 'event_msg' ? row.payload?.type : '';
+        if (event === 'task_started') turn = [row];
+        else if (event === 'turn_aborted') turn = [];
+        else if (event === 'task_complete') { committed.push(...turn, row); turn = []; }
+        else if (row.type !== 'session_meta') turn.push(row);
+      }
+      rows = committed;
+    }
     for (const r of rows) {
       if (r.type === 'response_item') {
         const p = r.payload || {};
@@ -170,7 +182,7 @@ function openCodeBundle(file, id) {
   return database(file, (db) => {
     if (require('./opencode-version.cjs').hasTable(db, 'session_v2')) return require('./opencode-version.cjs').bundle(db, id);
     const r = db.prepare('SELECT * FROM session WHERE id = ?').get(id); if (!r) throw Error('OpenCode 会话不存在');
-    const messages = db.prepare('SELECT * FROM message WHERE session_id = ? ORDER BY time_created, id').all(id).map((m) => ({
+    const messages = db.prepare('SELECT * FROM message WHERE session_id = ? ORDER BY id').all(id).map((m) => ({
       info: { ...JSON.parse(m.data), id: m.id, sessionID: id },
       parts: db.prepare('SELECT * FROM part WHERE message_id = ? ORDER BY time_created, id').all(m.id).map((p) => ({ ...JSON.parse(p.data), id: p.id, sessionID: id, messageID: m.id })),
     }));

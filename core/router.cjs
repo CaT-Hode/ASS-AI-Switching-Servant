@@ -2,6 +2,7 @@ const http = require("node:http");
 const { endpoint, normalizeEffort, codexProviderId } = require("./models.cjs");
 const { convertRequest, translateStream } = require("./adapters.cjs");
 const { SseMonitor } = require("./sse-monitor.cjs");
+const { readTaskJSON } = require('./task-outcome.cjs');
 const { forwardHarness, authorized } = require("./harness-route.cjs");
 const { providerSessionHeaders, protocolEndpoint } = require("./provider-transport.cjs");
 const crypto = require("node:crypto");
@@ -171,7 +172,7 @@ class Router {
     let route;
     const controller = new AbortController();
     let timer;
-    let success = false;
+    let httpStatus = null;
     try {
       const expected = `127.0.0.1:${this.port}`;
       if (
@@ -276,6 +277,7 @@ class Router {
         },
         route.network,
       );
+      httpStatus = response.status;
       if (!response.ok) {
         const raw = (await response.text()).slice(0, 4000);
         let message = "上游返回 HTTP " + response.status;
@@ -297,6 +299,11 @@ class Router {
       if (route.protocol === "openai-responses") {
         let contentType = response.headers.get("content-type");
         const streaming = body.stream !== false && !match[1];
+        if (!streaming) {
+          const { text } = await readTaskJSON(response);
+          res.writeHead(response.status, { 'content-type': 'application/json', 'x-ass-provider': route.official ? 'official' : route.provider.id });
+          await write(res, text);
+        } else {
         const reader = response.body.getReader();
         const monitor = streaming ? new SseMonitor() : null;
         try {
@@ -332,20 +339,22 @@ class Router {
           });
           res.flushHeaders();
           if (first) {
-            monitor?.feed(first);
-            await write(res, first);
+            if (monitor) { for (const frame of monitor.feed(first)) await write(res, frame); }
+            else await write(res, first);
           }
-          while (true) {
+          while (!monitor?.ended) {
             const { value, done } = await reader.read();
             if (done) {
-              monitor?.feed(null, true);
+              if (monitor) { for (const frame of monitor.feed(null, true)) await write(res, frame); }
               break;
             }
-            monitor?.feed(value);
-            await write(res, Buffer.from(value));
+            if (monitor) { for (const frame of monitor.feed(value)) await write(res, frame); }
+            else await write(res, Buffer.from(value));
           }
         } finally {
+          await reader.cancel().catch(() => {});
           reader.releaseLock();
+        }
         }
       } else if (body.stream === false) {
         let final;
@@ -378,7 +387,6 @@ class Router {
           );
       }
       res.end();
-      success = true;
       this.log({
         time: new Date().toISOString(),
         source: route.source,
@@ -386,6 +394,7 @@ class Router {
         status: response.status,
         ms: Date.now() - began,
         ok: true,
+        httpStatus, httpOk: httpStatus >= 200 && httpStatus < 300, taskOk: true,
       });
     } catch (error) {
       let message = controller.signal.aborted
@@ -422,10 +431,12 @@ class Router {
         status: error.status || 502,
         ms: Date.now() - began,
         ok: false,
+        httpStatus, httpOk: httpStatus !== null && httpStatus >= 200 && httpStatus < 300, taskOk: false,
         error: message.slice(0, 500),
       });
     } finally {
       this.requests.delete(req);
+      controller.abort();
       clearTimeout(timer);
       if (this.controllers.delete(controller)) this.active--;
       this.onActivity();

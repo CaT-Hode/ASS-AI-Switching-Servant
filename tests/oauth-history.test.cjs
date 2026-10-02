@@ -188,3 +188,16 @@ test("OAuth: discovering pi capabilities later records the unchanged native gran
   f.save({ anthropic: { type: "oauth", access: "a", refresh: "ra" } }); assert.equal(f.history.entries.length, 0);
   f.history.allows = () => true; f.scan(); assert.equal(f.history.entries.length, 1);
 });
+
+test('Pi native lock blocks preview and apply, remains owned, and retry succeeds', t => {
+  const f = setup(t, 'pi'), a = { type: 'oauth', access: 'a', refresh: 'ra', expires: 2100000000000, email: 'alice@example.test' };
+  f.save({ anthropic: a }); const id = f.history.entries[0].id;
+  f.save({ anthropic: { ...a, access: 'b', email: 'bob@example.test' } });
+  const ticket = f.history.preview('pi', id).ticket, before = fs.readFileSync(f.file, 'utf8');
+  fs.mkdirSync(f.file + '.lock');
+  assert.throws(() => f.history.preview('pi', id), /Pi 正在/);
+  assert.throws(() => f.history.apply(ticket, true), /Pi 正在/);
+  assert.equal(fs.readFileSync(f.file, 'utf8'), before); assert.ok(fs.existsSync(f.file + '.lock'));
+  fs.rmdirSync(f.file + '.lock'); f.history.apply(f.history.preview('pi', id).ticket, true);
+  assert.deepEqual(f.native().anthropic, a); assert.equal(fs.existsSync(f.file + '.lock'), false);
+});

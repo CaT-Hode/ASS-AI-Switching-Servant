@@ -266,15 +266,17 @@ export function ModelEditor({
       () => model?.efforts.includes("ultra") || false,
     );
   const pending = useRef(0);
+  useEffect(() => () => { pending.current++; }, []);
   const dirty = !!model && JSON.stringify(draft) !== JSON.stringify(model);
   const gpt = draft.model.split("/").at(-1).toLowerCase().startsWith("gpt");
   const ceiling = gpt || allowUltra ? 5 : 4;
   const indexes = draft.efforts.map((e) => efforts.indexOf(e)),
     low = Math.min(...indexes),
     high = Math.max(...indexes);
-  const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+  const set = (key, value) => { pending.current++; setError(''); setDraft((d) => ({ ...d, [key]: value })); };
   function selected(list) {
     if (!list.length) return;
+    pending.current++;
     setDraft((d) => ({
       ...d,
       efforts: list,
@@ -298,7 +300,7 @@ export function ModelEditor({
         setAllowUltra(d.efforts.includes("ultra"));
       }
     } catch (e) {
-      setError(e.message);
+      if (request === pending.current) setError(e.message);
     }
   }
   async function save(e) {
@@ -394,13 +396,14 @@ export function ModelEditor({
                 min="4096"
                 max="10000000"
                 value={draft.contextWindow}
-                onChange={(e) =>
+                onChange={(e) => {
+                  pending.current++;
                   setDraft((d) => ({
                     ...d,
                     contextWindow: Number(e.target.value),
                     contextSource: "手动配置",
-                  }))
-                }
+                  }));
+                }}
               />
               <span>tokens</span>
             </div>
@@ -462,6 +465,7 @@ export function ModelEditor({
                   type="checkbox"
                   checked={allowUltra}
                   onChange={(e) => {
+                    pending.current++;
                     setAllowUltra(e.target.checked);
                     if (!e.target.checked)
                       selected(

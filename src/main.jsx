@@ -102,7 +102,7 @@ function RequestTable({ rows }) {
             <span className="muted">{r.source}</span>
             <span className={r.ok ? "success" : "danger"} title={r.error}>
               {r.ok ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}{" "}
-              {r.ok ? "成功" : r.status}
+              {r.taskOk === false && r.httpOk ? `任务失败 · HTTP ${r.httpStatus}` : r.ok ? "成功" : r.status}
             </span>
             <span className="muted mono">{(r.ms / 1000).toFixed(2)} s</span>
           </div>

@@ -9,7 +9,8 @@ function database(file, fn) {
 }
 function hasTable(db, name) { return !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name); }
 function version(launcher, dir) {
-  if (/^2\./.test(launcher?.version || '')) return 2;
+  if (/^[12]\./.test(launcher?.version || '')) return Number(launcher.version[0]);
+  if (launcher?.version) throw Error('OpenCode CLI 版本未支持');
   const entry = launcher?.entryPoint || launcher?.executable;
   if (entry) for (const relative of ['.', '..', '../..']) {
     try { const p = JSON.parse(fs.readFileSync(path.resolve(path.dirname(entry), relative, 'package.json'), 'utf8'));
@@ -18,8 +19,13 @@ function version(launcher, dir) {
     } catch {}
   }
   const file = dir && path.join(dir, 'opencode.db');
-  if (file && fs.existsSync(file)) return database(file, db => hasTable(db, 'session_v2') || hasTable(db, 'credential') ? 2 : 1);
-  return 1;
+  if (file && fs.existsSync(file)) return database(file, db => {
+    const v1 = ['session', 'message', 'part'].every(t => hasTable(db, t)), v2 = ['session_v2', 'session_message'].every(t => hasTable(db, t));
+    if (v1 !== v2) return v2 ? 2 : 1;
+    throw Error('OpenCode 数据库版本无法唯一识别，请配置已知版本 CLI');
+  });
+  if (!launcher?.ready) return 1; // Empty uninstalled home has no active native CLI.
+  throw Error('OpenCode CLI 版本无法确认，请配置带版本信息的安装目录');
 }
 function credentials(dir) {
   const file = path.join(dir, 'opencode.db');
@@ -44,7 +50,7 @@ function selected(account) {
 function command(major, action, argument) {
   if (!['import', 'export', 'delete'].includes(action)) throw Error('无效的 OpenCode 会话操作');
   return major === 2 ? ['session', action, argument, '--standalone']
-    : action === 'import' ? ['import', argument] : ['session', action, argument];
+    : ['import', 'export'].includes(action) ? [action, argument] : ['session', action, argument];
 }
 function encode({ id, cwd, title, messages, createdAt, model = 'gpt-5' }) {
   const time = Date.parse(createdAt), zero = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
@@ -73,4 +79,23 @@ function bundle(db, id) {
     ...(r.parent_id ? { parentID: r.parent_id } : {}), ...(r.agent ? { agent: r.agent } : {}),
     ...(r.model ? { model: JSON.parse(r.model) } : {}), time: { created: r.time_created, updated: r.time_updated } }, messages };
 }
-module.exports = { version, credentials, selected, command, encode, bundle, database, hasTable };
+function cwd(bundle) { return bundle?.info?.location?.directory ?? bundle?.info?.directory; }
+function semantic(bundle) {
+  const copy = structuredClone(bundle);
+  if (!copy?.info?.id || typeof cwd(copy) !== 'string' || !Array.isArray(copy.messages)) throw Error('OpenCode 会话身份无效');
+  const { pathKey } = require('./conversation-paths.cjs');
+  if (copy.info.location) copy.info.location.directory = pathKey(copy.info.location.directory);
+  else copy.info.directory = pathKey(copy.info.directory);
+  for (const message of copy.messages) if (message.info?.path) {
+    for (const field of ['cwd', 'root']) if (message.info.path[field]) message.info.path[field] = pathKey(message.info.path[field]);
+  }
+  if (copy.info.time) delete copy.info.time.updated;
+  // The importer resolves projectID from location.directory. Directory remains
+  // part of the comparison; generated project IDs are import metadata.
+  delete copy.info.projectID;
+  const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])])) : value;
+  return JSON.stringify(canonical(copy));
+}
+function equal(a, b) { return semantic(a) === semantic(b); }
+module.exports = { cwd, semantic, equal, version, credentials, selected, command, encode, bundle, database, hasTable };

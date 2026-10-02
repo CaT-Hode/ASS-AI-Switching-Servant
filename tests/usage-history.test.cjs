@@ -24,6 +24,20 @@ const write = (f, v) => {
   fs.writeFileSync(f, typeof v === "string" ? v : JSON.stringify(v));
 };
 const when = "2026-09-22T12:00:00.000Z";
+test('duplicate message copies always prefer newer usage regardless of file order, including cached rescans',async t=>{
+  const home=temp(t),options={home,env:{},dataDir:home,now:Date.parse(when)};
+  const files=['a','z'].map(n=>path.join(home,'.claude/projects/project',n+'.jsonl'));
+  const row=(time,output)=>({type:'assistant',sessionId:'session',timestamp:time,message:{id:'same',model:'m',usage:{input_tokens:10,output_tokens:output}}});
+  for(const sameTimestamp of [false,true])for(const reverse of [false,true]){
+    // A newer corrected total can even be lower; copying files in a different
+    // directory order must not change which revision is used.
+    const output=sameTimestamp?1:30,old=sameTimestamp?30:1;
+    write(files[0],JSON.stringify(row(reverse?(sameTimestamp?when:'2026-09-22T11:00:00Z'):when,reverse?old:output))+'\n');write(files[1],JSON.stringify(row(reverse?when:(sameTimestamp?when:'2026-09-22T11:00:00Z'),reverse?output:old))+'\n');
+    for(let i=0;i<2;i++){const date=new Date(i===Number(reverse)?'2026-09-22T13:00:00Z':'2026-09-22T11:00:00Z');fs.utimesSync(files[i],date,date);}
+    const first=await scan(options);assert.equal(first.snapshot.rows.filter(r=>r.client==='claude').reduce((n,r)=>n+r.output,0),output);
+    assert.deepEqual((await scan(options,first.cache)).snapshot,first.snapshot);
+  }
+});
 const total = (i, o, c = 0, r = 0) => ({
   input_tokens: i,
   output_tokens: o,

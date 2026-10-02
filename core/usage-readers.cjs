@@ -18,6 +18,14 @@ function codexUsage(u) {
     true,
   );
 }
+// Stable precedence for revisions/copies; filesystem enumeration is never a tie-breaker.
+function newerUsage(a, b) {
+  if (!b) return true;
+  const score = r => [r.updatedAt || r.at || 0, r.fileUpdatedAt || 0, r.input + r.output, JSON.stringify(r)];
+  const left = score(a), right = score(b);
+  for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return left[i] > right[i];
+  return false;
+}
 function parser(client, fileKey) {
   let model = "未标注",
     provider = "未标注",
@@ -28,7 +36,7 @@ function parser(client, fileKey) {
   function put(key, time, usage, extra = {}) {
     const day = dayKey(time);
     if (!day || !usage) return;
-    rows.set(key, {
+    const row = {
       key: hash(client + "\0" + key),
       client,
       day,
@@ -37,9 +45,11 @@ function parser(client, fileKey) {
       model: label(model),
       provider: label(provider),
       calls: 1,
+      updatedAt: Date.parse(time) || (typeof time === 'number' ? time : 0),
       ...usage,
       ...extra,
-    });
+    };
+    if (newerUsage(row, rows.get(key))) rows.set(key, row);
   }
   return {
     rows,
@@ -312,6 +322,11 @@ async function scan(options, previousCache = {}) {
     to = dayKey(now);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   let bytes = 0;
+  const putRecord = (row, fileUpdatedAt) => {
+    if (row.day < from || row.day > to) return;
+    const candidate = { ...row, fileUpdatedAt };
+    if (newerUsage(candidate, records.get(row.key))) records.set(row.key, candidate);
+  };
   for (const client of CLIENTS) {
     const source = {
       client,
@@ -373,7 +388,7 @@ async function scan(options, previousCache = {}) {
       try { if (client === "kimi") context = extra.kimiContext(file, roots); }
       catch { source.partial = true; continue; }
       const signature = [
-        2,
+        3,
         timeZone,
         stat.size,
         stat.mtimeMs,
@@ -402,17 +417,15 @@ async function scan(options, previousCache = {}) {
         if (client === "zcode") entry = extra.retainZCodeHistory(entry, previousCache[key], now);
         cache[key] = entry;
         if (entry.malformed) source.partial = true;
-        for (const row of entry.rows)
-          if (row.day >= from && row.day <= to) records.set(row.key, row);
+        for (const row of entry.rows) putRecord(row, stat.mtimeMs);
       } catch {
         source.partial = true;
         const previous = previousCache[key];
-        if (previous?.signature?.startsWith(`2:${timeZone}:`)) {
+        if ([2, 3].some(version => previous?.signature?.startsWith(`${version}:${timeZone}:`))) {
           // A locked or damaged live file must not erase already observed
           // metadata. Keep its old signature so the next scan retries it.
           cache[key] = previous;
-          for (const row of previous.rows || [])
-            if (row.day >= from && row.day <= to) records.set(row.key, row);
+          for (const row of previous.rows || []) putRecord(row, Number(previous.signature.split(':').at(3)) || 0);
         }
       }
     }

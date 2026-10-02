@@ -142,7 +142,7 @@ test('Claude user settings overrides block both preview and changes made before 
 test('OpenCode v2 OAuth inventory imports every DB credential independently, ignores stale files and rechecks deleted rows', t => {
   const f = setup(t), m = f.manager, dir = path.join(f.home, '.local/share/opencode'); fs.mkdirSync(dir, { recursive: true });
   const dbFile = path.join(dir, 'opencode.db'), { DatabaseSync } = require('node:sqlite'), db = new DatabaseSync(dbFile);
-  try { db.exec('CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT, active INTEGER)');
+  try { db.exec('CREATE TABLE session_v2(id TEXT); CREATE TABLE session_message(id TEXT); CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT, active INTEGER)');
     const insert = db.prepare('INSERT INTO credential VALUES (?,?,?,?,?)');
     for (const id of ['A', 'B']) insert.run(id, 'anthropic', id, JSON.stringify({ type: 'oauth', access: 'synthetic-' + id, refresh: 'refresh-' + id, expires: 2100000000000, clientId: CLIENT, scopes: ['user:inference'] }), id === 'A' ? 1 : 0);
     insert.run('api', 'other', 'private label', JSON.stringify({ type: 'key', key: 'synthetic-private-key' }), 1);

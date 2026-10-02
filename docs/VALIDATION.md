@@ -339,3 +339,9 @@
 - `scripts/conversation-native-qa.cjs`：实际调用本机 Codex CLI 与 Claude Code 2.1.283。模拟 OAuth A 生成会话后使用模拟 OAuth B 继续，验证完整旧用户消息进入本地模拟服务的请求，认证取 B，旧账户凭据不复制。无真实凭据、无外部推理、不中断正在运行的桌面客户端。
 - `scripts/oauth-history-qa.cjs`：Electron 隔离目录 + Windows DPAPI，验证 Codex / CC 账户卡片切换、重启后的历史、置顶、搜索、缺失 CC JSONL 从副本恢复，以及续聊启动计划只使用当前目录。浅 / 深模式桌面截图与渲染器无报错通过；浏览器插件不可用，使用项目既有 Electron Playwright 路径。
 - Codex 桌面 deeplink 只做配置与协议注册确认，本轮不在用户真实桌面打开 / 重启会话，避免打断当前任务。云端会话、Claude Desktop 普通聊天与跨组织权益不在本轮验收范围。
+
+## 2026-10-01 第二轮 QA 修复
+
+当前修复及验证范围见 [ROUND2-FIXES.md](ROUND2-FIXES.md)。747 项自动测试与前端构建通过；OpenCode 1.18.33/2.0.20、Pi 0.99.1、Kimi 2.1.1 的相关原生用例通过。新增 `npm run test:native -- --enable --prefix <绝对安装目录> --latest`，latest 使用 QA 明确列出的版本，不自动下载；本机缺少对应最新版本，结果为 blocked。归档 OAuth 脚本未执行，真实 OAuth 刷新和最新 Pi 刷新链路没有计作通过。
+
+当前 Windows 发布规则为仅上传一份 EXE；历史 ZIP 说明只适用于旧发布。测试与 QA 材料继续从生产文件白名单中排除，本轮没有改动公开的 0.3.1 标签或安装附件。

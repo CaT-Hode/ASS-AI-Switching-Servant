@@ -263,11 +263,11 @@ function enumerateSources(
   const sources = [];
   for (const c of candidates) {
     if (c.kind === 'opencode') {
-      let rows;
-      try { rows = require('./opencode-version.cjs').credentials(path.dirname(c.file)); }
+      let rows, major;
+      try { major = require('./opencode-version.cjs').version(null, path.dirname(c.file)); rows = major === 2 ? require('./opencode-version.cjs').credentials(path.dirname(c.file)) : null; }
       catch { sources.push({ ...c, compatible: false, requiresLogin: false, reasonCode: 'oauth_storage_unreadable',
         reason: 'OpenCode 授权数据库无法读取或版本不受支持；未回退到旧 auth.json。', verification: 'format-only' }); continue; }
-      if (rows !== null || require('./opencode-version.cjs').version(null, path.dirname(c.file)) === 2) {
+      if (major === 2) {
         for (const row of (rows || []).filter(r => r.value?.type === 'oauth')) {
           const provider = safeProvider(row.integrationID); if (!provider) continue;
           const selector = require('node:crypto').createHash('sha256').update(String(row.id)).digest('hex').slice(0, 24);

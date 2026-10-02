@@ -11,6 +11,8 @@ test("eight individually traced petals become narrower while keeping their radia
   for (const petal of reference) {
     const narrowed = narrowPetal(petal); assert.notEqual(narrowed.d, petal.d); assert.ok(svg.includes(narrowed.tag), petal.id);
     assert.ok(narrowed.tag.includes(`id="${petal.id}"`)); assert.ok(narrowed.tag.includes(` d="${narrowed.d}"`));
+    assert.match(narrowed.d, / Z$/);
+    assert.ok(narrowed.tag.includes('fill="none" stroke="#ffffff"'));
     const original = samplePath(petal.d), next = samplePath(narrowed.d);
     const mean = original.reduce((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]).map(v => v / original.length);
     const radial = sub(mean, SPEC.center), len = Math.hypot(...radial), axis = radial.map(v => v / len), tangent = [-axis[1], axis[0]];
@@ -19,7 +21,9 @@ test("eight individually traced petals become narrower while keeping their radia
     assert.ok(Math.abs(span(next, axis) / span(original, axis) - 1) < 0.001);
   }
   assert.ok(SPEC.gap > 16); assert.ok(SPEC.holeRadius < 132);
-  assert.equal((svg.match(/<path /g) || []).length, 9);
+  assert.equal((svg.match(/id="petal-\d+"/g) || []).length, 8);
+  assert.ok(svg.includes('mask="url(#petal-cutouts)"'));
+  assert.equal((svg.match(/fill="#000000"/g) || []).length, 9);
   assert.ok(svg.includes('id="hub-fitted"'));
   assert.ok(svg.includes(`A ${SPEC.holeRadius} ${SPEC.holeRadius}`));
   assert.doesNotMatch(svg, /<use|rotate\(|gradient|filter=|opacity=|<image|data:image|<script/i);

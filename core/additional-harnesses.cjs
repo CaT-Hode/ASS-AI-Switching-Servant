@@ -163,7 +163,7 @@ function inspectKimi(location, { env, now }) {
       output: v.max_output_size, efforts: v.support_efforts, defaultEffort: v.default_effort,
       vision: Array.isArray(v.capabilities) ? v.capabilities.includes("image_in") : null },
     raw.protocol || providers[raw.provider].type, secrets);
-    if (m) models.push(m);
+    if (m) models.push({ ...m, nativeAlias: raw.alias });
   }
   return { sources, accounts, apiAccounts, modelAccounts: models.length ? [catalog("kimi", dir, file, models)] : [] };
 }

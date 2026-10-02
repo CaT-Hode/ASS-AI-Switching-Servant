@@ -130,7 +130,11 @@ class OAuthHistory {
           typeof this.external[w.external].write !== "function")))) throw Error();
     const releases = [];
     try {
-      for (const w of transaction) if (w.lock === "zcode") releases.push(additional.lock(w.file));
+      for (const w of transaction) {
+        if (w.lock === "zcode") releases.push(additional.lock(w.file));
+        if (w.lock === "pi") releases.push(require('./pi-auth-lock.cjs').lock(w.file));
+      }
+      for (const release of releases) release.assert?.();
       this.recoverLocked(transaction);
     } finally { for (const release of releases.reverse()) release(); }
   }
@@ -298,6 +302,7 @@ class OAuthHistory {
     this.scan({ immediate: true });
     const entry = this.lookup(harness, id), state = this.inspect(harness, entry);
     if (!this.publicEntry(entry).ready) throw Error("已保存授权已到期，需要重新登录");
+    if (harness === 'pi' && require('./pi-auth-lock.cjs').busy(state.auth.file)) throw Error('Pi 正在读写或刷新登录，请稍后重新确认切换');
     for (const [k, t] of this.tickets) if (t.expires < this.now()) this.tickets.delete(k);
     if (this.tickets.size > 20) this.tickets.clear();
     const ticket = crypto.randomBytes(24).toString("hex");
@@ -312,12 +317,13 @@ class OAuthHistory {
     this.tickets.delete(ticket);
     if (confirmed !== true || !t || t.expires < this.now()) throw Error("切换确认已失效，请重新选择账户");
     const entry = this.lookup(t.harness, t.id), state = this.inspect(t.harness, entry);
-    const release = t.harness === "zcode" ? additional.lock(state.auth.file) : () => {};
-    try { return this.applyLocked(t, entry, state); } finally { release(); }
+    const release = t.harness === "zcode" ? additional.lock(state.auth.file) : t.harness === "pi" ? require('./pi-auth-lock.cjs').lock(state.auth.file) : () => {};
+    try { return this.applyLocked(t, entry, state, release.assert); } finally { release(); }
   }
-  applyLocked(t, entry, state) {
+  applyLocked(t, entry, state, assertLock = () => {}) {
     if (!this.publicEntry(entry).ready) throw Error("已保存授权已到期，需要重新登录");
     const check = () => {
+      assertLock();
       const latest = this.inspect(t.harness, entry);
       if (latest.fingerprint !== t.fingerprint || key(latest.auth.file) !== t.target || entry.fingerprint !== t.revision)
         throw Error("登录信息已变化，请重新确认切换");
@@ -332,7 +338,7 @@ class OAuthHistory {
       set("auth_mode", "chatgpt"); set("tokens", entry.grant); set("last_refresh", entry.lastRefresh);
     } else if (t.harness === "claude") set("claudeAiOauth", entry.grant);
     else if (t.harness === "pi") set(entry.provider, entry.grant);
-    const writes = additional.SUPPORTED.has(t.harness) ? additional.writes(state, entry) : [{ ...state.auth, after: text }];
+    const writes = additional.SUPPORTED.has(t.harness) ? additional.writes(state, entry) : [{ ...state.auth, after: text, lock: t.harness === "pi" ? "pi" : undefined }];
     if (t.harness === "claude") {
       const meta = state.parts[1];
       writes.push({ ...meta, after: edit(meta.text, "json", ["oauthAccount"], entry.metadata ? { exists: true, value: entry.metadata } : { exists: false }) });
@@ -344,6 +350,7 @@ class OAuthHistory {
     const done = [];
     try {
       for (const w of writes) {
+        assertLock();
         if (this.targetRead(w) !== w.text) throw Error("登录信息已变化，请重新确认切换");
         this.targetWrite(w, w.after);
         w.afterWrite?.(w.after);
@@ -355,6 +362,7 @@ class OAuthHistory {
       for (const w of done.reverse()) {
         try {
           if (this.targetRead(w) !== w.after) { conflict = true; continue; }
+          assertLock();
           this.targetWrite(w, w.text);
           w.afterWrite?.(w.text);
         } catch { conflict = true; }
